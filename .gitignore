@@ -1,0 +1,19 @@
+pip# Python virtual environment
+venv/
+
+# Python bytecode files
+__pycache__/
+*.py[cod]
+
+# VSCode settings (if you use VSCode)
+.vscode/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# macOS DS_Store
+.DS_Store
+
+# Service Account Key for Firebase
+serviceAccountKey.json
+
