@@ -3,6 +3,14 @@ import re
 from firebase_admin import credentials, firestore
 from google.cloud import storage
 from tqdm import tqdm
+import os
+
+USFM_BOOK_NAMES = {
+    "JHN": "John",
+    "LUK": "Luke",
+    "MAT": "Matthew",
+    "MRK": "Mark",
+}
 
 def parse_usfm(usfm_content):
     book_id = None
@@ -51,7 +59,7 @@ def parse_usfm(usfm_content):
 
 SERVICE_ACCOUNT_FILE = 'serviceAccountKey.json'
 BUCKET_NAME = 'synopsis-224b0.firebasestorage.app'
-USFM_FILE_PATH = '73-JHNarb-vd.usfm'
+USFM_FILE_PATH = 'MRK_arabic_van-dyck.usfm'
 
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
@@ -66,15 +74,26 @@ blob = bucket.blob(USFM_FILE_PATH)
 usfm_content = blob.download_as_text(encoding='utf-8')
 
 parsed = parse_usfm(usfm_content)
+parts = os.path.basename(USFM_FILE_PATH).replace('.usfm', '').split('_')
+
+if len(parts) == 3:
+    book_code = parts[0]
+    language = parts[1].replace('-', ' ')
+    version = parts[2].replace('-', ' ')
+else:
+    book_code = parsed['book_id'].strip()
+    language = "unknown"
+    version = "unknown"
 
 # Get total verses for progress bar (optional)
 total_verses = sum(len(ch['verses']) for ch in parsed['chapters'].values())
 progress = tqdm(total=total_verses, desc="Uploading verses")
 
-book_id = parsed['book_id']
+book_id = parsed['book_id'].strip()
+book_name = USFM_BOOK_NAMES.get(book_id, book_id)
 for chapter_num, chapter_data in parsed['chapters'].items():
     # Reference to chapter doc
-    chapter_ref = db.collection('bibles').document(book_id).collection('chapters').document(str(chapter_num))
+    chapter_ref = db.collection('bibles').document(language).collection(version).document(book_name).collection('chapters').document(str(chapter_num))
     chapter_ref.set({})  # Optional: store chapter-level info here
     
     batch = db.batch()
