@@ -9,6 +9,21 @@ db = firestore.client()
 
 app = Flask(__name__)
 
+@app.route('/<language>/<version>/topics', methods=['GET'])
+def get_topics(language, version):
+    topics_ref = db.collection('references').document(language).collection(version)
+    docs = topics_ref.stream()
+    # Collect the topic names (from 'name' field in each doc)
+    topics = []
+    for doc in docs:
+        data = doc.to_dict()
+        if data and "name" in data:
+            topics.append(data["name"])
+    return Response(
+        json.dumps(topics, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8"
+    )
+  
 @app.route('/<language>/<version>/topic/<topic_id>', methods=['GET'])
 def get_topic(language, version, topic_id):
     doc_ref = db.collection('references').document(language).collection(version).document(topic_id)
