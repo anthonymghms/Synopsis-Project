@@ -4,7 +4,6 @@
 import os
 import re
 import csv
-import json
 import tempfile
 
 import firebase_admin
@@ -120,9 +119,15 @@ def push_to_firestore(data: dict):
     db = firestore.client()
     coll = db.collection("references").document(language).collection(version)
 
+    count = 1
     for topic, entries in data.items():
-        doc_ref = coll.document(topic)
-        doc_ref.set({"entries": entries})
+        doc_data = {
+            "name": topic,
+            "entries": entries
+        }
+        doc_ref = coll.document(str(count))
+        doc_ref.set(doc_data)
+        count +=1
     print(f"✔ Wrote {len(data)} documents into Firestore collection “references”")
 
 
