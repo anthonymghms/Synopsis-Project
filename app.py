@@ -9,6 +9,7 @@ db = firestore.client()
 
 app = Flask(__name__)
 
+'''
 @app.route('/<language>/<version>/topics', methods=['GET'])
 def get_topics(language, version):
     topics_ref = db.collection('references').document(language).collection(version)
@@ -23,6 +24,7 @@ def get_topics(language, version):
         json.dumps(topics, ensure_ascii=False, indent=2),
         content_type="application/json; charset=utf-8"
     )
+    '''
   
 @app.route('/<language>/<version>/topic/<topic_id>', methods=['GET'])
 def get_topic(language, version, topic_id):
@@ -84,6 +86,30 @@ def get_verse():
         json.dumps(results, ensure_ascii=False, indent=2),
         content_type="application/json; charset=utf-8"
     )
+
+@app.route('/topics', methods=['GET'])
+def get_topics():
+    # Get params (use default if not provided)
+    language = request.args.get('language', 'arabic')
+    version = request.args.get('version', 'van dyck')
+
+    topics_ref = db.collection('references').document(language).collection(version)
+    docs = topics_ref.stream()
+    topics = []
+
+    for doc in docs:
+        data = doc.to_dict()
+        # Format id with zero padding
+        padded_id = f"{int(doc.id):02}"
+        topic = {
+            "id": padded_id,
+            "name": data.get('name', ''),
+            "references": data.get('entries', [])
+        }
+        topics.append(topic)
+    topics.sort(key=lambda x: int(x['id']))
+
+    return Response(json.dumps(topics, ensure_ascii=False, indent=2), content_type="application/json; charset=utf-8")
 
 if __name__ == '__main__':
     app.run(debug=True)
