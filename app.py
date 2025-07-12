@@ -2,12 +2,16 @@ from flask import Flask, request, Response
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
+from flask_cors import CORS
+
 
 cred = credentials.Certificate('serviceAccountKey.json')
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 app = Flask(__name__)
+
+CORS(app)
 
 '''
 @app.route('/<language>/<version>/topics', methods=['GET'])
@@ -55,7 +59,6 @@ def get_verse():
     if not all([language, version, book, chapter, verse]):
         return Response(json.dumps({"error": "Missing params"}), status=400, content_type="application/json")
 
-    # Helper: gets ONLY the actual verse text (the 'text' field at root level)
     def get_actual_verse_text(verse_num):
         verse_ref = (
             db.collection('bibles')
@@ -69,11 +72,20 @@ def get_verse():
         )
         verse_doc = verse_ref.get()
         if not verse_doc.exists:
-            return ""
+            return {"verse": verse_num, "text": ""}
         data = verse_doc.to_dict()
-        return data.get("text", "") if isinstance(data.get("text", ""), str) else ""
+        text = ""
+        # Try to get text from blocks_before if it has any non-empty text
+        if "blocks_before" in data and isinstance(data["blocks_before"], list) and len(data["blocks_before"]) > 0:
+            # Collect all non-empty "text" fields from blocks_before
+            text_parts = [block.get("text", "").strip() for block in data["blocks_before"] if block.get("text", "").strip()]
+            text = " ".join(text_parts).strip()
+        # If still empty, use the top-level "text" field
+        if not text and "text" in data:
+            text = data["text"].strip()
+        return {"verse": verse_num, "text": text}
 
-    # Range support
+
     results = []
     if '-' in verse:
         start, end = map(int, verse.split('-'))
@@ -86,6 +98,7 @@ def get_verse():
         json.dumps(results, ensure_ascii=False, indent=2),
         content_type="application/json; charset=utf-8"
     )
+
 
 @app.route('/topics', methods=['GET'])
 def get_topics():
@@ -112,4 +125,4 @@ def get_topics():
     return Response(json.dumps(topics, ensure_ascii=False, indent=2), content_type="application/json; charset=utf-8")
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5050)

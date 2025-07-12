@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 // ---- CONFIGURATION ----
-const apiBaseUrl = "http://172.20.10.3:5050"; // Change if your backend is hosted elsewhere
+const apiBaseUrl = "http://192.168.68.104:5050"; // Change if your backend is hosted elsewhere
 const defaultLanguage = "arabic";
 const defaultVersion = "van%20dyck";
 
@@ -259,7 +259,7 @@ class _ReferenceTextScreenState extends State<ReferenceTextScreen> {
       if (response.statusCode == 200) {
         final List<dynamic> verses = json.decode(response.body);
         setState(() {
-          _text = verses.map((v) => "${v['verse']}. ${v['text']}").join(" ");
+          _text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           _loading = false;
         });
       } else {
