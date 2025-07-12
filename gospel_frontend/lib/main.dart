@@ -266,7 +266,7 @@ class _ReferenceTextScreenState extends State<ReferenceTextScreen> {
       if (response.statusCode == 200) {
         final List<dynamic> verses = json.decode(response.body);
         setState(() {
-          _text = verses.map((v) => "${v['verse']}. ${v['text']}").join(" ");
+          _text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           _loading = false;
         });
       } else {
