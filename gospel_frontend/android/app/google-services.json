@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "864538779408",
+    "project_id": "synopsis-224b0",
+    "storage_bucket": "synopsis-224b0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:864538779408:android:d3f316dbaeb8b7d1a04f95",
+        "android_client_info": {
+          "package_name": "com.example.gospel_frontend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwv6Fe404ELXIZnfTXOe--__XibM7wENc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
