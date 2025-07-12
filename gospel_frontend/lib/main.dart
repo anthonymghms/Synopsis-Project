@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:gospel_frontend/auth_screen.dart';
+import 'package:gospel_frontend/main_scaffold.dart';
+import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 // ---- CONFIGURATION ----
-const apiBaseUrl = "http://192.168.68.104:5050"; // Change if your backend is hosted elsewhere
+const apiBaseUrl = "http://192.168.1.25:5000"; // Change if your backend is hosted elsewhere
 const defaultLanguage = "arabic";
 const defaultVersion = "van%20dyck";
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(GospelApp());
 }
 
@@ -21,7 +29,10 @@ class GospelApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: TopicListScreen(),
+      routes: {
+        '/': (_) => AuthScreen(),
+        '/topics': (_) => TopicListScreen()
+      },
     );
   }
 }
@@ -74,10 +85,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Topics'),
-      ),
+    return MainScaffold(
+      title: "Topics",
       body: _loading
           ? Center(child: CircularProgressIndicator())
           : _error != null
@@ -130,10 +139,8 @@ class ChooseVersionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Choose Version"),
-      ),
+    return MainScaffold(
+      title: "Choose Version",
       body: ListView.builder(
         itemCount: availableVersions.length,
         itemBuilder: (context, idx) {
@@ -166,8 +173,8 @@ class BookListScreen extends StatelessWidget {
     final entries = topic.references; // Add references field to Topic
     final books = entries.map((e) => e['book']).toSet().toList(); // Unique books
 
-    return Scaffold(
-      appBar: AppBar(title: Text("Choose Book")),
+    return MainScaffold(
+      title: "Choose Book",
       body: ListView.builder(
         itemCount: books.length,
         itemBuilder: (context, idx) {
@@ -201,8 +208,8 @@ class ReferenceListScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final references = topic.references.where((e) => e['book'] == book).toList();
-    return Scaffold(
-      appBar: AppBar(title: Text("Choose Reference")),
+    return MainScaffold(
+      title: "Choose Reference",
       body: ListView.builder(
         itemCount: references.length,
         itemBuilder: (context, idx) {
@@ -278,8 +285,8 @@ class _ReferenceTextScreenState extends State<ReferenceTextScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text("Verse Text")),
+    return MainScaffold(
+      title:"Verse Text",
       body: _loading
           ? Center(child: CircularProgressIndicator())
           : _error != null
