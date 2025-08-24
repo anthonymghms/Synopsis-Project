@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'settings_screen.dart';
 
 class MainScaffold extends StatelessWidget {
   final String title;
@@ -15,50 +16,53 @@ class MainScaffold extends StatelessWidget {
       appBar: AppBar(
         title: Text(title),
         actions: [
-          FutureBuilder<DocumentSnapshot>(
-            future: FirebaseFirestore.instance
-                .collection('users')
-                .doc(FirebaseAuth.instance.currentUser?.uid)
-                .get(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return SizedBox();
-              }
-              if (!snapshot.hasData || !snapshot.data!.exists) {
-                return SizedBox();
-              }
-
-              final name = snapshot.data?.get('fullName') ?? 'User';
-
-              return PopupMenuButton<String>(
-                onSelected: (value) async {
-                  if (value == 'logout') {
-                    await FirebaseAuth.instance.signOut();
-                    if (context.mounted) {
-                      Navigator.of(context)
-                          .popUntil((route) => route.isFirst);
-                    }
+          Padding(
+            padding: const EdgeInsets.only(right: 24.0),
+            child: PopupMenuButton<String>(
+              icon: const Icon(Icons.account_circle, size: 32),
+              onSelected: (value) async {
+                if (value == 'logout') {
+                  await FirebaseAuth.instance.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
                   }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'logout',
-                    child: Text('Logout'),
-                  ),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.person),
-                      SizedBox(width: 4),
-                      Text(name, style: TextStyle(fontSize: 16)),
-                      Icon(Icons.arrow_drop_down),
-                    ],
+                } else if (value == 'settings') {
+                  if (context.mounted) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    );
+                  }
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem<String>(
+                  enabled: false,
+                  child: FutureBuilder<DocumentSnapshot>(
+                    future: FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(FirebaseAuth.instance.currentUser?.uid)
+                        .get(),
+                    builder: (context, snapshot) {
+                      final user = FirebaseAuth.instance.currentUser;
+                      final name = snapshot.data?.get('fullName') ??
+                          user?.email ?? 'User';
+                      return Text(name);
+                    },
                   ),
                 ),
-              );
-            },
+                const PopupMenuDivider(),
+                const PopupMenuItem<String>(
+                  value: 'settings',
+                  child: Text('Settings'),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'logout',
+                  child: Text('Logout'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
