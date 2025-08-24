@@ -111,8 +111,12 @@ def get_topics():
 
     for doc in docs:
         data = doc.to_dict()
-        # Format id with zero padding
-        padded_id = f"{int(doc.id):02}"
+        try:
+            doc_id_int = int(doc.id)
+        except ValueError:
+            app.logger.warning("Skipping non-numeric topic id: %s", doc.id)
+            continue
+        padded_id = f"{doc_id_int:02}"
         topic = {
             "id": padded_id,
             "name": data.get('name', ''),
