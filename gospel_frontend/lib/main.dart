@@ -137,155 +137,220 @@ class Topic {
 
 
 // ----- Second Screen: Choose Version -----
-class ChooseVersionScreen extends StatelessWidget {
+class ChooseVersionScreen extends StatefulWidget {
   final Topic topic;
-  // Placeholder list of versions. Later, you can fetch versions from your backend.
+  ChooseVersionScreen({super.key, required this.topic});
+
+  @override
+  State<ChooseVersionScreen> createState() => _ChooseVersionScreenState();
+}
+
+class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
+  // Placeholder list of versions. Later, fetch from backend.
   final List<String> availableVersions = [
     "van dyck", // Arabic
-    "kjv",      // English, etc.
-    // Add more as you add support
+    "kjv", // English
+    // Add more as needed
   ];
 
- ChooseVersionScreen({super.key, required this.topic});
+  String? _selected;
 
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
       title: "Choose Version",
-      body: ListView.builder(
-        itemCount: availableVersions.length,
-        itemBuilder: (context, idx) {
-          final version = availableVersions[idx];
-          return ListTile(
-            title: Text(version),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => BookListScreen(topic: topic, version: version),
-              ));
-            },
-
-          );
-        },
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              itemCount: availableVersions.length,
+              itemBuilder: (context, idx) {
+                final version = availableVersions[idx];
+                return RadioListTile<String>(
+                  title: Text(version),
+                  value: version,
+                  groupValue: _selected,
+                  onChanged: (val) {
+                    setState(() {
+                      _selected = val;
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton(
+              onPressed: _selected == null
+                  ? null
+                  : () {
+                      Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ChooseAuthorScreen(
+                          topic: widget.topic,
+                          version: _selected!,
+                        ),
+                      ));
+                    },
+              child: const Text("Continue"),
+            ),
+          )
+        ],
       ),
     );
   }
 }
 
 
-class BookListScreen extends StatelessWidget {
+// ----- Third Screen: Choose Authors -----
+class ChooseAuthorScreen extends StatefulWidget {
   final Topic topic;
   final String version;
-  const BookListScreen({super.key, required this.topic, required this.version});
+  const ChooseAuthorScreen({super.key, required this.topic, required this.version});
+
+  @override
+  State<ChooseAuthorScreen> createState() => _ChooseAuthorScreenState();
+}
+
+class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
+  late final List<String> authors;
+  final Set<String> _selected = {};
+
+  @override
+  void initState() {
+    super.initState();
+    authors = widget.topic.references
+        .map((e) => e['book'] as String)
+        .toSet()
+        .toList();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // You need to know which books are relevant for the topic and version.
-    // These can be obtained from the 'references' field in your Topic object.
-    final entries = topic.references; // Add references field to Topic
-    final books = entries.map((e) => e['book']).toSet().toList(); // Unique books
-
     return MainScaffold(
-      title: "Choose Book",
-      body: ListView.builder(
-        itemCount: books.length,
-        itemBuilder: (context, idx) {
-          final book = books[idx];
-          return ListTile(
-            title: Text(book),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => ReferenceListScreen(
-                  topic: topic,
-                  version: version,
-                  book: book,
-                ),
-              ));
-            },
-          );
-        },
+      title: "Choose Authors",
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              itemCount: authors.length,
+              itemBuilder: (context, idx) {
+                final author = authors[idx];
+                return CheckboxListTile(
+                  title: Text(author),
+                  value: _selected.contains(author),
+                  onChanged: (val) {
+                    setState(() {
+                      if (val == true) {
+                        _selected.add(author);
+                      } else {
+                        _selected.remove(author);
+                      }
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton(
+              onPressed: _selected.isEmpty
+                  ? null
+                  : () {
+                      Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => AuthorComparisonScreen(
+                          language: defaultLanguage,
+                          version: widget.version,
+                          topic: widget.topic,
+                          initialAuthors: _selected.toList(),
+                        ),
+                      ));
+                    },
+              child: const Text("Compare"),
+            ),
+          )
+        ],
       ),
     );
   }
 }
 
-
-
-class ReferenceListScreen extends StatelessWidget {
-  final Topic topic;
+class AuthorComparisonScreen extends StatefulWidget {
+  final String language;
   final String version;
-  final String book;
-  const ReferenceListScreen({super.key, required this.topic, required this.version, required this.book});
+  final Topic topic;
+  final List<String> initialAuthors;
+  const AuthorComparisonScreen({
+    super.key,
+    required this.language,
+    required this.version,
+    required this.topic,
+    required this.initialAuthors,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    final references = topic.references.where((e) => e['book'] == book).toList();
-    return MainScaffold(
-      title: "Choose Reference",
-      body: ListView.builder(
-        itemCount: references.length,
-        itemBuilder: (context, idx) {
-          final ref = references[idx];
-          final label = "Chapter ${ref['chapter']}, Verses ${ref['verses']}";
-          return ListTile(
-            title: Text(label),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => ReferenceTextScreen(
-                  language: defaultLanguage,
-                  version: version,
-                  book: book,
-                  chapter: ref['chapter'].toString(),
-                  verses: ref['verses'],
-                ),
-              ));
-            },
-          );
-        },
-      ),
-    );
-  }
+  State<AuthorComparisonScreen> createState() => _AuthorComparisonScreenState();
 }
 
-
-class ReferenceTextScreen extends StatefulWidget {
-  final String language, version, book, chapter, verses;
-  const ReferenceTextScreen({super.key, required this.language, required this.version, required this.book, required this.chapter, required this.verses});
-  @override
-  State<ReferenceTextScreen> createState() => _ReferenceTextScreenState();
-}
-
-class _ReferenceTextScreenState extends State<ReferenceTextScreen> {
-  String? _text;
+class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
+  late final List<String> _allAuthors;
+  late Set<String> _selected;
+  Map<String, String> _texts = {};
   String? _error;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    fetchVerseText();
+    _allAuthors = widget.topic.references
+        .map((e) => e['book'] as String)
+        .toSet()
+        .toList();
+    _selected = widget.initialAuthors.toSet();
+    fetchTexts();
   }
 
-  Future<void> fetchVerseText() async {
-    final url = "$apiBaseUrl/get_verse"
-        "?language=${Uri.encodeComponent(widget.language)}"
-        "&version=${Uri.encodeComponent(widget.version)}"
-        "&book=${Uri.encodeComponent(widget.book)}"
-        "&chapter=${widget.chapter}"
-        "&verse=${Uri.encodeComponent(widget.verses)}";
+  Future<void> fetchTexts() async {
+    if (_selected.isEmpty) {
+      setState(() {
+        _texts = {};
+        _loading = false;
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final List<dynamic> verses = json.decode(response.body);
-        setState(() {
-          _text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-          _loading = false;
-        });
-      } else {
-        setState(() {
-          _error = "Error: ${response.statusCode}";
-          _loading = false;
-        });
-      }
+      final futures = _selected.map((author) async {
+        final refs = widget.topic.references.where((r) => r['book'] == author);
+        final parts = <String>[];
+        for (final ref in refs) {
+          final url = "$apiBaseUrl/get_verse"
+              "?language=${Uri.encodeComponent(widget.language)}"
+              "&version=${Uri.encodeComponent(widget.version)}"
+              "&book=${Uri.encodeComponent(author)}"
+              "&chapter=${ref['chapter']}"
+              "&verse=${Uri.encodeComponent(ref['verses'])}";
+          final response = await http.get(Uri.parse(url));
+          if (response.statusCode != 200) {
+            throw Exception("Error ${response.statusCode} for $author");
+          }
+          final List<dynamic> verses = json.decode(response.body);
+          final text =
+              verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
+          parts.add(text);
+        }
+        return MapEntry(author, parts.join("\n\n"));
+      });
+
+      final results = await Future.wait(futures);
+      setState(() {
+        _texts = Map.fromEntries(results);
+        _loading = false;
+      });
     } catch (e) {
       setState(() {
         _error = "Failed to fetch: $e";
@@ -297,15 +362,70 @@ class _ReferenceTextScreenState extends State<ReferenceTextScreen> {
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
-      title:"Verse Text",
-      body: _loading
-          ? Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(_text ?? "", style: TextStyle(fontSize: 18)),
-                ),
+      title: "Compare Authors",
+      body: Column(
+        children: [
+          Wrap(
+            spacing: 8,
+            children: _allAuthors
+                .map((author) => FilterChip(
+                      label: Text(author),
+                      selected: _selected.contains(author),
+                      onSelected: (val) {
+                        setState(() {
+                          if (val) {
+                            _selected.add(author);
+                          } else {
+                            _selected.remove(author);
+                          }
+                        });
+                        fetchTexts();
+                      },
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: _selected.isEmpty
+                ? const Center(child: Text('Select authors to compare'))
+                : _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                        ? Center(child: Text(_error!))
+                        : SingleChildScrollView(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: _selected.map((a) {
+                                final text = _texts[a] ?? '';
+                                final width =
+                                    MediaQuery.of(context).size.width /
+                                        _selected.length;
+                                return SizedBox(
+                                  width: width,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(a,
+                                            style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 8),
+                                        Text(text,
+                                            style: const TextStyle(
+                                                fontSize: 16)),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+          ),
+        ],
+      ),
     );
   }
 }
