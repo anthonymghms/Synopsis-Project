@@ -22,33 +22,30 @@ class _AuthScreenState extends State<AuthScreen> {
   String? error;
 
   Future<void> handleAuth() async {
-  if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) return;
 
-  try {
-    if (isLogin) {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
-    } else {
-      final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
+    try {
+      if (isLogin) {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim(),
+        );
+      } else {
+        final userCredential =
+            await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim(),
+        );
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userCredential.user!.uid)
-          .set({
-        'fullName': fullNameController.text.trim(),
-        'dob': dobController.text.trim(),
-        'email': emailController.text.trim(),
-      });
-    }
-
-    // 🔁 After successful login/registration
-    // ignore: use_build_context_synchronously
-      Navigator.of(context).pushReplacementNamed('/topics');
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'fullName': fullNameController.text.trim(),
+          'dob': dobController.text.trim(),
+          'email': emailController.text.trim(),
+        });
+      }
     } catch (e) {
       setState(() => error = e.toString());
     }
