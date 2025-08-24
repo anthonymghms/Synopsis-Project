@@ -263,7 +263,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                           language: defaultLanguage,
                           version: widget.version,
                           topic: widget.topic,
-                          authors: _selected.toList(),
+                          initialAuthors: _selected.toList(),
                         ),
                       ));
                     },
@@ -280,14 +280,22 @@ class AuthorComparisonScreen extends StatefulWidget {
   final String language;
   final String version;
   final Topic topic;
-  final List<String> authors;
-  const AuthorComparisonScreen({super.key, required this.language, required this.version, required this.topic, required this.authors});
+  final List<String> initialAuthors;
+  const AuthorComparisonScreen({
+    super.key,
+    required this.language,
+    required this.version,
+    required this.topic,
+    required this.initialAuthors,
+  });
 
   @override
   State<AuthorComparisonScreen> createState() => _AuthorComparisonScreenState();
 }
 
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
+  late final List<String> _allAuthors;
+  late Set<String> _selected;
   Map<String, String> _texts = {};
   String? _error;
   bool _loading = true;
@@ -295,12 +303,28 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   void initState() {
     super.initState();
+    _allAuthors = widget.topic.references
+        .map((e) => e['book'] as String)
+        .toSet()
+        .toList();
+    _selected = widget.initialAuthors.toSet();
     fetchTexts();
   }
 
   Future<void> fetchTexts() async {
+    if (_selected.isEmpty) {
+      setState(() {
+        _texts = {};
+        _loading = false;
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      final futures = widget.authors.map((author) async {
+      final futures = _selected.map((author) async {
         final refs = widget.topic.references.where((r) => r['book'] == author);
         final parts = <String>[];
         for (final ref in refs) {
@@ -315,7 +339,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             throw Exception("Error ${response.statusCode} for $author");
           }
           final List<dynamic> verses = json.decode(response.body);
-          final text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
+          final text =
+              verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           parts.add(text);
         }
         return MapEntry(author, parts.join("\n\n"));
@@ -338,27 +363,69 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   Widget build(BuildContext context) {
     return MainScaffold(
       title: "Compare Authors",
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: widget.authors.map((a) {
-                    final text = _texts[a] ?? "";
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(a, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 8),
-                          Text(text, style: const TextStyle(fontSize: 16)),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
+      body: Column(
+        children: [
+          Wrap(
+            spacing: 8,
+            children: _allAuthors
+                .map((author) => FilterChip(
+                      label: Text(author),
+                      selected: _selected.contains(author),
+                      onSelected: (val) {
+                        setState(() {
+                          if (val) {
+                            _selected.add(author);
+                          } else {
+                            _selected.remove(author);
+                          }
+                        });
+                        fetchTexts();
+                      },
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: _selected.isEmpty
+                ? const Center(child: Text('Select authors to compare'))
+                : _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                        ? Center(child: Text(_error!))
+                        : SingleChildScrollView(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: _selected.map((a) {
+                                final text = _texts[a] ?? '';
+                                final width =
+                                    MediaQuery.of(context).size.width /
+                                        _selected.length;
+                                return SizedBox(
+                                  width: width,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(a,
+                                            style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 8),
+                                        Text(text,
+                                            style: const TextStyle(
+                                                fontSize: 16)),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+          ),
+        ],
+      ),
     );
   }
 }
