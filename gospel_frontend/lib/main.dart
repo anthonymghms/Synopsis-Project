@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 // ---- CONFIGURATION ----
-const apiBaseUrl = "http://192.168.1.25:5000"; // Change if your backend is hosted elsewhere
+const apiBaseUrl = "http://192.168.20.183:5000"; // Change if your backend is hosted elsewhere
 const defaultLanguage = "arabic";
 const defaultVersion = "van%20dyck";
 
