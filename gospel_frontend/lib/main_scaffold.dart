@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'settings_screen.dart';
 
 class MainScaffold extends StatelessWidget {
   final String title;
@@ -31,6 +32,7 @@ class MainScaffold extends StatelessWidget {
               final name = snapshot.data?.get('fullName') ?? 'User';
 
               return PopupMenuButton<String>(
+                icon: const Icon(Icons.account_circle),
                 onSelected: (value) async {
                   if (value == 'logout') {
                     await FirebaseAuth.instance.signOut();
@@ -38,25 +40,31 @@ class MainScaffold extends StatelessWidget {
                       Navigator.of(context)
                           .popUntil((route) => route.isFirst);
                     }
+                  } else if (value == 'settings') {
+                    if (context.mounted) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
+                    }
                   }
                 },
                 itemBuilder: (context) => [
-                  PopupMenuItem(
+                  PopupMenuItem<String>(
+                    enabled: false,
+                    child: Text(name),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<String>(
+                    value: 'settings',
+                    child: Text('Settings'),
+                  ),
+                  const PopupMenuItem<String>(
                     value: 'logout',
                     child: Text('Logout'),
                   ),
                 ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.person),
-                      SizedBox(width: 4),
-                      Text(name, style: TextStyle(fontSize: 16)),
-                      Icon(Icons.arrow_drop_down),
-                    ],
-                  ),
-                ),
               );
             },
           ),
