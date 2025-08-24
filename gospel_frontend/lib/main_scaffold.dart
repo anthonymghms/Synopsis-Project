@@ -16,50 +16,53 @@ class MainScaffold extends StatelessWidget {
       appBar: AppBar(
         title: Text(title),
         actions: [
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.account_circle),
-            onSelected: (value) async {
-              if (value == 'logout') {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+          Padding(
+            padding: const EdgeInsets.only(right: 24.0),
+            child: PopupMenuButton<String>(
+              icon: const Icon(Icons.account_circle, size: 32),
+              onSelected: (value) async {
+                if (value == 'logout') {
+                  await FirebaseAuth.instance.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                  }
+                } else if (value == 'settings') {
+                  if (context.mounted) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    );
+                  }
                 }
-              } else if (value == 'settings') {
-                if (context.mounted) {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const SettingsScreen(),
-                    ),
-                  );
-                }
-              }
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem<String>(
-                enabled: false,
-                child: FutureBuilder<DocumentSnapshot>(
-                  future: FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(FirebaseAuth.instance.currentUser?.uid)
-                      .get(),
-                  builder: (context, snapshot) {
-                    final user = FirebaseAuth.instance.currentUser;
-                    final name = snapshot.data?.get('fullName') ??
-                        user?.email ?? 'User';
-                    return Text(name);
-                  },
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem<String>(
+                  enabled: false,
+                  child: FutureBuilder<DocumentSnapshot>(
+                    future: FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(FirebaseAuth.instance.currentUser?.uid)
+                        .get(),
+                    builder: (context, snapshot) {
+                      final user = FirebaseAuth.instance.currentUser;
+                      final name = snapshot.data?.get('fullName') ??
+                          user?.email ?? 'User';
+                      return Text(name);
+                    },
+                  ),
                 ),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem<String>(
-                value: 'settings',
-                child: Text('Settings'),
-              ),
-              const PopupMenuItem<String>(
-                value: 'logout',
-                child: Text('Logout'),
-              ),
-            ],
+                const PopupMenuDivider(),
+                const PopupMenuItem<String>(
+                  value: 'settings',
+                  child: Text('Settings'),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'logout',
+                  child: Text('Logout'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
