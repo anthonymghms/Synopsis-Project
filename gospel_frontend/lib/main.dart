@@ -136,7 +136,7 @@ class Topic {
 }
 
 
-// ----- Second Screen: Choose Versions -----
+// ----- Second Screen: Choose Version -----
 class ChooseVersionScreen extends StatefulWidget {
   final Topic topic;
   ChooseVersionScreen({super.key, required this.topic});
@@ -146,19 +146,19 @@ class ChooseVersionScreen extends StatefulWidget {
 }
 
 class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
-  // Placeholder list of versions. Later, you can fetch versions from your backend.
+  // Placeholder list of versions. Later, fetch from backend.
   final List<String> availableVersions = [
     "van dyck", // Arabic
     "kjv", // English
-    // Add more as you add support
+    // Add more as needed
   ];
 
-  final Set<String> _selected = {};
+  String? _selected;
 
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
-      title: "Choose Versions",
+      title: "Choose Version",
       body: Column(
         children: [
           Expanded(
@@ -166,15 +166,85 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
               itemCount: availableVersions.length,
               itemBuilder: (context, idx) {
                 final version = availableVersions[idx];
-                return CheckboxListTile(
+                return RadioListTile<String>(
                   title: Text(version),
-                  value: _selected.contains(version),
+                  value: version,
+                  groupValue: _selected,
+                  onChanged: (val) {
+                    setState(() {
+                      _selected = val;
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton(
+              onPressed: _selected == null
+                  ? null
+                  : () {
+                      Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ChooseAuthorScreen(
+                          topic: widget.topic,
+                          version: _selected!,
+                        ),
+                      ));
+                    },
+              child: const Text("Continue"),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+
+// ----- Third Screen: Choose Authors -----
+class ChooseAuthorScreen extends StatefulWidget {
+  final Topic topic;
+  final String version;
+  const ChooseAuthorScreen({super.key, required this.topic, required this.version});
+
+  @override
+  State<ChooseAuthorScreen> createState() => _ChooseAuthorScreenState();
+}
+
+class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
+  late final List<String> authors;
+  final Set<String> _selected = {};
+
+  @override
+  void initState() {
+    super.initState();
+    authors = widget.topic.references
+        .map((e) => e['book'] as String)
+        .toSet()
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MainScaffold(
+      title: "Choose Authors",
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              itemCount: authors.length,
+              itemBuilder: (context, idx) {
+                final author = authors[idx];
+                return CheckboxListTile(
+                  title: Text(author),
+                  value: _selected.contains(author),
                   onChanged: (val) {
                     setState(() {
                       if (val == true) {
-                        _selected.add(version);
+                        _selected.add(author);
                       } else {
-                        _selected.remove(version);
+                        _selected.remove(author);
                       }
                     });
                   },
@@ -189,13 +259,15 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
                   ? null
                   : () {
                       Navigator.push(context, MaterialPageRoute(
-                        builder: (_) => BookListScreen(
+                        builder: (_) => AuthorComparisonScreen(
+                          language: defaultLanguage,
+                          version: widget.version,
                           topic: widget.topic,
-                          versions: _selected.toList(),
+                          authors: _selected.toList(),
                         ),
                       ));
                     },
-              child: const Text("Continue"),
+              child: const Text("Compare"),
             ),
           )
         ],
@@ -204,94 +276,18 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
   }
 }
 
-
-class BookListScreen extends StatelessWidget {
-  final Topic topic;
-  final List<String> versions;
-  const BookListScreen({super.key, required this.topic, required this.versions});
-
-  @override
-  Widget build(BuildContext context) {
-    // You need to know which books are relevant for the topic and version.
-    // These can be obtained from the 'references' field in your Topic object.
-    final entries = topic.references; // Add references field to Topic
-    final books = entries.map((e) => e['book']).toSet().toList(); // Unique books
-
-    return MainScaffold(
-      title: "Choose Book",
-      body: ListView.builder(
-        itemCount: books.length,
-        itemBuilder: (context, idx) {
-          final book = books[idx];
-          return ListTile(
-            title: Text(book),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => ReferenceListScreen(
-                  topic: topic,
-                  versions: versions,
-                  book: book,
-                ),
-              ));
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-
-
-class ReferenceListScreen extends StatelessWidget {
-  final Topic topic;
-  final List<String> versions;
-  final String book;
-  const ReferenceListScreen({super.key, required this.topic, required this.versions, required this.book});
-
-  @override
-  Widget build(BuildContext context) {
-    final references = topic.references.where((e) => e['book'] == book).toList();
-    return MainScaffold(
-      title: "Choose Reference",
-      body: ListView.builder(
-        itemCount: references.length,
-        itemBuilder: (context, idx) {
-          final ref = references[idx];
-          final label = "Chapter ${ref['chapter']}, Verses ${ref['verses']}";
-          return ListTile(
-            title: Text(label),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => ReferenceComparisonScreen(
-                  language: defaultLanguage,
-                  versions: versions,
-                  book: book,
-                  chapter: ref['chapter'].toString(),
-                  verses: ref['verses'],
-                ),
-              ));
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class ReferenceComparisonScreen extends StatefulWidget {
+class AuthorComparisonScreen extends StatefulWidget {
   final String language;
-  final List<String> versions;
-  final String book;
-  final String chapter;
-  final String verses;
-  const ReferenceComparisonScreen({super.key, required this.language, required this.versions, required this.book, required this.chapter, required this.verses});
+  final String version;
+  final Topic topic;
+  final List<String> authors;
+  const AuthorComparisonScreen({super.key, required this.language, required this.version, required this.topic, required this.authors});
 
   @override
-  State<ReferenceComparisonScreen> createState() => _ReferenceComparisonScreenState();
+  State<AuthorComparisonScreen> createState() => _AuthorComparisonScreenState();
 }
 
-class _ReferenceComparisonScreenState extends State<ReferenceComparisonScreen> {
+class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   Map<String, String> _texts = {};
   String? _error;
   bool _loading = true;
@@ -299,25 +295,30 @@ class _ReferenceComparisonScreenState extends State<ReferenceComparisonScreen> {
   @override
   void initState() {
     super.initState();
-    fetchVerseTexts();
+    fetchTexts();
   }
 
-  Future<void> fetchVerseTexts() async {
+  Future<void> fetchTexts() async {
     try {
-      final futures = widget.versions.map((version) async {
-        final url = "$apiBaseUrl/get_verse"
-            "?language=${Uri.encodeComponent(widget.language)}"
-            "&version=${Uri.encodeComponent(version)}"
-            "&book=${Uri.encodeComponent(widget.book)}"
-            "&chapter=${widget.chapter}"
-            "&verse=${Uri.encodeComponent(widget.verses)}";
-        final response = await http.get(Uri.parse(url));
-        if (response.statusCode != 200) {
-          throw Exception("Error ${response.statusCode} for $version");
+      final futures = widget.authors.map((author) async {
+        final refs = widget.topic.references.where((r) => r['book'] == author);
+        final parts = <String>[];
+        for (final ref in refs) {
+          final url = "$apiBaseUrl/get_verse"
+              "?language=${Uri.encodeComponent(widget.language)}"
+              "&version=${Uri.encodeComponent(widget.version)}"
+              "&book=${Uri.encodeComponent(author)}"
+              "&chapter=${ref['chapter']}"
+              "&verse=${Uri.encodeComponent(ref['verses'])}";
+          final response = await http.get(Uri.parse(url));
+          if (response.statusCode != 200) {
+            throw Exception("Error ${response.statusCode} for $author");
+          }
+          final List<dynamic> verses = json.decode(response.body);
+          final text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
+          parts.add(text);
         }
-        final List<dynamic> verses = json.decode(response.body);
-        final text = verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-        return MapEntry(version, text);
+        return MapEntry(author, parts.join("\n\n"));
       });
 
       final results = await Future.wait(futures);
@@ -336,21 +337,21 @@ class _ReferenceComparisonScreenState extends State<ReferenceComparisonScreen> {
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
-      title: "Compare Versions",
+      title: "Compare Authors",
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(child: Text(_error!))
               : ListView(
                   padding: const EdgeInsets.all(16),
-                  children: widget.versions.map((v) {
-                    final text = _texts[v] ?? "";
+                  children: widget.authors.map((a) {
+                    final text = _texts[a] ?? "";
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(v, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(a, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
                           Text(text, style: const TextStyle(fontSize: 16)),
                         ],
