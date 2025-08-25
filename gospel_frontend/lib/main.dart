@@ -326,6 +326,32 @@ class _ReferenceListScreenState extends State<ReferenceListScreen> {
     }
   }
 
+  Future<void> _addBookmark(String reference, String text) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final url = '$apiBaseUrl/bookmark';
+    final body = json.encode({
+      'user_id': user.uid,
+      'bookmark': {
+        'reference': reference,
+        'text': text,
+        'language': widget.language,
+        'version': widget.version,
+        'topic': widget.topic.name,
+      }
+    });
+    try {
+      final response = await http.post(Uri.parse(url),
+          headers: {'Content-Type': 'application/json'}, body: body);
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Bookmark added')));
+      }
+    } catch (_) {
+      // Ignore errors for now
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
@@ -337,18 +363,15 @@ class _ReferenceListScreenState extends State<ReferenceListScreen> {
               : ListView(
                   children: _texts.entries
                       .map(
-                        (e) => Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(e.key,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16)),
-                              const SizedBox(height: 8),
-                              Text(e.value),
-                            ],
+                        (e) => ListTile(
+                          title: Text(
+                            e.key,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(e.value),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.bookmark_border),
+                            onPressed: () => _addBookmark(e.key, e.value),
                           ),
                         ),
                       )

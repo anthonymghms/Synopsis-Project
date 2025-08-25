@@ -127,5 +127,68 @@ def get_topics():
 
     return Response(json.dumps(topics, ensure_ascii=False, indent=2), content_type="application/json; charset=utf-8")
 
+
+@app.route('/bookmark', methods=['POST'])
+def add_bookmark():
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    bookmark = data.get('bookmark')
+    if not user_id or not isinstance(bookmark, dict):
+        return Response(
+            json.dumps({"error": "Missing user_id or bookmark"}, ensure_ascii=False),
+            status=400,
+            content_type="application/json; charset=utf-8",
+        )
+    doc_ref = db.collection('bookmarks').document(user_id).collection('items').document()
+    doc_ref.set(bookmark)
+    return Response(
+        json.dumps({"id": doc_ref.id}, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8",
+    )
+
+
+@app.route('/bookmarks', methods=['GET'])
+def list_bookmarks():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return Response(
+            json.dumps({"error": "Missing user_id"}, ensure_ascii=False),
+            status=400,
+            content_type="application/json; charset=utf-8",
+        )
+    docs = db.collection('bookmarks').document(user_id).collection('items').stream()
+    bookmarks = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+        data['id'] = doc.id
+        bookmarks.append(data)
+    return Response(
+        json.dumps(bookmarks, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8",
+    )
+
+
+@app.route('/bookmark/<bookmark_id>', methods=['DELETE'])
+def delete_bookmark(bookmark_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return Response(
+            json.dumps({"error": "Missing user_id"}, ensure_ascii=False),
+            status=400,
+            content_type="application/json; charset=utf-8",
+        )
+    doc_ref = db.collection('bookmarks').document(user_id).collection('items').document(bookmark_id)
+    if doc_ref.get().exists:
+        doc_ref.delete()
+        return Response(
+            json.dumps({"status": "deleted"}, ensure_ascii=False),
+            content_type="application/json; charset=utf-8",
+        )
+    return Response(
+        json.dumps({"error": "Not found"}, ensure_ascii=False),
+        status=404,
+        content_type="application/json; charset=utf-8",
+    )
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
