@@ -9,8 +9,6 @@ import 'dart:convert';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://192.168.20.183:5000"; // Change if your backend is hosted elsewhere
-const defaultLanguage = "arabic";
-const defaultVersion = "van%20dyck";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +37,7 @@ class GospelApp extends StatelessWidget {
             );
           }
           if (snapshot.hasData) {
-            return const TopicListScreen();
+            return const LanguageSelectionScreen();
           }
           return const AuthScreen();
         },
@@ -48,8 +46,126 @@ class GospelApp extends StatelessWidget {
   }
 }
 
+class LanguageSelectionScreen extends StatefulWidget {
+  const LanguageSelectionScreen({super.key});
+
+  @override
+  State<LanguageSelectionScreen> createState() => _LanguageSelectionScreenState();
+}
+
+class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
+  final List<String> _languages = [
+    'arabic',
+    'english',
+  ];
+  String? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return MainScaffold(
+      title: 'Select Language',
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              itemCount: _languages.length,
+              itemBuilder: (context, idx) {
+                final lang = _languages[idx];
+                return RadioListTile<String>(
+                  title: Text(lang),
+                  value: lang,
+                  groupValue: _selected,
+                  onChanged: (val) => setState(() => _selected = val),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton(
+              onPressed: _selected == null
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => VersionSelectionScreen(language: _selected!),
+                        ),
+                      );
+                    },
+              child: const Text('Continue'),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class VersionSelectionScreen extends StatefulWidget {
+  final String language;
+  const VersionSelectionScreen({super.key, required this.language});
+
+  @override
+  State<VersionSelectionScreen> createState() => _VersionSelectionScreenState();
+}
+
+class _VersionSelectionScreenState extends State<VersionSelectionScreen> {
+  final List<String> availableVersions = [
+    'van dyck',
+    'kjv',
+  ];
+  String? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return MainScaffold(
+      title: 'Choose Version',
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              itemCount: availableVersions.length,
+              itemBuilder: (context, idx) {
+                final version = availableVersions[idx];
+                return RadioListTile<String>(
+                  title: Text(version),
+                  value: version,
+                  groupValue: _selected,
+                  onChanged: (val) => setState(() => _selected = val),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton(
+              onPressed: _selected == null
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => TopicListScreen(
+                            language: widget.language,
+                            version: _selected!,
+                          ),
+                        ),
+                      );
+                    },
+              child: const Text('Continue'),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
 class TopicListScreen extends StatefulWidget {
-  const TopicListScreen({super.key});
+  final String language;
+  final String version;
+  const TopicListScreen({super.key, required this.language, required this.version});
   @override
   State<TopicListScreen> createState() => _TopicListScreenState();
 }
@@ -71,7 +187,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _error = null;
     });
     final url =
-        "$apiBaseUrl/topics?language=$defaultLanguage&version=$defaultVersion";
+        "$apiBaseUrl/topics?language=${Uri.encodeComponent(widget.language)}&version=${Uri.encodeComponent(widget.version)}";
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
@@ -99,21 +215,27 @@ class _TopicListScreenState extends State<TopicListScreen> {
     return MainScaffold(
       title: "Topics",
       body: _loading
-          ? Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(child: Text(_error!))
               : ListView.separated(
                   itemCount: _topics.length,
-                  separatorBuilder: (_, __) => Divider(height: 1),
+                  separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, idx) {
                     final topic = _topics[idx];
                     return ListTile(
                       title: Text(topic.name),
-                      trailing: Icon(Icons.arrow_forward_ios),
+                      trailing: const Icon(Icons.arrow_forward_ios),
                       onTap: () {
-                        Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => ChooseVersionScreen(topic: topic),
-                        ));
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ChooseAuthorScreen(
+                              topic: topic,
+                              language: widget.language,
+                              version: widget.version,
+                            ),
+                          ),
+                        );
                       },
                     );
                   },
@@ -136,77 +258,17 @@ class Topic {
 }
 
 
-// ----- Second Screen: Choose Version -----
-class ChooseVersionScreen extends StatefulWidget {
-  final Topic topic;
-  ChooseVersionScreen({super.key, required this.topic});
-
-  @override
-  State<ChooseVersionScreen> createState() => _ChooseVersionScreenState();
-}
-
-class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
-  // Placeholder list of versions. Later, fetch from backend.
-  final List<String> availableVersions = [
-    "van dyck", // Arabic
-    "kjv", // English
-    // Add more as needed
-  ];
-
-  String? _selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return MainScaffold(
-      title: "Choose Version",
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: availableVersions.length,
-              itemBuilder: (context, idx) {
-                final version = availableVersions[idx];
-                return RadioListTile<String>(
-                  title: Text(version),
-                  value: version,
-                  groupValue: _selected,
-                  onChanged: (val) {
-                    setState(() {
-                      _selected = val;
-                    });
-                  },
-                );
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: ElevatedButton(
-              onPressed: _selected == null
-                  ? null
-                  : () {
-                      Navigator.push(context, MaterialPageRoute(
-                        builder: (_) => ChooseAuthorScreen(
-                          topic: widget.topic,
-                          version: _selected!,
-                        ),
-                      ));
-                    },
-              child: const Text("Continue"),
-            ),
-          )
-        ],
-      ),
-    );
-  }
-}
-
-
 // ----- Third Screen: Choose Authors -----
 class ChooseAuthorScreen extends StatefulWidget {
   final Topic topic;
+  final String language;
   final String version;
-  const ChooseAuthorScreen({super.key, required this.topic, required this.version});
+  const ChooseAuthorScreen({
+    super.key,
+    required this.topic,
+    required this.language,
+    required this.version,
+  });
 
   @override
   State<ChooseAuthorScreen> createState() => _ChooseAuthorScreenState();
@@ -260,7 +322,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                   : () {
                       Navigator.push(context, MaterialPageRoute(
                         builder: (_) => AuthorComparisonScreen(
-                          language: defaultLanguage,
+                          language: widget.language,
                           version: widget.version,
                           topic: widget.topic,
                           initialAuthors: _selected.toList(),
