@@ -7,16 +7,8 @@ import 'package:gospel_frontend/auth_screen.dart';
 import 'package:gospel_frontend/main_scaffold.dart';
 import 'package:http/http.dart' as http;
 
+import 'config.dart';
 import 'firebase_options.dart';
-
-// ---- CONFIGURATION ----
-const apiBaseUrl = "http://192.168.20.183:5000";
-
-// Available versions for each language
-const Map<String, List<String>> languageVersions = {
-  'arabic': ['van dyck'],
-  'english': ['kjv'],
-};
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
