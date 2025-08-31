@@ -122,7 +122,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                       trailing: Icon(Icons.arrow_forward_ios),
                       onTap: () {
                         final authors = topic.references
-                            .map((e) => e['book'] as String)
+                            .map((e) => e.book)
                             .toSet()
                             .toList();
                         authors.sort(
@@ -143,17 +143,35 @@ class _TopicListScreenState extends State<TopicListScreen> {
   }
 }
 
+class Reference {
+  final String book;
+  final int chapter;
+  final String verses;
+
+  Reference({required this.book, required this.chapter, required this.verses});
+
+  factory Reference.fromJson(Map<String, dynamic> json) => Reference(
+        book: json['book'] as String,
+        chapter: json['chapter'] is int
+            ? json['chapter'] as int
+            : int.parse(json['chapter'].toString()),
+        verses: json['verses'] as String,
+      );
+}
+
 class Topic {
   final String id;
   final String name;
-  final List<dynamic> references;
+  final List<Reference> references;
   Topic({required this.id, required this.name, required this.references});
 
   factory Topic.fromJson(Map<String, dynamic> json) => Topic(
-    id: json['id'] ?? '',
-    name: json['name'] ?? '',
-    references: json['references'] ?? [],
-  );
+        id: json['id'] as String,
+        name: json['name'] as String,
+        references: (json['references'] as List<dynamic>)
+            .map((e) => Reference.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
 }
 
 
@@ -241,7 +259,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
   void initState() {
     super.initState();
     authors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => e.book)
         .toSet()
         .toList();
   }
@@ -325,7 +343,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   void initState() {
     super.initState();
     _allAuthors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => e.book)
         .toSet()
         .toList();
     _allAuthors.sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
@@ -348,15 +366,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     try {
       final futures = _selected.map((author) async {
         final refs =
-            widget.topic.references.where((r) => r['book'] == author);
+            widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(widget.language)}"
               "&version=${Uri.encodeComponent(widget.version)}"
               "&book=${Uri.encodeComponent(author)}"
-              "&chapter=${ref['chapter']}"
-              "&verse=${Uri.encodeComponent(ref['verses'])}";
+              "&chapter=${ref.chapter}"
+              "&verse=${Uri.encodeComponent(ref.verses)}";
           final response = await http.get(Uri.parse(url));
           if (response.statusCode != 200) {
             throw Exception("Error ${response.statusCode} for $author");
@@ -364,7 +382,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final List<dynamic> verses = json.decode(response.body);
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-          final title = "$author ${ref['chapter']}:${ref['verses']}";
+          final title = "$author ${ref.chapter}:${ref.verses}";
           parts.add({'title': title, 'text': text});
         }
         return MapEntry(author, parts);
