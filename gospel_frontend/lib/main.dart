@@ -11,6 +11,33 @@ import 'dart:convert';
 const apiBaseUrl = "http://192.168.20.183:5000"; // Change if your backend is hosted elsewhere
 const defaultLanguage = "arabic";
 const defaultVersion = "van%20dyck";
+// Unencoded version string used when fetching verses
+const defaultVersionName = "van dyck";
+
+// Order in which gospel references should appear
+const List<String> canonicalGospelsOrder = ['Matthew', 'Mark', 'Luke', 'John'];
+
+String canonicalizeGospel(String book) {
+  switch (book.toLowerCase()) {
+    case 'mathew':
+      return 'Matthew';
+    case 'matthew':
+      return 'Matthew';
+    case 'mark':
+      return 'Mark';
+    case 'luke':
+      return 'Luke';
+    case 'john':
+      return 'John';
+    default:
+      return book;
+  }
+}
+
+int _gospelIndex(String book) {
+  final idx = canonicalGospelsOrder.indexOf(book);
+  return idx == -1 ? canonicalGospelsOrder.length : idx;
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -111,8 +138,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
                       title: Text(topic.name),
                       trailing: Icon(Icons.arrow_forward_ios),
                       onTap: () {
+                        final authors = topic.references
+                            .map((e) => canonicalizeGospel(e['book'] as String))
+                            .toSet()
+                            .toList()
+                          ..sort((a, b) =>
+                              _gospelIndex(a).compareTo(_gospelIndex(b)));
                         Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => ChooseVersionScreen(topic: topic),
+                          builder: (_) => AuthorComparisonScreen(
+                            language: defaultLanguage,
+                            version: defaultVersionName,
+                            topic: topic,
+                            initialAuthors: authors,
+                          ),
                         ));
                       },
                     );
@@ -220,9 +258,10 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
   void initState() {
     super.initState();
     authors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => canonicalizeGospel(e['book'] as String))
         .toSet()
-        .toList();
+        .toList()
+      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
   }
 
   @override
@@ -296,7 +335,7 @@ class AuthorComparisonScreen extends StatefulWidget {
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   late final List<String> _allAuthors;
   late Set<String> _selected;
-  Map<String, String> _texts = {};
+  Map<String, List<Map<String, String>>> _texts = {};
   String? _error;
   bool _loading = true;
 
@@ -304,10 +343,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   void initState() {
     super.initState();
     _allAuthors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => canonicalizeGospel(e['book'] as String))
         .toSet()
-        .toList();
-    _selected = widget.initialAuthors.toSet();
+        .toList()
+      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
+    _selected = widget.initialAuthors.map(canonicalizeGospel).toSet();
     fetchTexts();
   }
 
@@ -325,8 +365,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
     try {
       final futures = _selected.map((author) async {
-        final refs = widget.topic.references.where((r) => r['book'] == author);
-        final parts = <String>[];
+        final refs = widget.topic.references.where((r) =>
+            canonicalizeGospel(r['book'] as String) == author);
+        final parts = <Map<String, String>>[];
         for (final ref in refs) {
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(widget.language)}"
@@ -341,9 +382,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final List<dynamic> verses = json.decode(response.body);
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-          parts.add(text);
+          final title = "${ref['chapter']}:${ref['verses']}";
+          parts.add({'title': title, 'text': text});
         }
-        return MapEntry(author, parts.join("\n\n"));
+        return MapEntry(author, parts);
       });
 
       final results = await Future.wait(futures);
@@ -362,7 +404,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
-      title: "Compare Authors",
+      title: widget.topic.name,
       body: Column(
         children: [
           Wrap(
@@ -395,32 +437,48 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         : SingleChildScrollView(
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              children: _selected.map((a) {
-                                final text = _texts[a] ?? '';
-                                final width =
-                                    MediaQuery.of(context).size.width /
-                                        _selected.length;
-                                return SizedBox(
-                                  width: width,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(a,
-                                            style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold)),
-                                        const SizedBox(height: 8),
-                                        Text(text,
-                                            style: const TextStyle(
-                                                fontSize: 16)),
-                                      ],
+                              children: () {
+                                final selectedSorted = _selected
+                                    .toList()
+                                    ..sort((a, b) => _gospelIndex(a)
+                                        .compareTo(_gospelIndex(b)));
+                                return selectedSorted.map((a) {
+                                  final entries = _texts[a] ?? [];
+                                  final width =
+                                      MediaQuery.of(context).size.width /
+                                          selectedSorted.length;
+                                  return SizedBox(
+                                    width: width,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(a,
+                                              style: const TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight:
+                                                      FontWeight.bold)),
+                                          const SizedBox(height: 8),
+                                          for (final entry in entries) ...[
+                                            Text(entry['title']!,
+                                                style: const TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight:
+                                                        FontWeight.w600)),
+                                            const SizedBox(height: 4),
+                                            Text(entry['text']!,
+                                                style: const TextStyle(
+                                                    fontSize: 16)),
+                                            const SizedBox(height: 16),
+                                          ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                );
-                              }).toList(),
+                                  );
+                                }).toList();
+                              }(),
                             ),
                           ),
           ),
