@@ -14,12 +14,18 @@ const defaultVersion = "van%20dyck";
 // Unencoded version string used when fetching verses
 const defaultVersionName = "van dyck";
 
-// Order in which gospel references should appear
-const List<String> canonicalGospelsOrder = ['Mathew', 'Mark', 'Luke', 'John'];
+// Order in which gospel references should appear.
+// Accept both common spellings for Matthew to maintain sort order.
+const Map<String, int> canonicalGospelsIndex = {
+  'Matthew': 0,
+  'Mathew': 0,
+  'Mark': 1,
+  'Luke': 2,
+  'John': 3,
+};
 
 int _gospelIndex(String book) {
-  final idx = canonicalGospelsOrder.indexOf(book);
-  return idx == -1 ? canonicalGospelsOrder.length : idx;
+  return canonicalGospelsIndex[book] ?? canonicalGospelsIndex.length;
 }
 
 void main() async {
@@ -418,50 +424,76 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                     : _error != null
                         ? Center(child: Text(_error!))
                         : SingleChildScrollView(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: () {
+                            child: Builder(
+                              builder: (context) {
                                 final selectedSorted = _selected
                                     .toList()
-                                    ..sort((a, b) => _gospelIndex(a)
-                                        .compareTo(_gospelIndex(b)));
-                                return selectedSorted.map((a) {
-                                  final entries = _texts[a] ?? [];
-                                  final width =
-                                      MediaQuery.of(context).size.width /
-                                          selectedSorted.length;
-                                  return SizedBox(
-                                    width: width,
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                  ..sort((a, b) => _gospelIndex(a)
+                                      .compareTo(_gospelIndex(b)));
+                                final width = MediaQuery.of(context).size.width /
+                                    selectedSorted.length;
+                                final columnWidths = <int, TableColumnWidth>{
+                                  for (int i = 0; i < selectedSorted.length; i++)
+                                    i: FixedColumnWidth(width)
+                                };
+                                final maxLen = selectedSorted
+                                    .map((a) => _texts[a]?.length ?? 0)
+                                    .fold<int>(0, (prev, e) => e > prev ? e : prev);
+                                return Table(
+                                  border: TableBorder.all(
+                                      color: Colors.grey.shade300),
+                                  columnWidths: columnWidths,
+                                  children: [
+                                    TableRow(
+                                      children: selectedSorted
+                                          .map((a) => Padding(
+                                                padding:
+                                                    const EdgeInsets.all(8.0),
+                                                child: Text(a,
+                                                    style: const TextStyle(
+                                                        fontSize: 18,
+                                                        fontWeight:
+                                                            FontWeight.bold)),
+                                              ))
+                                          .toList(),
+                                    ),
+                                    for (int i = 0; i < maxLen; i++)
+                                      TableRow(
                                         children: [
-                                          Text(a,
-                                              style: const TextStyle(
-                                                  fontSize: 18,
-                                                  fontWeight:
-                                                      FontWeight.bold)),
-                                          const SizedBox(height: 8),
-                                          for (final entry in entries) ...[
-                                            Text(entry['title']!,
-                                                style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight:
-                                                        FontWeight.w600)),
-                                            const SizedBox(height: 4),
-                                            Text(entry['text']!,
-                                                style: const TextStyle(
-                                                    fontSize: 16)),
-                                            const SizedBox(height: 16),
-                                          ],
+                                          for (final a in selectedSorted)
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.all(8.0),
+                                              child: () {
+                                                final entries =
+                                                    _texts[a] ?? [];
+                                                if (i >= entries.length) {
+                                                  return const SizedBox.shrink();
+                                                }
+                                                final entry = entries[i];
+                                                return Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(entry['title']!,
+                                                        style: const TextStyle(
+                                                            fontSize: 16,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w600)),
+                                                    const SizedBox(height: 4),
+                                                    Text(entry['text']!,
+                                                        style: const TextStyle(
+                                                            fontSize: 16)),
+                                                  ],
+                                                );
+                                              }(),
+                                            ),
                                         ],
                                       ),
-                                    ),
-                                  );
-                                }).toList();
-                              }(),
+                                  ],
+                                );
+                              },
                             ),
                           ),
           ),
