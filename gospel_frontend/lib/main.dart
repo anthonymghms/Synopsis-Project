@@ -243,7 +243,8 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
     authors = widget.topic.references
         .map((e) => e['book'] as String)
         .toSet()
-        .toList();
+        .toList()
+      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
   }
 
   @override
