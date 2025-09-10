@@ -358,12 +358,31 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             widget.topic.references.where((r) => r['book'] == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
+          final chapter = ref['chapter'];
+          final versesRef = ref['verses'];
+          if (chapter == null || versesRef == null) {
+            debugPrint('Skipping reference with missing fields for $author: $ref');
+            continue;
+          }
+
+          final language = widget.language;
+          final version = widget.version;
+          final chapterStr = chapter.toString();
+          final versesStr = versesRef.toString();
+
+          if ([language, version, author, chapterStr, versesStr]
+              .any((e) => e.isEmpty)) {
+            debugPrint(
+                'Skipping reference with empty parameter for $author: $ref');
+            continue;
+          }
+
           final url = "$apiBaseUrl/get_verse"
-              "?language=${Uri.encodeComponent(widget.language)}"
-              "&version=${Uri.encodeComponent(widget.version)}"
+              "?language=${Uri.encodeComponent(language)}"
+              "&version=${Uri.encodeComponent(version)}"
               "&book=${Uri.encodeComponent(author)}"
-              "&chapter=${ref['chapter']}"
-              "&verse=${Uri.encodeComponent(ref['verses'])}";
+              "&chapter=${Uri.encodeComponent(chapterStr)}"
+              "&verse=${Uri.encodeComponent(versesStr)}";
           final response = await http.get(Uri.parse(url));
           if (response.statusCode != 200) {
             throw Exception("Error ${response.statusCode} for $author");
@@ -371,7 +390,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final List<dynamic> verses = json.decode(response.body);
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-          final title = "$author ${ref['chapter']}:${ref['verses']}";
+          final title = "$author $chapterStr:$versesStr";
           parts.add({'title': title, 'text': text});
         }
         return MapEntry(author, parts);
