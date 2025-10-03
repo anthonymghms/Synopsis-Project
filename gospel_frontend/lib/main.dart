@@ -9,10 +9,10 @@ import 'dart:convert';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
-const defaultLanguage = "arabic";
-const defaultVersion = "van%20dyck";
+const defaultLanguage = "english";
+const defaultVersion = "kjv";
 // Unencoded version string used when fetching verses
-const defaultVersionName = "van dyck";
+const defaultVersionName = "kjv";
 
 // Order in which gospel references should appear.
 // Accept both common spellings for Matthew to maintain sort order.
@@ -660,9 +660,8 @@ class ChooseVersionScreen extends StatefulWidget {
 class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
   // Placeholder list of versions. Later, fetch from backend.
   final List<String> availableVersions = [
-    "van dyck", // Arabic
-    "kjv", // English
-    // Add more as needed
+    "kjv",
+    "nkjv",
   ];
 
   String? _selected;
