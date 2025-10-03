@@ -31,21 +31,17 @@ def get_topics(language, version):
   
 @app.route('/<language>/<version>/topic/<topic_id>', methods=['GET'])
 def get_topic(language, version, topic_id):
-    doc_ref = db.collection('references').document(language).collection(version).document(topic_id)
+    doc_ref = _topics_collection(language, version).document(topic_id)
     doc = doc_ref.get()
-    if doc.exists:
-        data = doc.to_dict()
-        data['id'] = doc.id
-        return Response(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            content_type="application/json; charset=utf-8"
-        )
-    else:
-        return Response(
-            json.dumps({"error": "Topic not found"}, ensure_ascii=False, indent=2),
-            status=404,
-            content_type="application/json; charset=utf-8"
-        )
+    if not doc.exists:
+        return Response(json.dumps({"error": "Topic not found"}, ensure_ascii=False, indent=2),
+                        status=404, content_type="application/json; charset=utf-8")
+
+    data = doc.to_dict() or {}
+    data['id'] = doc.id
+    return Response(json.dumps(data, ensure_ascii=False, indent=2),
+                    content_type="application/json; charset=utf-8")
+
         
 @app.route('/get_verse', methods=['GET'])
 def get_verse():
@@ -98,31 +94,36 @@ def get_verse():
         content_type="application/json; charset=utf-8"
     )
 
+def _topics_collection(language: str, version: str):
+    # match your Firestore doc id: english_kjv, arabic_van_dyck, etc.
+    doc_id = f"{language}_{version}".replace(" ", "_").lower()
+    return db.collection('references').document(doc_id).collection('topics')
+
 
 @app.route('/topics', methods=['GET'])
 def get_topics():
-    # Get params (use default if not provided)
     language = request.args.get('language', 'english')
-    version = request.args.get('version', 'kjv')
+    version  = request.args.get('version',  'kjv')
 
-    topics_ref = db.collection('references').document(language).collection(version)
-    docs = topics_ref.stream()
+    topics_ref = _topics_collection(language, version)
     topics = []
-
-    for doc in docs:
-        data = doc.to_dict()
-        # Format id with zero padding
-        padded_id = f"{int(doc.id):02}"
-        topic_name = data.get('name') or data.get('topic') or ''
-        topic = {
+    for doc in topics_ref.stream():
+        data = doc.to_dict() or {}
+        # zero-pad numeric ids, but don't crash if not numeric
+        try:
+            padded_id = f"{int(doc.id):02}"
+        except ValueError:
+            padded_id = doc.id
+        topics.append({
             "id": padded_id,
-            "name": topic_name,
-            "references": data.get('entries', []) or data.get('references', [])
-        }
-        topics.append(topic)
-    topics.sort(key=lambda x: int(x['id']))
+            "name": data.get("name", ""),
+            "references": data.get("entries", [])
+        })
 
-    return Response(json.dumps(topics, ensure_ascii=False, indent=2), content_type="application/json; charset=utf-8")
+    topics.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else x['id'])
+    return Response(json.dumps(topics, ensure_ascii=False, indent=2),
+                    content_type="application/json; charset=utf-8")
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=True)
