@@ -29,13 +29,35 @@ def get_topics(language, version):
     )
     '''
   
-@app.route('/<language>/<version>/topic/<topic_id>', methods=['GET'])
-def get_topic(language, version, topic_id):
-    doc_ref = db.collection('references').document(language).collection(version).document(topic_id)
+def _topics_collection(language: str, collection: str):
+    """Return a reference to the requested topics collection."""
+    language = language.strip()
+    collection = collection.strip() or 'topics'
+    return db.collection('references').document(language).collection(collection)
+
+
+def _serialize_topic_doc(doc):
+    data = doc.to_dict() or {}
+    padded_id = data.get('id') or f"{doc.id:0>2}"
+    topic = {
+        "id": padded_id,
+        "name": data.get('name', ''),
+        "references": data.get('entries') or data.get('references') or [],
+    }
+    # Optional metadata to help build grouped tables on the frontend.
+    for key in ['group', 'category', 'subtitle', 'order', 'description']:
+        if key in data:
+            topic[key] = data[key]
+    return topic
+
+
+@app.route('/<language>/topics/<topic_id>', methods=['GET'])
+def get_topic(language, topic_id):
+    collection_name = request.args.get('collection', 'topics')
+    doc_ref = _topics_collection(language, collection_name).document(topic_id)
     doc = doc_ref.get()
     if doc.exists:
-        data = doc.to_dict()
-        data['id'] = doc.id
+        data = _serialize_topic_doc(doc)
         return Response(
             json.dumps(data, ensure_ascii=False, indent=2),
             content_type="application/json; charset=utf-8"
@@ -101,27 +123,31 @@ def get_verse():
 
 @app.route('/topics', methods=['GET'])
 def get_topics():
-    # Get params (use default if not provided)
     language = request.args.get('language', 'arabic')
-    version = request.args.get('version', 'van dyck')
+    collection_name = request.args.get('collection', 'topics')
 
-    topics_ref = db.collection('references').document(language).collection(version)
+    topics_ref = _topics_collection(language, collection_name)
     docs = topics_ref.stream()
-    topics = []
 
-    for doc in docs:
-        data = doc.to_dict()
-        # Format id with zero padding
-        padded_id = f"{int(doc.id):02}"
-        topic = {
-            "id": padded_id,
-            "name": data.get('name', ''),
-            "references": data.get('entries', [])
-        }
-        topics.append(topic)
-    topics.sort(key=lambda x: int(x['id']))
+    topics = [_serialize_topic_doc(doc) for doc in docs]
 
-    return Response(json.dumps(topics, ensure_ascii=False, indent=2), content_type="application/json; charset=utf-8")
+    def _sort_key(item):
+        order = item.get('order')
+        try:
+            return (int(order), item.get('name', ''))
+        except (TypeError, ValueError):
+            pass
+        try:
+            return (int(item.get('id')), item.get('name', ''))
+        except (TypeError, ValueError):
+            return (9999, item.get('name', ''))
+
+    topics.sort(key=_sort_key)
+
+    return Response(
+        json.dumps(topics, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8"
+    )
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=True)
