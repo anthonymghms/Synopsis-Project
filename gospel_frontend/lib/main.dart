@@ -9,10 +9,9 @@ import 'dart:convert';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
-const defaultLanguage = "arabic";
-const defaultVersion = "van%20dyck";
-// Unencoded version string used when fetching verses
-const defaultVersionName = "van dyck";
+const defaultLanguage = "english";
+// Default version key used when fetching topics and verses
+const defaultVersion = "kjv";
 
 // Order in which gospel references should appear.
 // Accept both common spellings for Matthew to maintain sort order.
@@ -23,6 +22,8 @@ const Map<String, int> canonicalGospelsIndex = {
   'Luke': 2,
   'John': 3,
 };
+
+const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
 int _gospelIndex(String book) {
   return canonicalGospelsIndex[book] ?? canonicalGospelsIndex.length;
@@ -71,6 +72,8 @@ class TopicListScreen extends StatefulWidget {
 }
 
 class _TopicListScreenState extends State<TopicListScreen> {
+  final GlobalKey<_HarmonyTableState> _tableKey =
+      GlobalKey<_HarmonyTableState>();
   List<Topic> _topics = [];
   bool _loading = true;
   String? _error;
@@ -86,10 +89,12 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _loading = true;
       _error = null;
     });
-    final url =
-        "$apiBaseUrl/topics?language=$defaultLanguage&version=$defaultVersion";
+    final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
+      'language': defaultLanguage,
+      'version': defaultVersion,
+    });
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(uri);
       if (response.statusCode == 200) {
         List data = json.decode(response.body);
         setState(() {
@@ -113,38 +118,309 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   Widget build(BuildContext context) {
     return MainScaffold(
-      title: "Topics",
+      title: "Harmony of the Gospels",
       body: _loading
-          ? Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(child: Text(_error!))
-              : ListView.separated(
-                  itemCount: _topics.length,
-                  separatorBuilder: (_, __) => Divider(height: 1),
-                  itemBuilder: (context, idx) {
-                    final topic = _topics[idx];
-                    return ListTile(
-                      title: Text(topic.name),
-                      trailing: Icon(Icons.arrow_forward_ios),
-                      onTap: () {
-                        final authors = topic.references
-                            .map((e) => e['book'] as String)
-                            .toSet()
-                            .toList();
-                        authors.sort(
-                            (a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
-                        Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => AuthorComparisonScreen(
-                            language: defaultLanguage,
-                            version: defaultVersionName,
-                            topic: topic,
-                            initialAuthors: authors,
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Harmony of the Gospels',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
                           ),
-                        ));
-                      },
-                    );
-                  },
+                          const SizedBox(height: 8),
+                          Text(
+                            'Explore a side-by-side overview of the key events '
+                            'recorded by Matthew, Mark, Luke, and John. Tap a '
+                            'subject to read the passages together.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Colors.grey.shade700),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton.icon(
+                                onPressed: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'PDF download will be available soon.'),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.picture_as_pdf_outlined),
+                                label: const Text('Download PDF'),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  _tableKey.currentState?.resetScroll();
+                                },
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Reset Table'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 0),
+                    Expanded(
+                      child: HarmonyTable(
+                        key: _tableKey,
+                        topics: _topics,
+                        onTopicSelected: _openTopic,
+                      ),
+                    ),
+                  ],
                 ),
+    );
+  }
+
+  void _openTopic(Topic topic) {
+    final authors = topic.references.map((e) => e.book).toSet().toList()
+      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AuthorComparisonScreen(
+        language: defaultLanguage,
+        version: defaultVersion,
+        topic: topic,
+        initialAuthors: authors,
+      ),
+    ));
+  }
+}
+
+class HarmonyTable extends StatefulWidget {
+  const HarmonyTable({
+    super.key,
+    required this.topics,
+    this.onTopicSelected,
+  });
+
+  final List<Topic> topics;
+  final ValueChanged<Topic>? onTopicSelected;
+
+  @override
+  State<HarmonyTable> createState() => _HarmonyTableState();
+}
+
+class _HarmonyTableState extends State<HarmonyTable> {
+  late final ScrollController _verticalController;
+  late final ScrollController _horizontalController;
+
+  @override
+  void initState() {
+    super.initState();
+    _verticalController = ScrollController();
+    _horizontalController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _verticalController.dispose();
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  void resetScroll() {
+    if (_verticalController.hasClients) {
+      _verticalController.animateTo(0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic);
+    }
+    if (_horizontalController.hasClients) {
+      _horizontalController.animateTo(0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic);
+    }
+  }
+
+  Map<String, List<GospelReference>> _groupReferences(Topic topic) {
+    final map = {
+      for (final gospel in orderedGospels) gospel: <GospelReference>[]
+    };
+    for (final reference in topic.references) {
+      final key = _normalizeGospelName(reference.book);
+      map.putIfAbsent(key, () => <GospelReference>[]).add(reference);
+    }
+    for (final entry in map.entries) {
+      entry.value.sort((a, b) {
+        final chapterCompare = a.chapter.compareTo(b.chapter);
+        if (chapterCompare != 0) return chapterCompare;
+        return a.verses.compareTo(b.verses);
+      });
+    }
+    return map;
+  }
+
+  String _normalizeGospelName(String name) {
+    if (name.toLowerCase() == 'mathew') {
+      return 'Matthew';
+    }
+    return name;
+  }
+
+  String _formatReferences(List<GospelReference> refs) {
+    if (refs.isEmpty) {
+      return '—';
+    }
+    final formatted = refs
+        .map((ref) => ref.formattedReference)
+        .where((text) => text.trim().isNotEmpty)
+        .toList();
+    if (formatted.isEmpty) {
+      return '—';
+    }
+    return formatted.join('\n');
+  }
+
+  Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+      child: Text(label, style: style, textAlign: align),
+    );
+  }
+
+  Widget _buildReferenceCell(
+      List<GospelReference> refs, TextStyle? style, TextAlign align) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Text(
+        _formatReferences(refs),
+        style: style,
+        textAlign: align,
+        softWrap: true,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final headerStyle = theme.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.w600,
+      letterSpacing: 0.2,
+      color: theme.colorScheme.onSurface,
+    );
+    final subjectStyle = theme.textTheme.bodyLarge?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(
+      height: 1.4,
+    );
+    final borderColor = theme.dividerColor.withOpacity(0.4);
+    final headerBackground = theme.colorScheme.surfaceVariant;
+
+    final rows = <TableRow>[
+      TableRow(
+        decoration: BoxDecoration(color: headerBackground),
+        children: [
+          _buildHeaderCell('Subjects', headerStyle, TextAlign.left),
+          for (final gospel in orderedGospels)
+            _buildHeaderCell(gospel, headerStyle, TextAlign.center),
+        ],
+      ),
+    ];
+
+    for (var i = 0; i < widget.topics.length; i++) {
+      final topic = widget.topics[i];
+      final grouped = _groupReferences(topic);
+      final isEvenRow = i.isEven;
+      final baseColor = theme.colorScheme.surface;
+      final alternateColor =
+          theme.colorScheme.surfaceVariant.withOpacity(0.35);
+      rows.add(
+        TableRow(
+          decoration: BoxDecoration(
+            color: isEvenRow
+                ? baseColor
+                : alternateColor,
+          ),
+          children: [
+            TableCell(
+              verticalAlignment: TableCellVerticalAlignment.top,
+              child: TableRowInkWell(
+                onTap: widget.onTopicSelected == null
+                    ? null
+                    : () => widget.onTopicSelected!(topic),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    topic.name,
+                    style: subjectStyle,
+                  ),
+                ),
+              ),
+            ),
+            for (final gospel in orderedGospels)
+              TableCell(
+                verticalAlignment: TableCellVerticalAlignment.top,
+                child: _buildReferenceCell(
+                  grouped[gospel] ?? const <GospelReference>[],
+                  referenceStyle,
+                  TextAlign.center,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final availableWidth = MediaQuery.of(context).size.width;
+    final minTableWidth = availableWidth < 720 ? 720.0 : availableWidth;
+
+    return Scrollbar(
+      controller: _verticalController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _verticalController,
+        child: Scrollbar(
+          controller: _horizontalController,
+          thumbVisibility: true,
+          notificationPredicate: (notification) =>
+              notification.metrics.axis == Axis.horizontal,
+          child: SingleChildScrollView(
+            controller: _horizontalController,
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: minTableWidth),
+              child: Table(
+                border: TableBorder(
+                  horizontalInside: BorderSide(color: borderColor, width: 0.6),
+                  verticalInside: BorderSide(color: borderColor, width: 0.6),
+                  top: BorderSide(color: borderColor, width: 0.8),
+                  bottom: BorderSide(color: borderColor, width: 0.8),
+                  left: BorderSide(color: borderColor, width: 0.8),
+                  right: BorderSide(color: borderColor, width: 0.8),
+                ),
+                columnWidths: const {
+                  0: FlexColumnWidth(2.6),
+                  1: FlexColumnWidth(1.4),
+                  2: FlexColumnWidth(1.4),
+                  3: FlexColumnWidth(1.4),
+                  4: FlexColumnWidth(1.4),
+                },
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                children: rows,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -152,14 +428,65 @@ class _TopicListScreenState extends State<TopicListScreen> {
 class Topic {
   final String id;
   final String name;
-  final List<dynamic> references;
-  Topic({required this.id, required this.name, required this.references});
+  final List<GospelReference> references;
+  const Topic({
+    required this.id,
+    required this.name,
+    required this.references,
+  });
 
-  factory Topic.fromJson(Map<String, dynamic> json) => Topic(
-    id: json['id'] ?? '',
-    name: json['name'] ?? '',
-    references: json['references'] ?? [],
-  );
+  factory Topic.fromJson(Map<String, dynamic> json) {
+    final dynamic referencesRaw = json['references'] ?? json['entries'] ?? [];
+    final referencesJson =
+        referencesRaw is List ? referencesRaw : const <dynamic>[];
+    return Topic(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? json['topic'] ?? '').toString().trim(),
+      references: (referencesJson ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map(GospelReference.fromJson)
+          .toList(),
+    );
+  }
+}
+
+class GospelReference {
+  final String book;
+  final int chapter;
+  final String verses;
+
+  const GospelReference({
+    required this.book,
+    required this.chapter,
+    required this.verses,
+  });
+
+  factory GospelReference.fromJson(Map<String, dynamic> json) {
+    final rawChapter = json['chapter'];
+    final parsedChapter = rawChapter is int
+        ? rawChapter
+        : int.tryParse(rawChapter?.toString() ?? '') ?? 0;
+    return GospelReference(
+      book: (json['book'] ?? '').toString().trim(),
+      chapter: parsedChapter,
+      verses:
+          (json['verses'] ?? json['verse'] ?? '').toString().trim(),
+    );
+  }
+
+  String get formattedReference {
+    if (chapter <= 0 && verses.isEmpty) {
+      return '';
+    }
+    if (chapter <= 0) {
+      return verses;
+    }
+    final trimmedVerses = verses.trim();
+    if (trimmedVerses.isEmpty) {
+      return '$chapter';
+    }
+    return '$chapter:$trimmedVerses';
+  }
 }
 
 
@@ -247,7 +574,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
   void initState() {
     super.initState();
     authors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => e.book)
         .toSet()
         .toList()
       ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
@@ -332,7 +659,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   void initState() {
     super.initState();
     _allAuthors = widget.topic.references
-        .map((e) => e['book'] as String)
+        .map((e) => e.book)
         .toSet()
         .toList();
     _allAuthors.sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
@@ -354,16 +681,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
     try {
       final futures = _selected.map((author) async {
-        final refs =
-            widget.topic.references.where((r) => r['book'] == author);
+        final refs = widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(widget.language)}"
               "&version=${Uri.encodeComponent(widget.version)}"
               "&book=${Uri.encodeComponent(author)}"
-              "&chapter=${ref['chapter']}"
-              "&verse=${Uri.encodeComponent(ref['verses'])}";
+              "&chapter=${ref.chapter}"
+              "&verse=${Uri.encodeComponent(ref.verses)}";
           final response = await http.get(Uri.parse(url));
           if (response.statusCode != 200) {
             throw Exception("Error ${response.statusCode} for $author");
@@ -371,7 +697,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final List<dynamic> verses = json.decode(response.body);
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
-          final title = "$author ${ref['chapter']}:${ref['verses']}";
+          final refLabel = ref.formattedReference;
+          final title = refLabel.isEmpty ? author : "$author $refLabel";
           parts.add({'title': title, 'text': text});
         }
         return MapEntry(author, parts);

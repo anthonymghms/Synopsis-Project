@@ -102,8 +102,8 @@ def get_verse():
 @app.route('/topics', methods=['GET'])
 def get_topics():
     # Get params (use default if not provided)
-    language = request.args.get('language', 'arabic')
-    version = request.args.get('version', 'van dyck')
+    language = request.args.get('language', 'english')
+    version = request.args.get('version', 'kjv')
 
     topics_ref = db.collection('references').document(language).collection(version)
     docs = topics_ref.stream()
@@ -113,10 +113,11 @@ def get_topics():
         data = doc.to_dict()
         # Format id with zero padding
         padded_id = f"{int(doc.id):02}"
+        topic_name = data.get('name') or data.get('topic') or ''
         topic = {
             "id": padded_id,
-            "name": data.get('name', ''),
-            "references": data.get('entries', [])
+            "name": topic_name,
+            "references": data.get('entries', []) or data.get('references', [])
         }
         topics.append(topic)
     topics.sort(key=lambda x: int(x['id']))
