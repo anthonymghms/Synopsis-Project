@@ -1,5 +1,6 @@
 from flask import Flask, request, Response
 import json
+import re
 import firebase_admin
 from firebase_admin import credentials, firestore
 from flask_cors import CORS
@@ -43,16 +44,128 @@ def get_topic(language, version, topic_id):
                     content_type="application/json; charset=utf-8")
 
         
+def _normalize_book_token(value: str) -> str:
+    return ''.join(ch.lower() for ch in (value or '') if ch.isalnum())
+
+
+_ORDINAL_WORDS = {
+    'first': '1',
+    'second': '2',
+    'third': '3',
+    'fourth': '4',
+}
+
+
+_ROMAN_NUMERALS = {
+    'i': '1',
+    'ii': '2',
+    'iii': '3',
+    'iv': '4',
+    'v': '5',
+    'vi': '6',
+    'vii': '7',
+    'viii': '8',
+}
+
+
+_BOOK_SYNONYMS = {
+    'canticles': ['songofsongs', 'songofsolomon'],
+    'songofsongs': ['songofsolomon', 'canticles'],
+    'songofsolomon': ['songofsongs', 'canticles'],
+    'psalm': ['psalms'],
+    'psalms': ['psalm'],
+}
+
+
+def _expand_with_synonyms(tokens):
+    expanded = set()
+    stack = list(tokens)
+    while stack:
+        token = stack.pop()
+        if not token or token in expanded:
+            continue
+        expanded.add(token)
+        for synonym in _BOOK_SYNONYMS.get(token, []):
+            stack.append(synonym)
+    return expanded
+
+
+def _book_name_candidates(name: str):
+    if not name:
+        return set()
+    tokens = set()
+    normalized = _normalize_book_token(name)
+    tokens.add(normalized)
+    tokens.add(re.sub(r'^[0-9]+', '', normalized))
+
+    for word, digit in _ORDINAL_WORDS.items():
+        if normalized.startswith(word):
+            remainder = normalized[len(word):]
+            tokens.add(digit + remainder)
+            tokens.add(remainder)
+
+    for roman, digit in _ROMAN_NUMERALS.items():
+        if normalized.startswith(roman):
+            remainder = normalized[len(roman):]
+            tokens.add(digit + remainder)
+            tokens.add(remainder)
+
+    return {token for token in _expand_with_synonyms(tokens) if token}
+
+
+def _document_book_tokens(doc_id: str):
+    parts = (doc_id or '').split(' ')
+    tokens = set()
+    tokens.add(_normalize_book_token(doc_id))
+    if len(parts) > 1:
+        tokens.add(_normalize_book_token(' '.join(parts[1:])))
+    tokens.add(_normalize_book_token(parts[0]))
+    tokens.add(_normalize_book_token(parts[-1]))
+    return {token for token in _expand_with_synonyms(tokens) if token}
+
+
+def _resolve_book_document_id(language: str, version: str, book: str):
+    collection = db.collection('bibles').document(language).collection(version)
+    direct_doc = collection.document(book)
+    if direct_doc.get().exists:
+        return book
+
+    candidates = _book_name_candidates(book)
+    if not candidates:
+        return None
+
+    documents = list(collection.list_documents())
+    for doc in documents:
+        prefix = _normalize_book_token(doc.id.split(' ')[0])
+        if prefix and prefix in candidates:
+            return doc.id
+
+    tokenized_docs = [(doc.id, _document_book_tokens(doc.id)) for doc in documents]
+    for doc_id, tokens in tokenized_docs:
+        for candidate in candidates:
+            for token in tokens:
+                if not token or not candidate:
+                    continue
+                if candidate == token or candidate in token or token in candidate:
+                    return doc_id
+
+    return None
+
+
 @app.route('/get_verse', methods=['GET'])
 def get_verse():
     language = request.args.get('language')
     version = request.args.get('version')
-    book = request.args.get('book')
+    requested_book = request.args.get('book')
     chapter = request.args.get('chapter')
     verse = request.args.get('verse')  # Can be "1" or "1-3"
 
-    if not all([language, version, book, chapter, verse]):
+    if not all([language, version, requested_book, chapter, verse]):
         return Response(json.dumps({"error": "Missing params"}), status=400, content_type="application/json")
+
+    book = _resolve_book_document_id(language, version, requested_book)
+    if not book:
+        return Response(json.dumps({"error": f"Unknown book '{requested_book}'"}), status=404, content_type="application/json")
 
     def get_actual_verse_text(verse_num):
         verse_ref = (

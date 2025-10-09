@@ -25,28 +25,17 @@ const Map<String, int> canonicalGospelsIndex = {
 
 const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
-// Firestore document IDs for the gospel books differ from the human-friendly
-// names that appear in the UI. When requesting verses from the backend we must
-// use these document IDs, otherwise the API returns empty responses.
-const Map<String, String> _gospelBookDocumentIds = {
-  'matthew': 'MAT The Gospel According to Matthew',
-  'mathew': 'MAT The Gospel According to Matthew',
-  'mark': 'MRK The Gospel According to Mark',
-  'luke': 'LUK The Gospel According to Luke',
-  'john': 'JHN The Gospel According to John',
-};
-
-String _resolveGospelBookDocumentId(String book) {
-  final normalized = book.trim();
-  if (normalized.isEmpty) {
-    return normalized;
-  }
-  final lookup = normalized.toLowerCase();
-  return _gospelBookDocumentIds[lookup] ?? normalized;
-}
-
 int _gospelIndex(String book) {
   return canonicalGospelsIndex[book] ?? canonicalGospelsIndex.length;
+}
+
+int _compareBooks(String a, String b) {
+  final indexA = _gospelIndex(a);
+  final indexB = _gospelIndex(b);
+  if (indexA != indexB) {
+    return indexA.compareTo(indexB);
+  }
+  return a.toLowerCase().compareTo(b.toLowerCase());
 }
 
 void main() async {
@@ -212,7 +201,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   void _openTopic(Topic topic) {
     final authors = topic.references.map((e) => e.book).toSet().toList()
-      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
+      ..sort(_compareBooks);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => AuthorComparisonScreen(
         language: defaultLanguage,
@@ -602,7 +591,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
         .map((e) => e.book)
         .toSet()
         .toList()
-      ..sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
+      ..sort(_compareBooks);
   }
 
   @override
@@ -643,7 +632,8 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                           language: defaultLanguage,
                           version: widget.version,
                           topic: widget.topic,
-                          initialAuthors: _selected.toList(),
+                          initialAuthors:
+                              _selected.toList()..sort(_compareBooks),
                         ),
                       ));
                     },
@@ -687,7 +677,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         .map((e) => e.book)
         .toSet()
         .toList();
-    _allAuthors.sort((a, b) => _gospelIndex(a).compareTo(_gospelIndex(b)));
+    _allAuthors.sort(_compareBooks);
     _selected = widget.initialAuthors.toSet();
     fetchTexts();
   }
@@ -709,9 +699,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         final refs = widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
-          final bookId = ref.bookId.isNotEmpty
-              ? ref.bookId
-              : _resolveGospelBookDocumentId(author);
+          final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(widget.language)}"
               "&version=${Uri.encodeComponent(widget.version)}"
@@ -781,10 +769,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         : SingleChildScrollView(
                             child: Builder(
                               builder: (context) {
-                                final selectedSorted = _selected
-                                    .toList()
-                                  ..sort((a, b) => _gospelIndex(a)
-                                      .compareTo(_gospelIndex(b)));
+                                final selectedSorted =
+                                    _selected.toList()..sort(_compareBooks);
                                 final width = MediaQuery.of(context).size.width /
                                     selectedSorted.length;
                                 final columnWidths = <int, TableColumnWidth>{
