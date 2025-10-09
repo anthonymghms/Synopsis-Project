@@ -6,7 +6,7 @@ import 'package:gospel_frontend/main_scaffold.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:math' as math;
+import 'reference_link_opener.dart';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
@@ -479,256 +479,92 @@ class ReferenceHoverText extends StatefulWidget {
 }
 
 class _ReferenceHoverTextState extends State<ReferenceHoverText> {
-  final LayerLink _layerLink = LayerLink();
-  OverlayEntry? _overlayEntry;
-  bool _isFetching = false;
-  String? _verseText;
-  String? _error;
   bool _isHovered = false;
+  bool _isLaunching = false;
 
-  @override
-  void dispose() {
-    _hideOverlay();
-    super.dispose();
+  Alignment _alignmentForTextAlign(TextAlign align) {
+    switch (align) {
+      case TextAlign.center:
+        return Alignment.center;
+      case TextAlign.right:
+        return Alignment.centerRight;
+      case TextAlign.left:
+      case TextAlign.start:
+        return Alignment.centerLeft;
+      case TextAlign.end:
+        return Alignment.centerRight;
+      case TextAlign.justify:
+        return Alignment.centerLeft;
+    }
   }
 
-  Future<void> _fetchIfNeeded() async {
-    if (_verseText != null || _error != null || _isFetching) {
+  Uri? _buildReferenceUri(GospelReference reference) {
+    if (reference.formattedReference.isEmpty) {
+      return null;
+    }
+    final buffer = StringBuffer(reference.book.trim());
+    if (reference.chapter > 0) {
+      buffer.write(' ');
+      buffer.write(reference.chapter);
+      final verses = reference.verses.trim();
+      if (verses.isNotEmpty) {
+        buffer.write(':');
+        buffer.write(verses);
+      }
+    }
+    final query = buffer.toString().trim();
+    if (query.isEmpty) {
+      return null;
+    }
+    final versionCode = defaultVersion.toUpperCase();
+    return Uri.https(
+      'www.biblegateway.com',
+      '/passage/',
+      {
+        'search': query,
+        'version': versionCode,
+      },
+    );
+  }
+
+  Future<void> _handleTap() async {
+    if (_isLaunching) {
+      return;
+    }
+    final uri = _buildReferenceUri(widget.reference);
+    if (uri == null) {
       return;
     }
     setState(() {
-      _isFetching = true;
+      _isLaunching = true;
     });
-    _overlayEntry?.markNeedsBuild();
     try {
-      final queryParameters = {
-        'language': defaultLanguage,
-        'version': defaultVersion,
-        'book': widget.reference.bookId.isNotEmpty
-            ? widget.reference.bookId
-            : widget.reference.book,
-        'chapter': widget.reference.chapter.toString(),
-        'verse': widget.reference.verses,
-      };
-      final uri = Uri.parse('$apiBaseUrl/get_verse')
-          .replace(queryParameters: queryParameters);
-      final response = await http.get(uri);
-      if (response.statusCode == 200) {
-        final List<dynamic> verses = json.decode(response.body);
-        final text = verses
-            .map((v) => "${v['verse']}. ${v['text']}")
-            .join('\n')
-            .trim();
-        _verseText = text.isEmpty ? 'No text available.' : text;
-        _error = null;
-      } else {
-        _error = 'Failed to load reference (${response.statusCode}).';
+      final opened = await openReferenceLink(uri);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open reference.')),
+        );
       }
-    } catch (e) {
-      _error = 'Failed to load reference.';
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open reference.')),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
-          _isFetching = false;
-        });
-        _overlayEntry?.markNeedsBuild();
-      }
-    }
-  }
-
-  void _showOverlay() {
-    if (_overlayEntry != null) {
-      return;
-    }
-    final overlay = Overlay.of(context);
-    if (overlay == null) {
-      return;
-    }
-    final targetBox = context.findRenderObject() as RenderBox?;
-    final overlayBox = overlay.context.findRenderObject() as RenderBox?;
-
-    const double tooltipMaxWidth = 240.0;
-    const double tooltipMinWidth = 160.0;
-    const double tooltipVerticalPadding = 8.0;
-    const double tooltipScreenPadding = 16.0;
-    double maxWidth = tooltipMaxWidth;
-    double minWidth = tooltipMinWidth;
-    double? maxHeight = 220.0;
-    if (overlayBox != null) {
-      final availableWidth = overlayBox.size.width - (tooltipScreenPadding * 2);
-      if (availableWidth.isFinite && availableWidth > 0) {
-        maxWidth = math.min(tooltipMaxWidth, availableWidth);
-      }
-      minWidth = math.min(tooltipMinWidth, maxWidth);
-      maxHeight = math.min(overlayBox.size.height * 0.45, maxHeight!);
-    }
-
-    double spaceRight = double.infinity;
-    double spaceLeft = double.infinity;
-    double spaceBelow = double.infinity;
-    double spaceAbove = double.infinity;
-
-    bool alignRight = false;
-    bool showAbove = false;
-    if (targetBox != null && overlayBox != null) {
-      final targetTopLeft =
-          targetBox.localToGlobal(Offset.zero, ancestor: overlayBox);
-      final targetBottomRight = targetBox.localToGlobal(
-        targetBox.size.bottomRight(Offset.zero),
-        ancestor: overlayBox,
-      );
-      spaceRight = overlayBox.size.width - targetBottomRight.dx;
-      spaceLeft = targetTopLeft.dx;
-      spaceBelow = overlayBox.size.height - targetBottomRight.dy;
-      spaceAbove = targetTopLeft.dy;
-
-      if (spaceRight < maxWidth && spaceLeft > spaceRight) {
-        alignRight = true;
-      }
-
-      final estimatedHeight =
-          (maxHeight ?? math.min(overlayBox.size.height * 0.45, 220.0));
-      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
-        showAbove = true;
-      }
-
-      final double horizontalSpace = alignRight ? spaceLeft : spaceRight;
-      if (horizontalSpace.isFinite && horizontalSpace > 0) {
-        final usableWidth =
-            math.max(0.0, horizontalSpace - tooltipScreenPadding);
-        if (usableWidth > 0) {
-          maxWidth = math.min(maxWidth, usableWidth);
-        }
-      }
-      minWidth = math.min(minWidth, maxWidth);
-
-      final double verticalSpace = showAbove ? spaceAbove : spaceBelow;
-      if (verticalSpace.isFinite && verticalSpace > 0) {
-        final usableHeight =
-            math.max(0.0, verticalSpace - tooltipVerticalPadding * 2);
-        if (usableHeight > 0) {
-          if (maxHeight == null) {
-            maxHeight = usableHeight;
-          } else {
-            maxHeight = math.min(maxHeight!, usableHeight);
-          }
-        }
-      }
-    }
-
-    if (maxHeight != null && maxHeight! <= 0) {
-      maxHeight = null;
-    }
-
-    final Alignment followerAnchor;
-    final Alignment targetAnchor;
-    final Offset offset;
-    if (showAbove) {
-      followerAnchor = alignRight ? Alignment.bottomRight : Alignment.bottomLeft;
-      targetAnchor = alignRight ? Alignment.topRight : Alignment.topLeft;
-      offset = const Offset(0, -tooltipVerticalPadding);
-    } else {
-      followerAnchor = alignRight ? Alignment.topRight : Alignment.topLeft;
-      targetAnchor = alignRight ? Alignment.bottomRight : Alignment.bottomLeft;
-      offset = const Offset(0, tooltipVerticalPadding);
-    }
-
-    final BoxConstraints constraints = maxHeight != null
-        ? BoxConstraints(
-            minWidth: minWidth,
-            maxWidth: maxWidth,
-            maxHeight: maxHeight!,
-          )
-        : BoxConstraints(minWidth: minWidth, maxWidth: maxWidth);
-
-    _overlayEntry = OverlayEntry(
-      builder: (context) {
-        final theme = Theme.of(context);
-        final content = _error ?? _verseText ?? 'Loading...';
-        return Positioned.fill(
-          child: IgnorePointer(
-            child: CompositedTransformFollower(
-              link: _layerLink,
-              showWhenUnlinked: false,
-              offset: offset,
-              followerAnchor: followerAnchor,
-              targetAnchor: targetAnchor,
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  constraints: constraints,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                    border: Border.all(
-                      color: theme.dividerColor.withOpacity(0.4),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.only(right: 4),
-                    child: Text(
-                      content,
-                      style: theme.textTheme.bodyMedium,
-                      textAlign: TextAlign.start,
-                      softWrap: true,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-    overlay.insert(_overlayEntry!);
-  }
-
-  void _hideOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-  }
-
-  void _handlePointerEnter(PointerEvent event) {
-    if (!_isHovered) {
-      setState(() {
-        _isHovered = true;
-      });
-    }
-    _showOverlay();
-    _fetchIfNeeded();
-  }
-
-  void _handlePointerExit(PointerEvent event) {
-    if (_isHovered) {
-      setState(() {
-        _isHovered = false;
-      });
-    }
-    _hideOverlay();
-  }
-
-  void _handleTap() {
-    if (_overlayEntry == null) {
-      setState(() {
-        _isHovered = true;
-      });
-      _showOverlay();
-      _fetchIfNeeded();
-    } else {
-      _hideOverlay();
-      if (_isHovered) {
-        setState(() {
-          _isHovered = false;
+          _isLaunching = false;
         });
       }
+    }
+  }
+
+  void _updateHover(bool isHovered) {
+    if (_isHovered != isHovered) {
+      setState(() {
+        _isHovered = isHovered;
+      });
     }
   }
 
@@ -741,19 +577,31 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       decoration: TextDecoration.underline,
       decorationColor: theme.colorScheme.primary,
     );
-    return CompositedTransformTarget(
-      link: _layerLink,
+    final text = widget.reference.formattedReference;
+    final alignment = _alignmentForTextAlign(widget.textAlign);
+
+    return Tooltip(
+      message: 'Click to view more',
+      waitDuration: const Duration(milliseconds: 150),
       child: MouseRegion(
-        onEnter: _handlePointerEnter,
-        onExit: _handlePointerExit,
+        cursor:
+            text.isEmpty ? SystemMouseCursors.basic : SystemMouseCursors.click,
+        onEnter: (_) => _updateHover(true),
+        onExit: (_) => _updateHover(false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: _handleTap,
-          child: Text(
-            widget.reference.formattedReference,
-            style: _isHovered ? hoverStyle : baseStyle,
-            textAlign: widget.textAlign,
-            softWrap: true,
+          onTap: text.isEmpty ? null : _handleTap,
+          child: Align(
+            alignment: alignment,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                text,
+                style: _isHovered ? hoverStyle : baseStyle,
+                textAlign: widget.textAlign,
+                softWrap: true,
+              ),
+            ),
           ),
         ),
       ),
