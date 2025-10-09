@@ -307,19 +307,27 @@ class HarmonyTable extends StatefulWidget {
 
 class _HarmonyTableState extends State<HarmonyTable> {
   late final ScrollController _verticalController;
-  late final ScrollController _horizontalController;
+  late final ScrollController _headerHorizontalController;
+  late final ScrollController _bodyHorizontalController;
+  bool _isSyncingHorizontalScroll = false;
 
   @override
   void initState() {
     super.initState();
     _verticalController = ScrollController();
-    _horizontalController = ScrollController();
+    _headerHorizontalController = ScrollController();
+    _bodyHorizontalController = ScrollController();
+    _headerHorizontalController.addListener(_syncFromHeader);
+    _bodyHorizontalController.addListener(_syncFromBody);
   }
 
   @override
   void dispose() {
     _verticalController.dispose();
-    _horizontalController.dispose();
+    _headerHorizontalController.removeListener(_syncFromHeader);
+    _bodyHorizontalController.removeListener(_syncFromBody);
+    _headerHorizontalController.dispose();
+    _bodyHorizontalController.dispose();
     super.dispose();
   }
 
@@ -329,11 +337,54 @@ class _HarmonyTableState extends State<HarmonyTable> {
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic);
     }
-    if (_horizontalController.hasClients) {
-      _horizontalController.animateTo(0,
+    if (_bodyHorizontalController.hasClients) {
+      _bodyHorizontalController.animateTo(0,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic);
     }
+    if (_headerHorizontalController.hasClients) {
+      _headerHorizontalController.animateTo(0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic);
+    }
+  }
+
+  void _syncFromHeader() {
+    if (_isSyncingHorizontalScroll) return;
+    if (!_headerHorizontalController.hasClients ||
+        !_bodyHorizontalController.hasClients) {
+      return;
+    }
+    final targetOffset = _headerHorizontalController.offset;
+    if ((_bodyHorizontalController.offset - targetOffset).abs() < 0.5) {
+      return;
+    }
+    _isSyncingHorizontalScroll = true;
+    final position = _bodyHorizontalController.position;
+    final clamped = targetOffset
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    _bodyHorizontalController.jumpTo(clamped);
+    _isSyncingHorizontalScroll = false;
+  }
+
+  void _syncFromBody() {
+    if (_isSyncingHorizontalScroll) return;
+    if (!_bodyHorizontalController.hasClients ||
+        !_headerHorizontalController.hasClients) {
+      return;
+    }
+    final targetOffset = _bodyHorizontalController.offset;
+    if ((_headerHorizontalController.offset - targetOffset).abs() < 0.5) {
+      return;
+    }
+    _isSyncingHorizontalScroll = true;
+    final position = _headerHorizontalController.position;
+    final clamped = targetOffset
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    _headerHorizontalController.jumpTo(clamped);
+    _isSyncingHorizontalScroll = false;
   }
 
   Map<String, List<GospelReference>> _groupReferences(Topic topic) {
@@ -442,16 +493,15 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final borderColor = theme.dividerColor.withOpacity(0.4);
     final headerBackground = theme.colorScheme.surfaceVariant;
 
-    final rows = <TableRow>[
-      TableRow(
-        decoration: BoxDecoration(color: headerBackground),
-        children: [
-          _buildHeaderCell('Subjects', headerStyle, TextAlign.left),
-          for (final gospel in orderedGospels)
-            _buildHeaderCell(gospel, headerStyle, TextAlign.center),
-        ],
-      ),
-    ];
+    final headerRow = TableRow(
+      decoration: BoxDecoration(color: headerBackground),
+      children: [
+        _buildHeaderCell('Subjects', headerStyle, TextAlign.left),
+        for (final gospel in orderedGospels)
+          _buildHeaderCell(gospel, headerStyle, TextAlign.center),
+      ],
+    );
+    final bodyRows = <TableRow>[];
 
     for (var i = 0; i < widget.topics.length; i++) {
       final topic = widget.topics[i];
@@ -460,7 +510,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
       final baseColor = theme.colorScheme.surface;
       final alternateColor =
           theme.colorScheme.surfaceVariant.withOpacity(0.35);
-      rows.add(
+      bodyRows.add(
         TableRow(
           decoration: BoxDecoration(
             color: isEvenRow
@@ -501,44 +551,77 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final availableWidth = MediaQuery.of(context).size.width;
     final minTableWidth = availableWidth < 720 ? 720.0 : availableWidth;
 
-    return Scrollbar(
-      controller: _verticalController,
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        controller: _verticalController,
-        child: Scrollbar(
-          controller: _horizontalController,
-          thumbVisibility: true,
-          notificationPredicate: (notification) =>
-              notification.metrics.axis == Axis.horizontal,
-          child: SingleChildScrollView(
-            controller: _horizontalController,
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: minTableWidth),
-              child: Table(
-                border: TableBorder(
-                  horizontalInside: BorderSide(color: borderColor, width: 0.6),
-                  verticalInside: BorderSide(color: borderColor, width: 0.6),
-                  top: BorderSide(color: borderColor, width: 0.8),
-                  bottom: BorderSide(color: borderColor, width: 0.8),
-                  left: BorderSide(color: borderColor, width: 0.8),
-                  right: BorderSide(color: borderColor, width: 0.8),
+    return Column(
+      children: [
+        SingleChildScrollView(
+          controller: _headerHorizontalController,
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: minTableWidth),
+            child: Table(
+              border: TableBorder(
+                verticalInside: BorderSide(color: borderColor, width: 0.6),
+                top: BorderSide(color: borderColor, width: 0.8),
+                bottom: BorderSide(color: borderColor, width: 0.6),
+                left: BorderSide(color: borderColor, width: 0.8),
+                right: BorderSide(color: borderColor, width: 0.8),
+              ),
+              columnWidths: const {
+                0: FlexColumnWidth(2.6),
+                1: FlexColumnWidth(1.4),
+                2: FlexColumnWidth(1.4),
+                3: FlexColumnWidth(1.4),
+                4: FlexColumnWidth(1.4),
+              },
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              children: [headerRow],
+            ),
+          ),
+        ),
+        Expanded(
+          child: Scrollbar(
+            controller: _verticalController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _verticalController,
+              child: Scrollbar(
+                controller: _bodyHorizontalController,
+                thumbVisibility: true,
+                notificationPredicate: (notification) =>
+                    notification.metrics.axis == Axis.horizontal,
+                child: SingleChildScrollView(
+                  controller: _bodyHorizontalController,
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: minTableWidth),
+                    child: Table(
+                      border: TableBorder(
+                        horizontalInside:
+                            BorderSide(color: borderColor, width: 0.6),
+                        verticalInside:
+                            BorderSide(color: borderColor, width: 0.6),
+                        bottom: BorderSide(color: borderColor, width: 0.8),
+                        left: BorderSide(color: borderColor, width: 0.8),
+                        right: BorderSide(color: borderColor, width: 0.8),
+                      ),
+                      columnWidths: const {
+                        0: FlexColumnWidth(2.6),
+                        1: FlexColumnWidth(1.4),
+                        2: FlexColumnWidth(1.4),
+                        3: FlexColumnWidth(1.4),
+                        4: FlexColumnWidth(1.4),
+                      },
+                      defaultVerticalAlignment:
+                          TableCellVerticalAlignment.middle,
+                      children: bodyRows,
+                    ),
+                  ),
                 ),
-                columnWidths: const {
-                  0: FlexColumnWidth(2.6),
-                  1: FlexColumnWidth(1.4),
-                  2: FlexColumnWidth(1.4),
-                  3: FlexColumnWidth(1.4),
-                  4: FlexColumnWidth(1.4),
-                },
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-                children: rows,
               ),
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
