@@ -547,16 +547,19 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final targetBox = context.findRenderObject() as RenderBox?;
     final overlayBox = overlay.context.findRenderObject() as RenderBox?;
 
-    const double tooltipMaxWidth = 360.0;
+    const double tooltipMaxWidth = 300.0;
+    const double tooltipMinWidth = 220.0;
     const double tooltipVerticalPadding = 8.0;
     double maxWidth = tooltipMaxWidth;
+    double minWidth = tooltipMinWidth;
     double? maxHeight;
     if (overlayBox != null) {
-      final availableWidth = overlayBox.size.width - 32.0;
+      final availableWidth = overlayBox.size.width - 48.0;
       if (availableWidth.isFinite && availableWidth > 0) {
         maxWidth = math.min(tooltipMaxWidth, availableWidth);
       }
-      maxHeight = overlayBox.size.height * 0.6;
+      minWidth = math.min(tooltipMinWidth, maxWidth);
+      maxHeight = math.min(overlayBox.size.height * 0.5, 260.0);
     }
 
     bool alignRight = false;
@@ -598,8 +601,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     }
 
     final BoxConstraints constraints = maxHeight != null
-        ? BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight!)
-        : BoxConstraints(maxWidth: maxWidth);
+        ? BoxConstraints(
+            minWidth: minWidth,
+            maxWidth: maxWidth,
+            maxHeight: maxHeight!,
+          )
+        : BoxConstraints(minWidth: minWidth, maxWidth: maxWidth);
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -637,6 +644,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
                     child: Text(
                       content,
                       style: theme.textTheme.bodyMedium,
+                      textAlign: TextAlign.start,
+                      softWrap: true,
                     ),
                   ),
                 ),
