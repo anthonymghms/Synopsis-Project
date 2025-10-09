@@ -6,14 +6,14 @@ from firebase_admin import credentials, firestore
 from flask_cors import CORS
 
 
-cred = credentials.Certificate('serviceAccountKey.json')
+cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 app = Flask(__name__)
 
 CORS(app)
-'''
+"""
 @app.route('/<language>/<version>/topics', methods=['GET'])
 def get_topics(language, version):
     topics_ref = db.collection('references').document(language).collection(version)
@@ -28,52 +28,58 @@ def get_topics(language, version):
         json.dumps(topics, ensure_ascii=False, indent=2),
         content_type="application/json; charset=utf-8"
     )
-    '''
-  
-@app.route('/<language>/<version>/topic/<topic_id>', methods=['GET'])
+    """
+
+
+@app.route("/<language>/<version>/topic/<topic_id>", methods=["GET"])
 def get_topic(language, version, topic_id):
     doc_ref = _topics_collection(language, version).document(topic_id)
     doc = doc_ref.get()
     if not doc.exists:
-        return Response(json.dumps({"error": "Topic not found"}, ensure_ascii=False, indent=2),
-                        status=404, content_type="application/json; charset=utf-8")
+        return Response(
+            json.dumps({"error": "Topic not found"}, ensure_ascii=False, indent=2),
+            status=404,
+            content_type="application/json; charset=utf-8",
+        )
 
     data = doc.to_dict() or {}
-    data['id'] = doc.id
-    return Response(json.dumps(data, ensure_ascii=False, indent=2),
-                    content_type="application/json; charset=utf-8")
+    data["id"] = doc.id
+    return Response(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8",
+    )
 
-        
+
 def _normalize_book_token(value: str) -> str:
-    return ''.join(ch.lower() for ch in (value or '') if ch.isalnum())
+    return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
 
 
 _ORDINAL_WORDS = {
-    'first': '1',
-    'second': '2',
-    'third': '3',
-    'fourth': '4',
+    "first": "1",
+    "second": "2",
+    "third": "3",
+    "fourth": "4",
 }
 
 
 _ROMAN_NUMERALS = {
-    'i': '1',
-    'ii': '2',
-    'iii': '3',
-    'iv': '4',
-    'v': '5',
-    'vi': '6',
-    'vii': '7',
-    'viii': '8',
+    "i": "1",
+    "ii": "2",
+    "iii": "3",
+    "iv": "4",
+    "v": "5",
+    "vi": "6",
+    "vii": "7",
+    "viii": "8",
 }
 
 
 _BOOK_SYNONYMS = {
-    'canticles': ['songofsongs', 'songofsolomon'],
-    'songofsongs': ['songofsolomon', 'canticles'],
-    'songofsolomon': ['songofsongs', 'canticles'],
-    'psalm': ['psalms'],
-    'psalms': ['psalm'],
+    "canticles": ["songofsongs", "songofsolomon"],
+    "songofsongs": ["songofsolomon", "canticles"],
+    "songofsolomon": ["songofsongs", "canticles"],
+    "psalm": ["psalms"],
+    "psalms": ["psalm"],
 }
 
 
@@ -96,17 +102,17 @@ def _book_name_candidates(name: str):
     tokens = set()
     normalized = _normalize_book_token(name)
     tokens.add(normalized)
-    tokens.add(re.sub(r'^[0-9]+', '', normalized))
+    tokens.add(re.sub(r"^[0-9]+", "", normalized))
 
     for word, digit in _ORDINAL_WORDS.items():
         if normalized.startswith(word):
-            remainder = normalized[len(word):]
+            remainder = normalized[len(word) :]
             tokens.add(digit + remainder)
             tokens.add(remainder)
 
     for roman, digit in _ROMAN_NUMERALS.items():
         if normalized.startswith(roman):
-            remainder = normalized[len(roman):]
+            remainder = normalized[len(roman) :]
             tokens.add(digit + remainder)
             tokens.add(remainder)
 
@@ -114,18 +120,18 @@ def _book_name_candidates(name: str):
 
 
 def _document_book_tokens(doc_id: str):
-    parts = (doc_id or '').split(' ')
+    parts = (doc_id or "").split(" ")
     tokens = set()
     tokens.add(_normalize_book_token(doc_id))
     if len(parts) > 1:
-        tokens.add(_normalize_book_token(' '.join(parts[1:])))
+        tokens.add(_normalize_book_token(" ".join(parts[1:])))
     tokens.add(_normalize_book_token(parts[0]))
     tokens.add(_normalize_book_token(parts[-1]))
     return {token for token in _expand_with_synonyms(tokens) if token}
 
 
 def _resolve_book_document_id(language: str, version: str, book: str):
-    collection = db.collection('bibles').document(language).collection(version)
+    collection = db.collection("bibles").document(language).collection(version)
     direct_doc = collection.document(book)
     if direct_doc.get().exists:
         return book
@@ -136,7 +142,7 @@ def _resolve_book_document_id(language: str, version: str, book: str):
 
     documents = list(collection.list_documents())
     for doc in documents:
-        prefix = _normalize_book_token(doc.id.split(' ')[0])
+        prefix = _normalize_book_token(doc.id.split(" ")[0])
         if prefix and prefix in candidates:
             return doc.id
 
@@ -152,71 +158,150 @@ def _resolve_book_document_id(language: str, version: str, book: str):
     return None
 
 
-@app.route('/get_verse', methods=['GET'])
+def _extract_verse_text(data):
+    text = ""
+    if isinstance(data, dict):
+        blocks_before = data.get("blocks_before")
+        if isinstance(blocks_before, list):
+            text_parts = []
+            for block in blocks_before:
+                if not isinstance(block, dict):
+                    continue
+                part = (block.get("text") or "").strip()
+                if part:
+                    text_parts.append(part)
+            if text_parts:
+                text = " ".join(text_parts).strip()
+        if not text:
+            text = (data.get("text") or "").strip()
+    return text
+
+
+def _build_verse_payload(verse_identifier, data):
+    try:
+        verse_number = int(verse_identifier)
+    except (TypeError, ValueError):
+        verse_number = verse_identifier
+    return {
+        "verse": verse_number,
+        "text": _extract_verse_text(data),
+    }
+
+
+def _load_single_verse(language, version, book_doc_id, chapter, verse_identifier):
+    verse_ref = (
+        db.collection("bibles")
+        .document(language)
+        .collection(version)
+        .document(book_doc_id)
+        .collection("chapters")
+        .document(str(chapter))
+        .collection("verses")
+        .document(str(verse_identifier))
+    )
+    verse_doc = verse_ref.get()
+    data = verse_doc.to_dict() if verse_doc.exists else {}
+    return _build_verse_payload(verse_identifier, data)
+
+
+@app.route("/get_verse", methods=["GET"])
 def get_verse():
-    language = request.args.get('language')
-    version = request.args.get('version')
-    requested_book = request.args.get('book')
-    chapter = request.args.get('chapter')
-    verse = request.args.get('verse')  # Can be "1" or "1-3"
+    language = request.args.get("language")
+    version = request.args.get("version")
+    requested_book = request.args.get("book")
+    chapter = request.args.get("chapter")
+    verse = request.args.get("verse")  # Can be "1" or "1-3"
 
     if not all([language, version, requested_book, chapter, verse]):
-        return Response(json.dumps({"error": "Missing params"}), status=400, content_type="application/json")
+        return Response(
+            json.dumps({"error": "Missing params"}),
+            status=400,
+            content_type="application/json",
+        )
 
     book = _resolve_book_document_id(language, version, requested_book)
     if not book:
-        return Response(json.dumps({"error": f"Unknown book '{requested_book}'"}), status=404, content_type="application/json")
-
-    def get_actual_verse_text(verse_num):
-        verse_ref = (
-            db.collection('bibles')
-            .document(language)
-            .collection(version)
-            .document(book)
-            .collection('chapters')
-            .document(chapter)
-            .collection('verses')
-            .document(str(verse_num))
+        return Response(
+            json.dumps({"error": f"Unknown book '{requested_book}'"}),
+            status=404,
+            content_type="application/json",
         )
-        verse_doc = verse_ref.get()
-        if not verse_doc.exists:
-            return {"verse": verse_num, "text": ""}
-        data = verse_doc.to_dict()
-        text = ""
-        # Try to get text from blocks_before if it has any non-empty text
-        if "blocks_before" in data and isinstance(data["blocks_before"], list) and len(data["blocks_before"]) > 0:
-            # Collect all non-empty "text" fields from blocks_before
-            text_parts = [block.get("text", "").strip() for block in data["blocks_before"] if block.get("text", "").strip()]
-            text = " ".join(text_parts).strip()
-        # If still empty, use the top-level "text" field
-        if not text and "text" in data:
-            text = data["text"].strip()
-        return {"verse": verse_num, "text": text}
-
 
     results = []
-    if '-' in verse:
-        start, end = map(int, verse.split('-'))
+    if "-" in verse:
+        try:
+            start, end = map(int, verse.split("-"))
+        except ValueError:
+            return Response(
+                json.dumps({"error": "Invalid verse range"}),
+                status=400,
+                content_type="application/json",
+            )
         for i in range(start, end + 1):
-            results.append(get_actual_verse_text(i))
+            results.append(_load_single_verse(language, version, book, chapter, i))
     else:
-        results.append(get_actual_verse_text(verse))
+        results.append(_load_single_verse(language, version, book, chapter, verse))
 
     return Response(
         json.dumps(results, ensure_ascii=False, indent=2),
-        content_type="application/json; charset=utf-8"
+        content_type="application/json; charset=utf-8",
     )
+
+
+@app.route("/get_chapter", methods=["GET"])
+def get_chapter():
+    language = request.args.get("language")
+    version = request.args.get("version")
+    requested_book = request.args.get("book")
+    chapter = request.args.get("chapter")
+
+    if not all([language, version, requested_book, chapter]):
+        return Response(
+            json.dumps({"error": "Missing params"}),
+            status=400,
+            content_type="application/json",
+        )
+
+    book = _resolve_book_document_id(language, version, requested_book)
+    if not book:
+        return Response(
+            json.dumps({"error": f"Unknown book '{requested_book}'"}),
+            status=404,
+            content_type="application/json",
+        )
+
+    verses_collection = (
+        db.collection("bibles")
+        .document(language)
+        .collection(version)
+        .document(book)
+        .collection("chapters")
+        .document(str(chapter))
+        .collection("verses")
+    )
+
+    verses = []
+    for doc in verses_collection.stream():
+        verses.append(_build_verse_payload(doc.id, doc.to_dict()))
+
+    verses.sort(key=lambda item: item["verse"] if isinstance(item["verse"], int) else 0)
+
+    return Response(
+        json.dumps(verses, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8",
+    )
+
 
 def _topics_collection(language: str, version: str):
     # match your Firestore doc id: english_kjv, arabic_van_dyck, etc.
     doc_id = f"{language}_{version}".replace(" ", "_").lower()
-    return db.collection('references').document(doc_id).collection('topics')
+    return db.collection("references").document(doc_id).collection("topics")
 
 
-@app.route('/topics', methods=['GET'])
+@app.route("/topics", methods=["GET"])
 def get_topics():
-    language = request.args.get('language', 'english')
-    version  = request.args.get('version',  'kjv')
+    language = request.args.get("language", "english")
+    version = request.args.get("version", "kjv")
 
     topics_ref = _topics_collection(language, version)
     topics = []
@@ -227,16 +312,20 @@ def get_topics():
             padded_id = f"{int(doc.id):02}"
         except ValueError:
             padded_id = doc.id
-        topics.append({
-            "id": padded_id,
-            "name": data.get("name", ""),
-            "references": data.get("entries", [])
-        })
+        topics.append(
+            {
+                "id": padded_id,
+                "name": data.get("name", ""),
+                "references": data.get("entries", []),
+            }
+        )
 
-    topics.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else x['id'])
-    return Response(json.dumps(topics, ensure_ascii=False, indent=2),
-                    content_type="application/json; charset=utf-8")
+    topics.sort(key=lambda x: int(x["id"]) if x["id"].isdigit() else x["id"])
+    return Response(
+        json.dumps(topics, ensure_ascii=False, indent=2),
+        content_type="application/json; charset=utf-8",
+    )
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=True)

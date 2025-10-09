@@ -57,20 +57,97 @@ class GospelApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.hasData) {
-            return const TopicListScreen();
-          }
-          return const AuthScreen();
-        },
+      onGenerateRoute: _onGenerateRoute,
+    );
+  }
+
+  Route<dynamic> _onGenerateRoute(RouteSettings settings) {
+    final rawName = settings.name ?? '/';
+    String normalized = rawName;
+    if (normalized.startsWith('/#/')) {
+      normalized = normalized.substring(2);
+    }
+    if (normalized.startsWith('#/')) {
+      normalized = normalized.substring(1);
+    }
+    if (normalized.startsWith('#')) {
+      normalized = normalized.substring(1);
+    }
+    if (normalized.isEmpty) {
+      normalized = '/';
+    }
+    if (!normalized.startsWith('/')) {
+      normalized = '/$normalized';
+    }
+
+    if (normalized == '/' || normalized.isEmpty) {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => AuthGate(
+          builder: (context) => const TopicListScreen(),
+        ),
+      );
+    }
+
+    final uri = Uri.parse(normalized);
+    final path = uri.path.isEmpty ? '/' : uri.path;
+    if (path == '/reference') {
+      final language = uri.queryParameters['language'] ?? defaultLanguage;
+      final version = uri.queryParameters['version'] ?? defaultVersion;
+      final bookDisplay =
+          uri.queryParameters['bookDisplay'] ?? uri.queryParameters['book'] ?? '';
+      final bookId = uri.queryParameters['bookId'] ?? '';
+      final chapter = int.tryParse(uri.queryParameters['chapter'] ?? '') ?? 0;
+      final verses = uri.queryParameters['verses'] ?? '';
+      final topicName = uri.queryParameters['topic'] ?? '';
+      final label = uri.queryParameters['label'] ?? '';
+
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => AuthGate(
+          builder: (context) => ReferenceViewerPage(
+            displayBook: bookDisplay,
+            bookId: bookId,
+            chapter: chapter,
+            verses: verses,
+            language: language,
+            version: version,
+            topicName: topicName,
+            referenceLabelOverride: label,
+          ),
+        ),
+      );
+    }
+
+    return MaterialPageRoute(
+      settings: settings,
+      builder: (_) => AuthGate(
+        builder: (context) => const TopicListScreen(),
       ),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key, required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasData) {
+          return builder(context);
+        }
+        return const AuthScreen();
+      },
     );
   }
 }
@@ -291,8 +368,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
   }
 
-  Widget _buildReferenceCell(
-      List<GospelReference> refs, TextStyle? style, TextAlign align) {
+  Widget _buildReferenceCell(Topic topic, List<GospelReference> refs,
+      TextStyle? style, TextAlign align) {
     final filteredRefs = refs
         .where((ref) => ref.formattedReference.trim().isNotEmpty)
         .toList();
@@ -328,6 +405,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
           reference: filteredRefs[i],
           textStyle: style,
           textAlign: align,
+          topicName: topic.name,
+          language: defaultLanguage,
+          version: defaultVersion,
         ),
       );
       if (i < filteredRefs.length - 1) {
@@ -407,6 +487,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
               TableCell(
                 verticalAlignment: TableCellVerticalAlignment.top,
                 child: _buildReferenceCell(
+                  topic,
                   grouped[gospel] ?? const <GospelReference>[],
                   referenceStyle,
                   TextAlign.center,
@@ -468,11 +549,17 @@ class ReferenceHoverText extends StatefulWidget {
     required this.reference,
     this.textStyle,
     this.textAlign = TextAlign.center,
+    this.topicName = '',
+    this.language = defaultLanguage,
+    this.version = defaultVersion,
   });
 
   final GospelReference reference;
   final TextStyle? textStyle;
   final TextAlign textAlign;
+  final String topicName;
+  final String language;
+  final String version;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -499,32 +586,33 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   Uri? _buildReferenceUri(GospelReference reference) {
-    if (reference.formattedReference.isEmpty) {
+    final displayBook = reference.book.trim();
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : displayBook;
+    if (bookParam.isEmpty || reference.chapter <= 0) {
       return null;
     }
-    final buffer = StringBuffer(reference.book.trim());
-    if (reference.chapter > 0) {
-      buffer.write(' ');
-      buffer.write(reference.chapter);
-      final verses = reference.verses.trim();
-      if (verses.isNotEmpty) {
-        buffer.write(':');
-        buffer.write(verses);
-      }
+
+    final queryParameters = <String, String>{
+      'book': bookParam,
+      'bookDisplay': displayBook,
+      'chapter': reference.chapter.toString(),
+      'language': widget.language,
+      'version': widget.version,
+      'label': reference.formattedReference,
+    };
+
+    final verses = reference.verses.trim();
+    if (verses.isNotEmpty) {
+      queryParameters['verses'] = verses;
     }
-    final query = buffer.toString().trim();
-    if (query.isEmpty) {
-      return null;
+
+    if (widget.topicName.trim().isNotEmpty) {
+      queryParameters['topic'] = widget.topicName.trim();
     }
-    final versionCode = defaultVersion.toUpperCase();
-    return Uri.https(
-      'www.biblegateway.com',
-      '/passage/',
-      {
-        'search': query,
-        'version': versionCode,
-      },
-    );
+
+    return Uri(path: '/reference', queryParameters: queryParameters);
   }
 
   Future<void> _handleTap() async {
@@ -607,6 +695,379 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       ),
     );
   }
+}
+
+class ReferenceViewerPage extends StatefulWidget {
+  const ReferenceViewerPage({
+    super.key,
+    required this.displayBook,
+    required this.bookId,
+    required this.chapter,
+    required this.verses,
+    required this.language,
+    required this.version,
+    this.topicName = '',
+    this.referenceLabelOverride = '',
+  });
+
+  final String displayBook;
+  final String bookId;
+  final int chapter;
+  final String verses;
+  final String language;
+  final String version;
+  final String topicName;
+  final String referenceLabelOverride;
+
+  @override
+  State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
+}
+
+class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
+  bool _loadingReference = true;
+  String? _error;
+  List<_VerseLine> _referenceVerses = const <_VerseLine>[];
+  bool _loadingChapter = false;
+  String? _chapterError;
+  List<_VerseLine>? _chapterVerses;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReference();
+  }
+
+  String get _bookParameter {
+    final trimmedBookId = widget.bookId.trim();
+    if (trimmedBookId.isNotEmpty) {
+      return trimmedBookId;
+    }
+    return widget.displayBook.trim();
+  }
+
+  String get _referenceHeading {
+    final book = widget.displayBook.trim();
+    final override = widget.referenceLabelOverride.trim();
+    if (override.isNotEmpty) {
+      if (book.isEmpty) {
+        return override;
+      }
+      return '$book $override';
+    }
+    if (book.isEmpty) {
+      return 'Reference';
+    }
+    if (widget.chapter <= 0) {
+      return book;
+    }
+    final verses = widget.verses.trim();
+    final base = '$book ${widget.chapter}';
+    return verses.isEmpty ? base : '$base:$verses';
+  }
+
+  String get _metaSummary {
+    final segments = <String>[];
+    final version = widget.version.trim();
+    if (version.isNotEmpty) {
+      segments.add(version.toUpperCase());
+    }
+    final language = widget.language.trim();
+    if (language.isNotEmpty) {
+      segments.add(language);
+    }
+    return segments.join(' · ');
+  }
+
+  Future<void> _loadReference() async {
+    final bookParam = _bookParameter;
+    if (widget.chapter <= 0 || bookParam.isEmpty) {
+      setState(() {
+        _error = 'This reference is missing details needed to load the text.';
+        _loadingReference = false;
+      });
+      return;
+    }
+
+    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
+
+    setState(() {
+      _loadingReference = true;
+      _error = null;
+    });
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+        'language': widget.language,
+        'version': widget.version,
+        'book': bookParam,
+        'chapter': widget.chapter.toString(),
+        'verse': verseParam,
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final verses = _parseVerses(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _referenceVerses = verses;
+        _loadingReference = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = 'Failed to load reference: $e';
+        _loadingReference = false;
+      });
+    }
+  }
+
+  Future<void> _loadFullChapter() async {
+    if (_loadingChapter) {
+      return;
+    }
+    final bookParam = _bookParameter;
+    if (widget.chapter <= 0 || bookParam.isEmpty) {
+      setState(() {
+        _chapterError = 'Unable to determine which chapter to load.';
+      });
+      return;
+    }
+
+    setState(() {
+      _loadingChapter = true;
+      _chapterError = null;
+    });
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
+        'language': widget.language,
+        'version': widget.version,
+        'book': bookParam,
+        'chapter': widget.chapter.toString(),
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final verses = _parseVerses(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _chapterVerses = verses;
+        _loadingChapter = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _chapterError = 'Failed to load full chapter: $e';
+        _loadingChapter = false;
+      });
+    }
+  }
+
+  List<_VerseLine> _parseVerses(String body) {
+    final decoded = json.decode(body);
+    if (decoded is! List) {
+      return const <_VerseLine>[];
+    }
+    final verses = decoded
+        .whereType<Map<String, dynamic>>()
+        .map((item) {
+          final rawNumber = item['verse'];
+          int? number;
+          if (rawNumber is int) {
+            number = rawNumber;
+          } else if (rawNumber is String) {
+            number = int.tryParse(rawNumber);
+          }
+          final text = (item['text'] ?? '').toString().trim();
+          return _VerseLine(number: number, text: text);
+        })
+        .toList();
+    verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
+    return verses;
+  }
+
+  Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme) {
+    final TextStyle baseStyle =
+        theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
+            const TextStyle(fontSize: 16, height: 1.6);
+    final TextStyle numberStyle =
+        baseStyle.copyWith(fontWeight: FontWeight.w600);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: RichText(
+        text: TextSpan(
+          style: baseStyle,
+          children: [
+            if (verse.number != null && verse.number! > 0)
+              TextSpan(text: '${verse.number}. ', style: numberStyle),
+            TextSpan(text: verse.text),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChapterSection(ThemeData theme) {
+    if (widget.chapter <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    if (_chapterVerses != null) {
+      final verses = _chapterVerses!;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Full Chapter',
+            style: theme.textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          if (verses.isEmpty)
+            Text(
+              'No chapter text is available for this passage yet.',
+              style: theme.textTheme.bodyMedium,
+            )
+          else
+            ...verses
+                .map((verse) => _buildVerseParagraph(verse, theme))
+                .toList(),
+        ],
+      );
+    }
+
+    if (_loadingChapter) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FilledButton.icon(
+          onPressed: _loadFullChapter,
+          icon: const Icon(Icons.menu_book_outlined),
+          label: const Text('Read full chapter'),
+        ),
+        if (_chapterError != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _chapterError!,
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.error),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.topicName.trim().isNotEmpty
+        ? widget.topicName
+        : (widget.displayBook.trim().isNotEmpty
+            ? widget.displayBook.trim()
+            : 'Reference');
+    return MainScaffold(
+      title: title,
+      body: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    if (_loadingReference) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: Theme.of(context)
+                .textTheme
+                .bodyLarge
+                ?.copyWith(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      );
+    }
+
+    final theme = Theme.of(context);
+    final meta = _metaSummary;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _referenceHeading,
+                    style: theme.textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      meta,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  if (widget.topicName.trim().isNotEmpty &&
+                      widget.topicName.trim() != _referenceHeading) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Topic: ${widget.topicName}',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  if (_referenceVerses.isEmpty)
+                    Text(
+                      'No passage text is available for this reference yet.',
+                      style: theme.textTheme.bodyMedium,
+                    )
+                  else
+                    ..._referenceVerses
+                        .map((verse) => _buildVerseParagraph(verse, theme))
+                        .toList(),
+                  const SizedBox(height: 32),
+                  _buildChapterSection(theme),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VerseLine {
+  const _VerseLine({required this.number, required this.text});
+
+  final int? number;
+  final String text;
 }
 
 class Topic {
