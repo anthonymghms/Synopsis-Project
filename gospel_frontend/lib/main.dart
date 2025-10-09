@@ -6,6 +6,7 @@ import 'package:gospel_frontend/main_scaffold.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math' as math;
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
@@ -483,6 +484,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isFetching = false;
   String? _verseText;
   String? _error;
+  bool _isHovered = false;
 
   @override
   void dispose() {
@@ -542,6 +544,63 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     if (overlay == null) {
       return;
     }
+    final targetBox = context.findRenderObject() as RenderBox?;
+    final overlayBox = overlay.context.findRenderObject() as RenderBox?;
+
+    const double tooltipMaxWidth = 360.0;
+    const double tooltipVerticalPadding = 8.0;
+    double maxWidth = tooltipMaxWidth;
+    double? maxHeight;
+    if (overlayBox != null) {
+      final availableWidth = overlayBox.size.width - 32.0;
+      if (availableWidth.isFinite && availableWidth > 0) {
+        maxWidth = math.min(tooltipMaxWidth, availableWidth);
+      }
+      maxHeight = overlayBox.size.height * 0.6;
+    }
+
+    bool alignRight = false;
+    bool showAbove = false;
+    if (targetBox != null && overlayBox != null) {
+      final targetTopLeft =
+          targetBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+      final targetBottomRight = targetBox.localToGlobal(
+        targetBox.size.bottomRight(Offset.zero),
+        ancestor: overlayBox,
+      );
+      final spaceRight = overlayBox.size.width - targetBottomRight.dx;
+      final spaceLeft = targetTopLeft.dx;
+      final spaceBelow = overlayBox.size.height - targetBottomRight.dy;
+      final spaceAbove = targetTopLeft.dy;
+
+      if (spaceRight < maxWidth && spaceLeft > spaceRight) {
+        alignRight = true;
+      }
+
+      final estimatedHeight =
+          maxHeight ?? math.min(overlayBox.size.height * 0.6, 280.0);
+      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+        showAbove = true;
+      }
+    }
+
+    final Alignment followerAnchor;
+    final Alignment targetAnchor;
+    final Offset offset;
+    if (showAbove) {
+      followerAnchor = alignRight ? Alignment.bottomRight : Alignment.bottomLeft;
+      targetAnchor = alignRight ? Alignment.topRight : Alignment.topLeft;
+      offset = const Offset(0, -tooltipVerticalPadding);
+    } else {
+      followerAnchor = alignRight ? Alignment.topRight : Alignment.topLeft;
+      targetAnchor = alignRight ? Alignment.bottomRight : Alignment.bottomLeft;
+      offset = const Offset(0, tooltipVerticalPadding);
+    }
+
+    final BoxConstraints constraints = maxHeight != null
+        ? BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight!)
+        : BoxConstraints(maxWidth: maxWidth);
+
     _overlayEntry = OverlayEntry(
       builder: (context) {
         final theme = Theme.of(context);
@@ -551,11 +610,13 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             child: CompositedTransformFollower(
               link: _layerLink,
               showWhenUnlinked: false,
-              offset: const Offset(0, 28),
+              offset: offset,
+              followerAnchor: followerAnchor,
+              targetAnchor: targetAnchor,
               child: Material(
                 color: Colors.transparent,
                 child: Container(
-                  constraints: const BoxConstraints(maxWidth: 360),
+                  constraints: constraints,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surface,
@@ -571,9 +632,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
                       color: theme.dividerColor.withOpacity(0.4),
                     ),
                   ),
-                  child: Text(
-                    content,
-                    style: theme.textTheme.bodyMedium,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Text(
+                      content,
+                      style: theme.textTheme.bodyMedium,
+                    ),
                   ),
                 ),
               ),
@@ -591,25 +655,50 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   void _handlePointerEnter(PointerEvent event) {
+    if (!_isHovered) {
+      setState(() {
+        _isHovered = true;
+      });
+    }
     _showOverlay();
     _fetchIfNeeded();
   }
 
   void _handlePointerExit(PointerEvent event) {
+    if (_isHovered) {
+      setState(() {
+        _isHovered = false;
+      });
+    }
     _hideOverlay();
   }
 
   void _handleTap() {
     if (_overlayEntry == null) {
+      setState(() {
+        _isHovered = true;
+      });
       _showOverlay();
       _fetchIfNeeded();
     } else {
       _hideOverlay();
+      if (_isHovered) {
+        setState(() {
+          _isHovered = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final baseStyle = widget.textStyle ?? theme.textTheme.bodyMedium;
+    final hoverStyle = baseStyle?.copyWith(
+      color: theme.colorScheme.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: theme.colorScheme.primary,
+    );
     return CompositedTransformTarget(
       link: _layerLink,
       child: MouseRegion(
@@ -620,7 +709,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           onTap: _handleTap,
           child: Text(
             widget.reference.formattedReference,
-            style: widget.textStyle,
+            style: _isHovered ? hoverStyle : baseStyle,
             textAlign: widget.textAlign,
             softWrap: true,
           ),
