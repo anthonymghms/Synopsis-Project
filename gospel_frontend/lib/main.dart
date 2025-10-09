@@ -283,20 +283,6 @@ class _HarmonyTableState extends State<HarmonyTable> {
     return name;
   }
 
-  String _formatReferences(List<GospelReference> refs) {
-    if (refs.isEmpty) {
-      return '—';
-    }
-    final formatted = refs
-        .map((ref) => ref.formattedReference)
-        .where((text) => text.trim().isNotEmpty)
-        .toList();
-    if (formatted.isEmpty) {
-      return '—';
-    }
-    return formatted.join('\n');
-  }
-
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
@@ -306,13 +292,54 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
   Widget _buildReferenceCell(
       List<GospelReference> refs, TextStyle? style, TextAlign align) {
+    final filteredRefs = refs
+        .where((ref) => ref.formattedReference.trim().isNotEmpty)
+        .toList();
+
+    if (filteredRefs.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(
+          '—',
+          style: style,
+          textAlign: align,
+        ),
+      );
+    }
+
+    CrossAxisAlignment crossAxisAlignment;
+    switch (align) {
+      case TextAlign.center:
+        crossAxisAlignment = CrossAxisAlignment.center;
+        break;
+      case TextAlign.right:
+        crossAxisAlignment = CrossAxisAlignment.end;
+        break;
+      default:
+        crossAxisAlignment = CrossAxisAlignment.start;
+        break;
+    }
+
+    final children = <Widget>[];
+    for (var i = 0; i < filteredRefs.length; i++) {
+      children.add(
+        ReferenceHoverText(
+          reference: filteredRefs[i],
+          textStyle: style,
+          textAlign: align,
+        ),
+      );
+      if (i < filteredRefs.length - 1) {
+        children.add(const SizedBox(height: 6));
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.all(12),
-      child: Text(
-        _formatReferences(refs),
-        style: style,
-        textAlign: align,
-        softWrap: true,
+      child: Column(
+        crossAxisAlignment: crossAxisAlignment,
+        mainAxisSize: MainAxisSize.min,
+        children: children,
       ),
     );
   }
@@ -427,6 +454,175 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 children: rows,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ReferenceHoverText extends StatefulWidget {
+  const ReferenceHoverText({
+    super.key,
+    required this.reference,
+    this.textStyle,
+    this.textAlign = TextAlign.center,
+  });
+
+  final GospelReference reference;
+  final TextStyle? textStyle;
+  final TextAlign textAlign;
+
+  @override
+  State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
+}
+
+class _ReferenceHoverTextState extends State<ReferenceHoverText> {
+  final LayerLink _layerLink = LayerLink();
+  OverlayEntry? _overlayEntry;
+  bool _isFetching = false;
+  String? _verseText;
+  String? _error;
+
+  @override
+  void dispose() {
+    _hideOverlay();
+    super.dispose();
+  }
+
+  Future<void> _fetchIfNeeded() async {
+    if (_verseText != null || _error != null || _isFetching) {
+      return;
+    }
+    setState(() {
+      _isFetching = true;
+    });
+    _overlayEntry?.markNeedsBuild();
+    try {
+      final queryParameters = {
+        'language': defaultLanguage,
+        'version': defaultVersion,
+        'book': widget.reference.bookId.isNotEmpty
+            ? widget.reference.bookId
+            : widget.reference.book,
+        'chapter': widget.reference.chapter.toString(),
+        'verse': widget.reference.verses,
+      };
+      final uri = Uri.parse('$apiBaseUrl/get_verse')
+          .replace(queryParameters: queryParameters);
+      final response = await http.get(uri);
+      if (response.statusCode == 200) {
+        final List<dynamic> verses = json.decode(response.body);
+        final text = verses
+            .map((v) => "${v['verse']}. ${v['text']}")
+            .join('\n')
+            .trim();
+        _verseText = text.isEmpty ? 'No text available.' : text;
+        _error = null;
+      } else {
+        _error = 'Failed to load reference (${response.statusCode}).';
+      }
+    } catch (e) {
+      _error = 'Failed to load reference.';
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFetching = false;
+        });
+        _overlayEntry?.markNeedsBuild();
+      }
+    }
+  }
+
+  void _showOverlay() {
+    if (_overlayEntry != null) {
+      return;
+    }
+    final overlay = Overlay.of(context);
+    if (overlay == null) {
+      return;
+    }
+    _overlayEntry = OverlayEntry(
+      builder: (context) {
+        final theme = Theme.of(context);
+        final content = _error ?? _verseText ?? 'Loading...';
+        return Positioned.fill(
+          child: IgnorePointer(
+            child: CompositedTransformFollower(
+              link: _layerLink,
+              showWhenUnlinked: false,
+              offset: const Offset(0, 28),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                    border: Border.all(
+                      color: theme.dividerColor.withOpacity(0.4),
+                    ),
+                  ),
+                  child: Text(
+                    content,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    overlay.insert(_overlayEntry!);
+  }
+
+  void _hideOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  void _handlePointerEnter(PointerEvent event) {
+    _showOverlay();
+    _fetchIfNeeded();
+  }
+
+  void _handlePointerExit(PointerEvent event) {
+    _hideOverlay();
+  }
+
+  void _handleTap() {
+    if (_overlayEntry == null) {
+      _showOverlay();
+      _fetchIfNeeded();
+    } else {
+      _hideOverlay();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: MouseRegion(
+        onEnter: _handlePointerEnter,
+        onExit: _handlePointerExit,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _handleTap,
+          child: Text(
+            widget.reference.formattedReference,
+            style: widget.textStyle,
+            textAlign: widget.textAlign,
+            softWrap: true,
           ),
         ),
       ),
