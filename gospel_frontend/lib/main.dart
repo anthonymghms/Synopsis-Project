@@ -25,6 +25,26 @@ const Map<String, int> canonicalGospelsIndex = {
 
 const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
+// Firestore document IDs for the gospel books differ from the human-friendly
+// names that appear in the UI. When requesting verses from the backend we must
+// use these document IDs, otherwise the API returns empty responses.
+const Map<String, String> _gospelBookDocumentIds = {
+  'matthew': 'MAT The Gospel According to Matthew',
+  'mathew': 'MAT The Gospel According to Matthew',
+  'mark': 'MRK The Gospel According to Mark',
+  'luke': 'LUK The Gospel According to Luke',
+  'john': 'JHN The Gospel According to John',
+};
+
+String _resolveGospelBookDocumentId(String book) {
+  final normalized = book.trim();
+  if (normalized.isEmpty) {
+    return normalized;
+  }
+  final lookup = normalized.toLowerCase();
+  return _gospelBookDocumentIds[lookup] ?? normalized;
+}
+
 int _gospelIndex(String book) {
   return canonicalGospelsIndex[book] ?? canonicalGospelsIndex.length;
 }
@@ -454,11 +474,13 @@ class GospelReference {
   final String book;
   final int chapter;
   final String verses;
+  final String bookId;
 
   const GospelReference({
     required this.book,
     required this.chapter,
     required this.verses,
+    this.bookId = '',
   });
 
   factory GospelReference.fromJson(Map<String, dynamic> json) {
@@ -466,11 +488,14 @@ class GospelReference {
     final parsedChapter = rawChapter is int
         ? rawChapter
         : int.tryParse(rawChapter?.toString() ?? '') ?? 0;
+    final rawBookId =
+        json['book_id'] ?? json['bookId'] ?? json['documentId'] ?? '';
     return GospelReference(
       book: (json['book'] ?? '').toString().trim(),
       chapter: parsedChapter,
       verses:
           (json['verses'] ?? json['verse'] ?? '').toString().trim(),
+      bookId: rawBookId.toString().trim(),
     );
   }
 
@@ -684,10 +709,13 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         final refs = widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
+          final bookId = ref.bookId.isNotEmpty
+              ? ref.bookId
+              : _resolveGospelBookDocumentId(author);
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(widget.language)}"
               "&version=${Uri.encodeComponent(widget.version)}"
-              "&book=${Uri.encodeComponent(author)}"
+              "&book=${Uri.encodeComponent(bookId)}"
               "&chapter=${ref.chapter}"
               "&verse=${Uri.encodeComponent(ref.verses)}";
           final response = await http.get(Uri.parse(url));
