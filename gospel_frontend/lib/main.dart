@@ -547,20 +547,26 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final targetBox = context.findRenderObject() as RenderBox?;
     final overlayBox = overlay.context.findRenderObject() as RenderBox?;
 
-    const double tooltipMaxWidth = 300.0;
-    const double tooltipMinWidth = 220.0;
+    const double tooltipMaxWidth = 240.0;
+    const double tooltipMinWidth = 160.0;
     const double tooltipVerticalPadding = 8.0;
+    const double tooltipScreenPadding = 16.0;
     double maxWidth = tooltipMaxWidth;
     double minWidth = tooltipMinWidth;
-    double? maxHeight;
+    double? maxHeight = 220.0;
     if (overlayBox != null) {
-      final availableWidth = overlayBox.size.width - 48.0;
+      final availableWidth = overlayBox.size.width - (tooltipScreenPadding * 2);
       if (availableWidth.isFinite && availableWidth > 0) {
         maxWidth = math.min(tooltipMaxWidth, availableWidth);
       }
       minWidth = math.min(tooltipMinWidth, maxWidth);
-      maxHeight = math.min(overlayBox.size.height * 0.5, 260.0);
+      maxHeight = math.min(overlayBox.size.height * 0.45, maxHeight!);
     }
+
+    double spaceRight = double.infinity;
+    double spaceLeft = double.infinity;
+    double spaceBelow = double.infinity;
+    double spaceAbove = double.infinity;
 
     bool alignRight = false;
     bool showAbove = false;
@@ -571,20 +577,47 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         targetBox.size.bottomRight(Offset.zero),
         ancestor: overlayBox,
       );
-      final spaceRight = overlayBox.size.width - targetBottomRight.dx;
-      final spaceLeft = targetTopLeft.dx;
-      final spaceBelow = overlayBox.size.height - targetBottomRight.dy;
-      final spaceAbove = targetTopLeft.dy;
+      spaceRight = overlayBox.size.width - targetBottomRight.dx;
+      spaceLeft = targetTopLeft.dx;
+      spaceBelow = overlayBox.size.height - targetBottomRight.dy;
+      spaceAbove = targetTopLeft.dy;
 
       if (spaceRight < maxWidth && spaceLeft > spaceRight) {
         alignRight = true;
       }
 
       final estimatedHeight =
-          maxHeight ?? math.min(overlayBox.size.height * 0.6, 280.0);
+          (maxHeight ?? math.min(overlayBox.size.height * 0.45, 220.0));
       if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
         showAbove = true;
       }
+
+      final double horizontalSpace = alignRight ? spaceLeft : spaceRight;
+      if (horizontalSpace.isFinite && horizontalSpace > 0) {
+        final usableWidth =
+            math.max(0.0, horizontalSpace - tooltipScreenPadding);
+        if (usableWidth > 0) {
+          maxWidth = math.min(maxWidth, usableWidth);
+        }
+      }
+      minWidth = math.min(minWidth, maxWidth);
+
+      final double verticalSpace = showAbove ? spaceAbove : spaceBelow;
+      if (verticalSpace.isFinite && verticalSpace > 0) {
+        final usableHeight =
+            math.max(0.0, verticalSpace - tooltipVerticalPadding * 2);
+        if (usableHeight > 0) {
+          if (maxHeight == null) {
+            maxHeight = usableHeight;
+          } else {
+            maxHeight = math.min(maxHeight!, usableHeight);
+          }
+        }
+      }
+    }
+
+    if (maxHeight != null && maxHeight! <= 0) {
+      maxHeight = null;
     }
 
     final Alignment followerAnchor;
