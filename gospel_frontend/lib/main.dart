@@ -1416,59 +1416,54 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                 final maxLen = selectedSorted
                                     .map((a) => _texts[a]?.length ?? 0)
                                     .fold<int>(0, (prev, e) => e > prev ? e : prev);
+                                if (maxLen == 0) {
+                                  return const SizedBox.shrink();
+                                }
+
+                                final rows = <TableRow>[];
+                                for (int i = 0; i < maxLen; i++) {
+                                  rows.add(
+                                    TableRow(
+                                      children: [
+                                        for (final a in selectedSorted)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.all(8.0),
+                                            child: () {
+                                              final entries =
+                                                  _texts[a] ?? [];
+                                              if (i >= entries.length) {
+                                                return const SizedBox.shrink();
+                                              }
+                                              final entry = entries[i];
+                                              return Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(entry['title']!,
+                                                      style: const TextStyle(
+                                                          fontSize: 16,
+                                                          fontWeight:
+                                                              FontWeight
+                                                                  .w600)),
+                                                  const SizedBox(height: 4),
+                                                  Text(entry['text']!,
+                                                      style: const TextStyle(
+                                                          fontSize: 16)),
+                                                ],
+                                              );
+                                            }(),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                }
+
                                 return Table(
                                   border: TableBorder.all(
                                       color: Colors.grey.shade300),
                                   columnWidths: columnWidths,
-                                  children: [
-                                    TableRow(
-                                      children: selectedSorted
-                                          .map((a) => Padding(
-                                                padding:
-                                                    const EdgeInsets.all(8.0),
-                                                child: Text(a,
-                                                    style: const TextStyle(
-                                                        fontSize: 18,
-                                                        fontWeight:
-                                                            FontWeight.bold)),
-                                              ))
-                                          .toList(),
-                                    ),
-                                    for (int i = 0; i < maxLen; i++)
-                                      TableRow(
-                                        children: [
-                                          for (final a in selectedSorted)
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.all(8.0),
-                                              child: () {
-                                                final entries =
-                                                    _texts[a] ?? [];
-                                                if (i >= entries.length) {
-                                                  return const SizedBox.shrink();
-                                                }
-                                                final entry = entries[i];
-                                                return Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(entry['title']!,
-                                                        style: const TextStyle(
-                                                            fontSize: 16,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .w600)),
-                                                    const SizedBox(height: 4),
-                                                    Text(entry['text']!,
-                                                        style: const TextStyle(
-                                                            fontSize: 16)),
-                                                  ],
-                                                );
-                                              }(),
-                                            ),
-                                        ],
-                                      ),
-                                  ],
+                                  children: rows,
                                 );
                               },
                             ),
