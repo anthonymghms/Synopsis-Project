@@ -1,39 +1,25 @@
 #!/usr/bin/env python3
-# csv_to_gospel_topics_with_firebase.py
+# csv_to_topics_by_language.py
 
-import os
-import re
-import csv
-import tempfile
-
+import os, re, csv, io, tempfile, argparse
 import firebase_admin
 from firebase_admin import credentials, storage, firestore
 
-# ─── CONFIGURATION ─────────────────────────────────────────────────────────────
-# 1) Download your service-account key from:
-#    Firebase Console → Project Settings → Service Accounts → Generate new private key
+# ─── CONFIG ─────────────────────────────────────────────────────────────
 SERVICE_ACCOUNT_FILE = "serviceAccountKey.json"
+# For Admin SDK this should be the bucket *name* (often <project-id>.appspot.com).
+BUCKET_NAME = "synopsis-224b0.firebasestorage.app"   # change if your bucket name differs
+DEFAULT_REMOTE_CSV = "arabic3.csv"           # can be overridden with --csv
+# ────────────────────────────────────────────────────────────────────────
 
-# 2) Your bucket name (see Firebase Console → Storage)
-BUCKET_NAME = "synopsis-224b0.firebasestorage.app"
-
-# 3) The CSV you’ve already uploaded into the *root* of that bucket:
-REMOTE_CSV = "arabic_van-dyck.csv"
-# ────────────────────────────────────────────────────────────────────────────────
+GOSPELS = ["Matthew", "Mark", "Luke", "John"]  # canonical names used in Firestore
 
 def initialize_firebase():
-    """Initialize Firebase Admin SDK (Storage + Firestore)."""
     if not firebase_admin._apps:
         cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
-        firebase_admin.initialize_app(cred, {
-            "storageBucket": BUCKET_NAME
-        })
+        firebase_admin.initialize_app(cred, {"storageBucket": BUCKET_NAME})
 
 def download_csv(remote_path: str) -> str:
-    """
-    Downloads `remote_path` from your Firebase Storage bucket into
-    a local temp file. Returns the filename.
-    """
     initialize_firebase()
     bucket = storage.bucket()
     blob = bucket.blob(remote_path)
@@ -46,54 +32,59 @@ def download_csv(remote_path: str) -> str:
     return tmp.name
 
 def parse_refs(cell: str):
-    """
-    Given a cell like “1:6–8;15–28” or “2:39”, split on [;,],
-    normalize the dash, and return a list of (chapter:int, verses:str).
-    """
+    """'1:6–8;15–28' → [(1,'6-8'), (1,'15-28')] ; also accepts commas/semicolons."""
     out = []
     for piece in re.split(r"[;,]", cell or ""):
-        p = piece.strip().replace("–", "-")
-        if not p or ":" not in p:
+        p = (piece or "").strip().replace("–", "-").replace("—", "-")
+        if ":" not in p:
             continue
         chap, verses = p.split(":", 1)
-        chap, verses = chap.strip(), verses.strip()
-        if not chap.isdigit():
-            continue
-        out.append((int(chap), verses))
+        chap = chap.strip()
+        if chap.isdigit():
+            out.append((int(chap), verses.strip()))
     return out
 
-def parse_csv(path: str) -> dict:
-    """
-    Reads the CSV and returns a dict:
-      { topic1: [ {book,chapter,verses}, … ],
-        topic2: [ … ], … }
-    where the 4 Gospel-columns map (in order) to
-    ["Matthew","Mark","Luke","John"].
-    """
-    gospel_names = ["Matthew","Mark","Luke","John"]
-    result = {}
-
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        reader = csv.reader(f)
-        rows = list(reader)
-
-    if len(rows) < 2:
-        raise RuntimeError("CSV needs at least a header row + one data row")
-
-    for row in rows[1:]:
-        if not row or not row[0].strip():
+def read_rows_any_encoding(path: str):
+    with open(path, "rb") as fb:
+        raw = fb.read()
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            txt = raw.decode(enc)
+            txt = txt.replace("\u2013", "-").replace("\u2014", "-")
+            return list(csv.reader(io.StringIO(txt)))
+        except UnicodeDecodeError:
             continue
-        topic = row[0].strip()
+    raise RuntimeError("Could not decode CSV (tried utf-8-sig, utf-8, cp1252, latin-1)")
+
+def parse_csv_by_position(path: str) -> dict:
+    """
+    Returns { topic: [ {book, chapter, verses}, ... ], ... }
+    Assumes: col A=topic, B=Matthew, C=Mark, D=Luke, E=John (headers can be in any language).
+    """
+    rows = read_rows_any_encoding(path)
+    if len(rows) < 2:
+        raise RuntimeError("CSV needs a header + at least one data row")
+
+    result = {}
+    # start at row 1 to skip header
+    for row in rows[1:]:
+        if not row: 
+            continue
+        # topic in col 0
+        topic = (row[0] if len(row) > 0 else "").strip()
+        if not topic:
+            continue
+
         entries = []
-        for idx, book in enumerate(gospel_names, start=1):
-            if idx >= len(row):
-                break
-            for chap, verses in parse_refs(row[idx]):
-                entries.append({
-                    "book":    book,
-                    "chapter": chap,
-                    "verses":  verses
-                })
+        # cols 1..4 correspond to Matthew, Mark, Luke, John respectively
+        col_indices = [1, 2, 3, 4]
+        for book, ci in zip(GOSPELS, col_indices):
+            if ci >= len(row):
+                continue
+            cell = row[ci]
+            for chap, verses in parse_refs(cell):
+                entries.append({"book": book, "chapter": chap, "verses": verses})
+
         if entries:
             result[topic] = entries
 
@@ -101,46 +92,37 @@ def parse_csv(path: str) -> dict:
     print(f"✔ Parsed {total_refs} references across {len(result)} topics")
     return result
 
-def push_to_firestore(data: dict):
+def push_to_firestore(language: str, data: dict):
     """
-    Pushes `data` into Firestore under collection `collection_name`.
-    Each key in `data` becomes a document ID, with an 'entries' field.
+    Writes to Firestore: references/<language>/topics/<1..N>
     """
-    parts = os.path.basename(REMOTE_CSV).replace('.csv', '').split('_')
-
-    if len(parts) == 2:
-        language = parts[0].replace('-', ' ')
-        version = parts[1].replace('-', ' ')
-    else:
-        language = "unknown"
-        version = "unknown"
-    
     initialize_firebase()
     db = firestore.client()
-    coll = db.collection("references").document(language).collection(version)
+    coll = db.collection("references").document(language).collection("topics")
 
     count = 1
     for topic, entries in data.items():
-        doc_data = {
-            "name": topic,
-            "entries": entries
-        }
-        doc_ref = coll.document(str(count))
-        doc_ref.set(doc_data)
-        count +=1
-    print(f"✔ Wrote {len(data)} documents into Firestore collection “references”")
-
-
+        coll.document(str(count)).set({"name": topic, "entries": entries})
+        count += 1
+    print(f"✔ Wrote {len(data)} documents → references/{language}/topics")
 
 def main():
-    # 1) Download the remote CSV locally.
-    local_csv = download_csv(REMOTE_CSV)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", default=DEFAULT_REMOTE_CSV, help="Path in bucket to the CSV (e.g., arabic2.csv)")
+    ap.add_argument("--language", default=None, help="Language key for Firestore (e.g., arabic, english)")
+    args = ap.parse_args()
 
-    # 2) Parse it into our JSON-friendly dict.
-    data = parse_csv(local_csv)
+    # Derive language from filename if not provided (strip extension and trailing digits like 'arabic2' -> 'arabic')
+    if args.language:
+        language = args.language.strip().lower()
+    else:
+        stem = os.path.splitext(os.path.basename(args.csv))[0]
+        language = re.sub(r"\d+$", "", stem).strip().lower() or "unknown"
 
-    # 3) Push those same entries into Firestore under collection "Book".
-    push_to_firestore(data)
+    local_csv = download_csv(args.csv)
+    data = parse_csv_by_position(local_csv)
+    push_to_firestore(language, data)
 
 if __name__ == "__main__":
     main()
+
