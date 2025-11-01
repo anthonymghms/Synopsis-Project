@@ -293,9 +293,69 @@ def get_chapter():
 
 
 def _topics_collection(language: str, version: str):
-    # match your Firestore doc id: english_kjv, arabic_van_dyck, etc.
-    doc_id = f"{language}_{version}".replace(" ", "_").lower()
-    return db.collection("references").document(doc_id).collection("topics")
+    references = db.collection("references")
+
+    def _normalize(value: str) -> str:
+        return (value or "").strip().lower().replace(" ", "_")
+
+    def _strip_trailing_digits(value: str) -> str:
+        stripped = value.rstrip("0123456789")
+        return stripped or value
+
+    normalized_language = _normalize(language)
+    normalized_version = _normalize(version)
+    base_language = _strip_trailing_digits(normalized_language)
+    base_version = _strip_trailing_digits(normalized_version)
+
+    candidate_ids = []
+
+    def _add_candidate(candidate: str):
+        normalized = _normalize(candidate)
+        if normalized and normalized not in candidate_ids:
+            candidate_ids.append(normalized)
+
+    if normalized_language and normalized_version:
+        _add_candidate(f"{normalized_language}_{normalized_version}")
+        if base_language != normalized_language:
+            _add_candidate(f"{base_language}_{normalized_version}")
+        if base_version != normalized_version:
+            _add_candidate(f"{normalized_language}_{base_version}")
+        if base_language != normalized_language or base_version != normalized_version:
+            _add_candidate(f"{base_language}_{base_version}")
+
+    _add_candidate(normalized_language)
+    if base_language != normalized_language:
+        _add_candidate(base_language)
+
+    if normalized_version:
+        _add_candidate(normalized_version)
+    if base_version != normalized_version:
+        _add_candidate(base_version)
+
+    for candidate in candidate_ids:
+        doc_ref = references.document(candidate)
+        if doc_ref.get().exists:
+            return doc_ref.collection("topics")
+
+    search_language_tokens = [token for token in {normalized_language, base_language} if token]
+    search_version_tokens = [token for token in {normalized_version, base_version} if token]
+
+    fallback_doc = None
+    for doc in references.list_documents():
+        doc_id_normalized = _normalize(doc.id)
+        if any(token in doc_id_normalized for token in search_language_tokens):
+            if search_version_tokens and any(
+                token in doc_id_normalized for token in search_version_tokens
+            ):
+                return doc.collection("topics")
+            if fallback_doc is None:
+                fallback_doc = doc
+
+    if fallback_doc is not None:
+        return fallback_doc.collection("topics")
+
+    final_candidate = candidate_ids[0] if candidate_ids else normalized_language
+    return references.document(final_candidate).collection("topics")
 
 
 @app.route("/topics", methods=["GET"])
