@@ -145,6 +145,18 @@ const Map<String, String> gospelNameSynonyms = {
   'يوحنّا': 'John',
 };
 
+String _normalizeGospelName(String name) {
+  final trimmed = name.trim();
+  final lower = trimmed.toLowerCase();
+  if (gospelNameSynonyms.containsKey(lower)) {
+    return gospelNameSynonyms[lower]!;
+  }
+  if (gospelNameSynonyms.containsKey(trimmed)) {
+    return gospelNameSynonyms[trimmed]!;
+  }
+  return trimmed;
+}
+
 int _gospelIndex(String book) {
   final normalized = _normalizeGospelName(book);
   return canonicalGospelsIndex[normalized] ??
@@ -598,18 +610,6 @@ class _HarmonyTableState extends State<HarmonyTable> {
       });
     }
     return map;
-  }
-
-  String _normalizeGospelName(String name) {
-    final trimmed = name.trim();
-    final lower = trimmed.toLowerCase();
-    if (gospelNameSynonyms.containsKey(lower)) {
-      return gospelNameSynonyms[lower]!;
-    }
-    if (gospelNameSynonyms.containsKey(trimmed)) {
-      return gospelNameSynonyms[trimmed]!;
-    }
-    return trimmed;
   }
 
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
