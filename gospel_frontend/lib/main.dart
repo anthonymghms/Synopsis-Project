@@ -14,6 +14,111 @@ const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
 
+class LanguageOption {
+  final String code;
+  final String label;
+  final String apiLanguage;
+  final String apiVersion;
+  final TextDirection direction;
+  final String title;
+  final String description;
+  final String downloadLabel;
+  final String resetLabel;
+  final String pdfUnavailableMessage;
+  final String subjectsHeader;
+  final List<String> gospelHeaders;
+  final String tooltipMessage;
+  final String comparePrompt;
+
+  const LanguageOption({
+    required this.code,
+    required this.label,
+    required this.apiLanguage,
+    required this.apiVersion,
+    required this.direction,
+    required this.title,
+    required this.description,
+    required this.downloadLabel,
+    required this.resetLabel,
+    required this.pdfUnavailableMessage,
+    required this.subjectsHeader,
+    required this.gospelHeaders,
+    required this.tooltipMessage,
+    required this.comparePrompt,
+  });
+}
+
+const List<LanguageOption> kSupportedLanguages = [
+  LanguageOption(
+    code: 'english',
+    label: 'English',
+    apiLanguage: 'english',
+    apiVersion: 'kjv',
+    direction: TextDirection.ltr,
+    title: 'Harmony of the Gospels',
+    description:
+        'Explore a side-by-side overview of the key events recorded by Matthew, '
+        'Mark, Luke, and John. Tap a subject to read the passages together.',
+    downloadLabel: 'Download PDF',
+    resetLabel: 'Reset Table',
+    pdfUnavailableMessage: 'PDF download will be available soon.',
+    subjectsHeader: 'Subjects',
+    gospelHeaders: ['Matthew', 'Mark', 'Luke', 'John'],
+    tooltipMessage: 'Click to view more',
+    comparePrompt: 'Select authors to compare',
+  ),
+  LanguageOption(
+    code: 'arabic',
+    label: 'العربية',
+    apiLanguage: 'arabic2',
+    apiVersion: 'kjv',
+    direction: TextDirection.rtl,
+    title: 'تناغم الأناجيل',
+    description:
+        'استكشف نظرة عامة جنبًا إلى جنب على الأحداث الرئيسية التي سجلها '
+        'متى ومرقس ولوقا ويوحنا. اضغط على موضوع لقراءة المقاطع معًا.',
+    downloadLabel: 'تحميل PDF',
+    resetLabel: 'إعادة تعيين الجدول',
+    pdfUnavailableMessage: 'سيكون تنزيل ملف PDF متاحًا قريبًا.',
+    subjectsHeader: 'المواضيع',
+    gospelHeaders: ['متى', 'مرقس', 'لوقا', 'يوحنا'],
+    tooltipMessage: 'اضغط لعرض المزيد',
+    comparePrompt: 'اختر الأناجيل للمقارنة',
+  ),
+];
+
+LanguageOption _languageOptionForCode(String code) {
+  return kSupportedLanguages.firstWhere(
+    (option) => option.code == code,
+    orElse: () => kSupportedLanguages.first,
+  );
+}
+
+LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
+  try {
+    return kSupportedLanguages.firstWhere(
+      (option) => option.apiLanguage == apiLanguage,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+LanguageOption _languageOptionForVersion(String version) {
+  final normalized = version.trim().toLowerCase();
+  for (final option in kSupportedLanguages) {
+    if (option.apiVersion.toLowerCase() == normalized ||
+        option.code == normalized ||
+        option.label.toLowerCase() == normalized) {
+      return option;
+    }
+  }
+  if (normalized.contains('van') && normalized.contains('dyck')) {
+    return _languageOptionForCode('arabic');
+  }
+  return _languageOptionForCode(defaultLanguage);
+}
+
 // Order in which gospel references should appear.
 // Accept both common spellings for Matthew to maintain sort order.
 const Map<String, int> canonicalGospelsIndex = {
@@ -26,8 +131,26 @@ const Map<String, int> canonicalGospelsIndex = {
 
 const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
+const Map<String, String> gospelNameSynonyms = {
+  'mathew': 'Matthew',
+  'matthew': 'Matthew',
+  'mark': 'Mark',
+  'luke': 'Luke',
+  'john': 'John',
+  'متى': 'Matthew',
+  'متّى': 'Matthew',
+  'مرقس': 'Mark',
+  'لوقا': 'Luke',
+  'يوحنا': 'John',
+  'يوحنّا': 'John',
+};
+
 int _gospelIndex(String book) {
-  return canonicalGospelsIndex[book] ?? canonicalGospelsIndex.length;
+  final normalized = _normalizeGospelName(book);
+  return canonicalGospelsIndex[normalized] ??
+      canonicalGospelsIndex[book] ??
+      canonicalGospelsIndex[book.toLowerCase()] ??
+      canonicalGospelsIndex.length;
 }
 
 int _compareBooks(String a, String b) {
@@ -164,6 +287,10 @@ class _TopicListScreenState extends State<TopicListScreen> {
   List<Topic> _topics = [];
   bool _loading = true;
   String? _error;
+  String _selectedLanguageCode = defaultLanguage;
+
+  LanguageOption get _languageOption =>
+      _languageOptionForCode(_selectedLanguageCode);
 
   @override
   void initState() {
@@ -171,30 +298,52 @@ class _TopicListScreenState extends State<TopicListScreen> {
     fetchTopics();
   }
 
-  Future<void> fetchTopics() async {
+  Future<void> fetchTopics([LanguageOption? option]) async {
+    final languageOption = option ?? _languageOption;
     setState(() {
       _loading = true;
       _error = null;
     });
     final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
-      'language': defaultLanguage,
-      'version': defaultVersion,
+      'language': languageOption.apiLanguage,
+      'version': languageOption.apiVersion,
     });
     try {
       final response = await http.get(uri);
       if (response.statusCode == 200) {
         List data = json.decode(response.body);
+        if (!mounted) {
+          return;
+        }
+        if (_languageOption.apiLanguage != languageOption.apiLanguage ||
+            _languageOption.apiVersion != languageOption.apiVersion) {
+          return;
+        }
         setState(() {
           _topics = data.map((e) => Topic.fromJson(e)).toList();
           _loading = false;
         });
       } else {
+        if (!mounted) {
+          return;
+        }
+        if (_languageOption.apiLanguage != languageOption.apiLanguage ||
+            _languageOption.apiVersion != languageOption.apiVersion) {
+          return;
+        }
         setState(() {
           _error = "Error: ${response.statusCode}";
           _loading = false;
         });
       }
     } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      if (_languageOption.apiLanguage != languageOption.apiLanguage ||
+          _languageOption.apiVersion != languageOption.apiVersion) {
+        return;
+      }
       setState(() {
         _error = "Failed to fetch topics: $e";
         _loading = false;
@@ -202,78 +351,123 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
   }
 
+  Widget _buildLanguageDropdown(BuildContext context) {
+    final theme = Theme.of(context);
+    return DropdownButtonHideUnderline(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: DropdownButton<String>(
+            value: _selectedLanguageCode,
+            onChanged: (value) {
+              if (value == null || value == _selectedLanguageCode) {
+                return;
+              }
+              setState(() {
+                _selectedLanguageCode = value;
+              });
+              fetchTopics(_languageOptionForCode(value));
+            },
+            items: kSupportedLanguages
+                .map(
+                  (option) => DropdownMenuItem(
+                    value: option.code,
+                    child: Text(option.label),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MainScaffold(
-      title: "Harmony of the Gospels",
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Harmony of the Gospels',
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Explore a side-by-side overview of the key events '
-                            'recorded by Matthew, Mark, Luke, and John. Tap a '
-                            'subject to read the passages together.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(color: Colors.grey.shade700),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 8,
-                            children: [
-                              FilledButton.icon(
-                                onPressed: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                          'PDF download will be available soon.'),
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.picture_as_pdf_outlined),
-                                label: const Text('Download PDF'),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed: () {
-                                  _tableKey.currentState?.resetScroll();
-                                },
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Reset Table'),
-                              ),
-                            ],
-                          ),
-                        ],
+    final languageOption = _languageOption;
+    return Directionality(
+      textDirection: languageOption.direction,
+      child: MainScaffold(
+        title: languageOption.title,
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(child: Text(_error!))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding:
+                            const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              languageOption.title,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              languageOption.description,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                    color: Colors.grey.shade700,
+                                  ),
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 8,
+                              children: [
+                                _buildLanguageDropdown(context),
+                                FilledButton.icon(
+                                  onPressed: () {
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(
+                                      SnackBar(
+                                        content: Text(languageOption
+                                            .pdfUnavailableMessage),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(
+                                      Icons.picture_as_pdf_outlined),
+                                  label:
+                                      Text(languageOption.downloadLabel),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    _tableKey.currentState?.resetScroll();
+                                  },
+                                  icon: const Icon(Icons.refresh),
+                                  label: Text(languageOption.resetLabel),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const Divider(height: 0),
-                    Expanded(
-                      child: HarmonyTable(
-                        key: _tableKey,
-                        topics: _topics,
-                        onTopicSelected: _openTopic,
+                      const Divider(height: 0),
+                      Expanded(
+                        child: HarmonyTable(
+                          key: _tableKey,
+                          topics: _topics,
+                          onTopicSelected: _openTopic,
+                          languageOption: languageOption,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+      ),
     );
   }
 
@@ -282,8 +476,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       ..sort(_compareBooks);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => AuthorComparisonScreen(
-        language: defaultLanguage,
-        version: defaultVersion,
+        languageOption: _languageOption,
         topic: topic,
         initialAuthors: authors,
       ),
@@ -296,10 +489,12 @@ class HarmonyTable extends StatefulWidget {
     super.key,
     required this.topics,
     this.onTopicSelected,
+    required this.languageOption,
   });
 
   final List<Topic> topics;
   final ValueChanged<Topic>? onTopicSelected;
+  final LanguageOption languageOption;
 
   @override
   State<HarmonyTable> createState() => _HarmonyTableState();
@@ -406,10 +601,15 @@ class _HarmonyTableState extends State<HarmonyTable> {
   }
 
   String _normalizeGospelName(String name) {
-    if (name.toLowerCase() == 'mathew') {
-      return 'Matthew';
+    final trimmed = name.trim();
+    final lower = trimmed.toLowerCase();
+    if (gospelNameSynonyms.containsKey(lower)) {
+      return gospelNameSynonyms[lower]!;
     }
-    return name;
+    if (gospelNameSynonyms.containsKey(trimmed)) {
+      return gospelNameSynonyms[trimmed]!;
+    }
+    return trimmed;
   }
 
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
@@ -451,19 +651,20 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
     final children = <Widget>[];
     for (var i = 0; i < filteredRefs.length; i++) {
-      children.add(
-        ReferenceHoverText(
-          reference: filteredRefs[i],
-          textStyle: style,
-          textAlign: align,
-          topicName: topic.name,
-          language: defaultLanguage,
-          version: defaultVersion,
-        ),
-      );
-      if (i < filteredRefs.length - 1) {
-        children.add(const SizedBox(height: 6));
-      }
+          children.add(
+            ReferenceHoverText(
+              reference: filteredRefs[i],
+              textStyle: style,
+              textAlign: align,
+              topicName: topic.name,
+              language: widget.languageOption.apiLanguage,
+              version: widget.languageOption.apiVersion,
+              tooltipMessage: widget.languageOption.tooltipMessage,
+            ),
+          );
+          if (i < filteredRefs.length - 1) {
+            children.add(const SizedBox(height: 6));
+          }
     }
 
     return Padding(
@@ -479,6 +680,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final languageOption = widget.languageOption;
+    final isRtl = languageOption.direction == TextDirection.rtl;
     final headerStyle = theme.textTheme.titleSmall?.copyWith(
       fontWeight: FontWeight.w600,
       letterSpacing: 0.2,
@@ -492,13 +695,19 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
     final borderColor = theme.dividerColor.withOpacity(0.4);
     final headerBackground = theme.colorScheme.surfaceVariant;
+    final subjectAlign = isRtl ? TextAlign.right : TextAlign.left;
+    final referenceAlign = isRtl ? TextAlign.right : TextAlign.center;
+    assert(languageOption.gospelHeaders.length == orderedGospels.length,
+        'languageOption.gospelHeaders must match number of gospels');
 
     final headerRow = TableRow(
       decoration: BoxDecoration(color: headerBackground),
       children: [
-        _buildHeaderCell('Subjects', headerStyle, TextAlign.left),
-        for (final gospel in orderedGospels)
-          _buildHeaderCell(gospel, headerStyle, TextAlign.center),
+        _buildHeaderCell(
+            languageOption.subjectsHeader, headerStyle, subjectAlign),
+        for (var i = 0; i < orderedGospels.length; i++)
+          _buildHeaderCell(languageOption.gospelHeaders[i], headerStyle,
+              TextAlign.center),
       ],
     );
     final bodyRows = <TableRow>[];
@@ -529,6 +738,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                   child: Text(
                     topic.name,
                     style: subjectStyle,
+                    textAlign: subjectAlign,
                   ),
                 ),
               ),
@@ -540,7 +750,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                   topic,
                   grouped[gospel] ?? const <GospelReference>[],
                   referenceStyle,
-                  TextAlign.center,
+                  referenceAlign,
                 ),
               ),
           ],
@@ -635,6 +845,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.topicName = '',
     this.language = defaultLanguage,
     this.version = defaultVersion,
+    this.tooltipMessage = 'Click to view more',
   });
 
   final GospelReference reference;
@@ -643,6 +854,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String topicName;
   final String language;
   final String version;
+  final String tooltipMessage;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -752,7 +964,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return Tooltip(
-      message: 'Click to view more',
+      message: widget.tooltipMessage,
       waitDuration: const Duration(milliseconds: 150),
       child: MouseRegion(
         cursor:
@@ -854,9 +1066,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (version.isNotEmpty) {
       segments.add(version.toUpperCase());
     }
-    final language = widget.language.trim();
-    if (language.isNotEmpty) {
-      segments.add(language);
+    final apiLanguage = widget.language.trim();
+    if (apiLanguage.isNotEmpty) {
+      final displayLanguage =
+          _languageOptionForApiLanguage(apiLanguage)?.label ?? apiLanguage;
+      segments.add(displayLanguage);
     }
     return segments.join(' · ');
   }
@@ -1348,8 +1562,8 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                   : () {
                       Navigator.push(context, MaterialPageRoute(
                         builder: (_) => AuthorComparisonScreen(
-                          language: defaultLanguage,
-                          version: widget.version,
+                          languageOption:
+                              _languageOptionForVersion(widget.version),
                           topic: widget.topic,
                           initialAuthors:
                               _selected.toList()..sort(_compareBooks),
@@ -1366,14 +1580,12 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
 }
 
 class AuthorComparisonScreen extends StatefulWidget {
-  final String language;
-  final String version;
+  final LanguageOption languageOption;
   final Topic topic;
   final List<String> initialAuthors;
   const AuthorComparisonScreen({
     super.key,
-    required this.language,
-    required this.version,
+    required this.languageOption,
     required this.topic,
     required this.initialAuthors,
   });
@@ -1414,14 +1626,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       _error = null;
     });
     try {
+      final option = widget.languageOption;
       final futures = _selected.map((author) async {
         final refs = widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
         for (final ref in refs) {
           final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
           final url = "$apiBaseUrl/get_verse"
-              "?language=${Uri.encodeComponent(widget.language)}"
-              "&version=${Uri.encodeComponent(widget.version)}"
+              "?language=${Uri.encodeComponent(option.apiLanguage)}"
+              "&version=${Uri.encodeComponent(option.apiVersion)}"
               "&book=${Uri.encodeComponent(bookId)}"
               "&chapter=${ref.chapter}"
               "&verse=${Uri.encodeComponent(ref.verses)}";
@@ -1454,14 +1667,18 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return MainScaffold(
-      title: widget.topic.name,
-      body: Column(
-        children: [
-          Wrap(
-            spacing: 8,
-            children: _allAuthors
-                .map((author) => FilterChip(
+    final option = widget.languageOption;
+    return Directionality(
+      textDirection: option.direction,
+      child: MainScaffold(
+        title: widget.topic.name,
+        body: Column(
+          children: [
+            Wrap(
+              spacing: 8,
+              children: _allAuthors
+                  .map(
+                    (author) => FilterChip(
                       label: Text(author),
                       selected: _selected.contains(author),
                       onSelected: (val) {
@@ -1474,85 +1691,93 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         });
                         fetchTexts();
                       },
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: _selected.isEmpty
-                ? const Center(child: Text('Select authors to compare'))
-                : _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                        ? Center(child: Text(_error!))
-                        : SingleChildScrollView(
-                            child: Builder(
-                              builder: (context) {
-                                final selectedSorted =
-                                    _selected.toList()..sort(_compareBooks);
-                                final width = MediaQuery.of(context).size.width /
-                                    selectedSorted.length;
-                                final columnWidths = <int, TableColumnWidth>{
-                                  for (int i = 0; i < selectedSorted.length; i++)
-                                    i: FixedColumnWidth(width)
-                                };
-                                final maxLen = selectedSorted
-                                    .map((a) => _texts[a]?.length ?? 0)
-                                    .fold<int>(0, (prev, e) => e > prev ? e : prev);
-                                if (maxLen == 0) {
-                                  return const SizedBox.shrink();
-                                }
+                    ),
+                  )
+                  .toList(),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: _selected.isEmpty
+                  ? Center(child: Text(option.comparePrompt))
+                  : _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                          ? Center(child: Text(_error!))
+                          : SingleChildScrollView(
+                              child: Builder(
+                                builder: (context) {
+                                  final selectedSorted =
+                                      _selected.toList()..sort(_compareBooks);
+                                  final width = MediaQuery.of(context).size.width /
+                                      selectedSorted.length;
+                                  final columnWidths = <int, TableColumnWidth>{
+                                    for (int i = 0; i < selectedSorted.length; i++)
+                                      i: FixedColumnWidth(width),
+                                  };
+                                  final maxLen = selectedSorted
+                                      .map((a) => _texts[a]?.length ?? 0)
+                                      .fold<int>(
+                                          0, (prev, e) => e > prev ? e : prev);
+                                  if (maxLen == 0) {
+                                    return const SizedBox.shrink();
+                                  }
 
-                                final rows = <TableRow>[];
-                                for (int i = 0; i < maxLen; i++) {
-                                  rows.add(
-                                    TableRow(
-                                      children: [
-                                        for (final a in selectedSorted)
-                                          Padding(
-                                            padding:
-                                                const EdgeInsets.all(8.0),
-                                            child: () {
-                                              final entries =
-                                                  _texts[a] ?? [];
-                                              if (i >= entries.length) {
-                                                return const SizedBox.shrink();
-                                              }
-                                              final entry = entries[i];
-                                              return Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(entry['title']!,
-                                                      style: const TextStyle(
-                                                          fontSize: 16,
-                                                          fontWeight:
-                                                              FontWeight
-                                                                  .w600)),
-                                                  const SizedBox(height: 4),
-                                                  Text(entry['text']!,
-                                                      style: const TextStyle(
-                                                          fontSize: 16)),
-                                                ],
-                                              );
-                                            }(),
-                                          ),
-                                      ],
+                                  final rows = <TableRow>[];
+                                  for (int i = 0; i < maxLen; i++) {
+                                    rows.add(
+                                      TableRow(
+                                        children: [
+                                          for (final a in selectedSorted)
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.all(8.0),
+                                              child: () {
+                                                final entries =
+                                                    _texts[a] ?? [];
+                                                if (i >= entries.length) {
+                                                  return const SizedBox.shrink();
+                                                }
+                                                final entry = entries[i];
+                                                return Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      entry['title'] ?? '',
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .titleSmall
+                                                          ?.copyWith(
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(entry['text'] ?? ''),
+                                                  ],
+                                                );
+                                              }(),
+                                            ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  return Table(
+                                    columnWidths: columnWidths,
+                                    border: TableBorder.symmetric(
+                                      inside: BorderSide(
+                                        color: Colors.grey.shade300,
+                                      ),
                                     ),
+                                    children: rows,
                                   );
-                                }
-
-                                return Table(
-                                  border: TableBorder.all(
-                                      color: Colors.grey.shade300),
-                                  columnWidths: columnWidths,
-                                  children: rows,
-                                );
-                              },
+                                },
+                              ),
                             ),
-                          ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
