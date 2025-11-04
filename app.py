@@ -398,22 +398,26 @@ def _resolve_book_document_id(language: str, version: str, book: str):
 
 
 def _extract_verse_text(data):
-    text = ""
-    if isinstance(data, dict):
-        blocks_before = data.get("blocks_before")
-        if isinstance(blocks_before, list):
-            text_parts = []
-            for block in blocks_before:
-                if not isinstance(block, dict):
-                    continue
-                part = (block.get("text") or "").strip()
-                if part:
-                    text_parts.append(part)
-            if text_parts:
-                text = " ".join(text_parts).strip()
-        if not text:
-            text = (data.get("text") or "").strip()
-    return text
+    if not isinstance(data, dict):
+        return ""
+
+    text = (data.get("text") or "").strip()
+    if text:
+        return text
+
+    blocks_before = data.get("blocks_before")
+    if isinstance(blocks_before, list):
+        text_parts = []
+        for block in blocks_before:
+            if not isinstance(block, dict):
+                continue
+            part = (block.get("text") or "").strip()
+            if part:
+                text_parts.append(part)
+        if text_parts:
+            return " ".join(text_parts).strip()
+
+    return ""
 
 
 def _build_verse_payload(verse_identifier, data):
