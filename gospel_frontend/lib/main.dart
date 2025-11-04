@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:gospel_frontend/auth_screen.dart';
 import 'package:gospel_frontend/main_scaffold.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -21,8 +22,28 @@ class LanguageSelectionController {
       LanguageSelectionController._();
 
   String _languageCode = defaultLanguage;
+  SharedPreferences? _prefs;
+  bool _initialized = false;
 
   String get languageCode => _languageCode;
+
+  Future<void> initialize() async {
+    if (_initialized) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _prefs = prefs;
+      final stored = prefs.getString('selected_language_code');
+      if (stored != null && stored.trim().isNotEmpty) {
+        _languageCode = stored.trim();
+      }
+    } catch (_) {
+      // If persistence fails we silently fall back to defaults.
+    } finally {
+      _initialized = true;
+    }
+  }
 
   void update(String code) {
     final normalized = code.trim();
@@ -30,6 +51,10 @@ class LanguageSelectionController {
       return;
     }
     _languageCode = normalized;
+    final prefs = _prefs;
+    if (prefs != null) {
+      prefs.setString('selected_language_code', normalized);
+    }
   }
 }
 
@@ -236,6 +261,7 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await LanguageSelectionController.instance.initialize();
   runApp(GospelApp());
 }
 
