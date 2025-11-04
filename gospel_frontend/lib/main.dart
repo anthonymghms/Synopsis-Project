@@ -19,6 +19,7 @@ class LanguageOption {
   final String label;
   final String apiLanguage;
   final String apiVersion;
+  final String versionLabel;
   final TextDirection direction;
   final String title;
   final String description;
@@ -35,6 +36,7 @@ class LanguageOption {
     required this.label,
     required this.apiLanguage,
     required this.apiVersion,
+    required this.versionLabel,
     required this.direction,
     required this.title,
     required this.description,
@@ -54,6 +56,7 @@ const List<LanguageOption> kSupportedLanguages = [
     label: 'English',
     apiLanguage: 'english',
     apiVersion: 'kjv',
+    versionLabel: 'KJV',
     direction: TextDirection.ltr,
     title: 'Harmony of the Gospels',
     description:
@@ -70,8 +73,9 @@ const List<LanguageOption> kSupportedLanguages = [
   LanguageOption(
     code: 'arabic',
     label: 'العربية',
-    apiLanguage: 'arabic2',
-    apiVersion: 'kjv',
+    apiLanguage: 'arabic',
+    apiVersion: 'van dyck',
+    versionLabel: 'Van Dyck',
     direction: TextDirection.rtl,
     title: 'تناغم الأناجيل',
     description:
@@ -95,9 +99,19 @@ LanguageOption _languageOptionForCode(String code) {
 }
 
 LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
+  final normalized = apiLanguage.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return null;
+  }
+  const aliases = {
+    'arabic2': 'arabic',
+    'ar': 'arabic',
+    'en': 'english',
+  };
+  final canonical = aliases[normalized] ?? normalized;
   try {
     return kSupportedLanguages.firstWhere(
-      (option) => option.apiLanguage == apiLanguage,
+      (option) => option.apiLanguage.toLowerCase() == canonical,
     );
   } catch (_) {
     return null;
@@ -113,10 +127,34 @@ LanguageOption _languageOptionForVersion(String version) {
       return option;
     }
   }
+  if (normalized == 'arabic2') {
+    return _languageOptionForCode('arabic');
+  }
   if (normalized.contains('van') && normalized.contains('dyck')) {
     return _languageOptionForCode('arabic');
   }
   return _languageOptionForCode(defaultLanguage);
+}
+
+LanguageOption _resolveLanguageOption({
+  String? languageParam,
+  String? versionParam,
+}) {
+  final normalizedLanguage = languageParam?.trim() ?? '';
+  final normalizedVersion = versionParam?.trim() ?? '';
+
+  LanguageOption? option;
+  if (normalizedLanguage.isNotEmpty) {
+    option = _languageOptionForApiLanguage(normalizedLanguage) ??
+        _languageOptionForCode(normalizedLanguage.toLowerCase()) ??
+        _languageOptionForVersion(normalizedLanguage);
+  }
+
+  if (option == null && normalizedVersion.isNotEmpty) {
+    option = _languageOptionForVersion(normalizedVersion);
+  }
+
+  return option ?? _languageOptionForCode(defaultLanguage);
 }
 
 // Order in which gospel references should appear.
@@ -227,8 +265,14 @@ class GospelApp extends StatelessWidget {
     final uri = Uri.parse(normalized);
     final path = uri.path.isEmpty ? '/' : uri.path;
     if (path == '/reference') {
-      final language = uri.queryParameters['language'] ?? defaultLanguage;
-      final version = uri.queryParameters['version'] ?? defaultVersion;
+      final rawLanguage = uri.queryParameters['language'] ?? defaultLanguage;
+      final rawVersion = uri.queryParameters['version'] ?? defaultVersion;
+      final languageOption = _resolveLanguageOption(
+        languageParam: rawLanguage,
+        versionParam: rawVersion,
+      );
+      final language = languageOption.apiLanguage;
+      final version = languageOption.apiVersion;
       final bookDisplay =
           uri.queryParameters['bookDisplay'] ?? uri.queryParameters['book'] ?? '';
       final bookId = uri.queryParameters['bookId'] ?? '';
@@ -1064,7 +1108,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final segments = <String>[];
     final version = widget.version.trim();
     if (version.isNotEmpty) {
-      segments.add(version.toUpperCase());
+      final versionOption = _languageOptionForVersion(version);
+      if (versionOption.versionLabel.trim().isNotEmpty) {
+        segments.add(versionOption.versionLabel);
+      } else {
+        segments.add(version);
+      }
     }
     final apiLanguage = widget.language.trim();
     if (apiLanguage.isNotEmpty) {
@@ -1447,12 +1496,7 @@ class ChooseVersionScreen extends StatefulWidget {
 }
 
 class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
-  // Placeholder list of versions. Later, fetch from backend.
-  final List<String> availableVersions = [
-    "van dyck", // Arabic
-    "kjv", // English
-    // Add more as needed
-  ];
+  final List<LanguageOption> availableOptions = kSupportedLanguages;
 
   String? _selected;
 
@@ -1464,11 +1508,12 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
         children: [
           Expanded(
             child: ListView.builder(
-              itemCount: availableVersions.length,
+              itemCount: availableOptions.length,
               itemBuilder: (context, idx) {
-                final version = availableVersions[idx];
+                final option = availableOptions[idx];
+                final version = option.apiVersion;
                 return RadioListTile<String>(
-                  title: Text(version),
+                  title: Text(option.versionLabel),
                   value: version,
                   groupValue: _selected,
                   onChanged: (val) {
