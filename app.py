@@ -50,8 +50,25 @@ def get_topic(language, version, topic_id):
     )
 
 
+_ARABIC_INDIC_DIGIT_TRANSLATION = str.maketrans(
+    {
+        "٠": "0",
+        "١": "1",
+        "٢": "2",
+        "٣": "3",
+        "٤": "4",
+        "٥": "5",
+        "٦": "6",
+        "٧": "7",
+        "٨": "8",
+        "٩": "9",
+    }
+)
+
+
 def _normalize_book_token(value: str) -> str:
-    return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
+    normalized = (value or "").translate(_ARABIC_INDIC_DIGIT_TRANSLATION)
+    return "".join(ch.lower() for ch in normalized if ch.isalnum())
 
 
 _ORDINAL_WORDS = {
@@ -94,6 +111,189 @@ _BOOK_SYNONYMS = {
     "luke": ["لوقا"],
     "john": ["يوحنا", "يوحنّا"],
 }
+
+
+def _register_book_synonyms(base_name, *variants):
+    base_token = _normalize_book_token(base_name)
+    if not base_token:
+        return
+    base_synonyms = _BOOK_SYNONYMS.setdefault(base_token, [])
+    for variant in variants:
+        token = _normalize_book_token(variant)
+        if not token or token == base_token:
+            continue
+        if token not in base_synonyms:
+            base_synonyms.append(token)
+        reciprocal = _BOOK_SYNONYMS.setdefault(token, [])
+        if base_token not in reciprocal:
+            reciprocal.append(base_token)
+
+
+_ARABIC_BOOK_DOCUMENT_OVERRIDE_SOURCES = {
+    "Genesis": ["التكوين", "سفر التكوين"],
+    "Exodus": ["الخروج", "سفر الخروج"],
+    "Leviticus": ["اللاويين"],
+    "Numbers": ["العدد"],
+    "Deuteronomy": ["التثنية"],
+    "Joshua": ["يشوع"],
+    "Judges": ["القضاة"],
+    "Ruth": ["راعوث"],
+    "1 Samuel": [
+        "صموئيل الاول",
+        "صموئيل الأول",
+        "أول صموئيل",
+        "رسالة صموئيل الاول",
+        "١ صموئيل",
+        "1 صموئيل",
+    ],
+    "2 Samuel": [
+        "صموئيل الثاني",
+        "صموئيل الثاني",
+        "ثاني صموئيل",
+        "٢ صموئيل",
+        "2 صموئيل",
+    ],
+    "1 Kings": ["الملوك الاول", "الملوك الأول", "١ الملوك", "1 الملوك"],
+    "2 Kings": ["الملوك الثاني", "الملوك الثاني", "٢ الملوك", "2 الملوك"],
+    "1 Chronicles": [
+        "أخبار الأيام الأول",
+        "اخبار الايام الاول",
+        "١ أخبار الأيام",
+        "1 أخبار الأيام",
+    ],
+    "2 Chronicles": [
+        "أخبار الأيام الثاني",
+        "اخبار الايام الثاني",
+        "٢ أخبار الأيام",
+        "2 أخبار الأيام",
+    ],
+    "Ezra": ["عزرا"],
+    "Nehemiah": ["نحميا"],
+    "Esther": ["أستير", "استير"],
+    "Job": ["أيوب"],
+    "Psalms": ["المزامير", "مزامير"],
+    "Proverbs": ["الأمثال", "امثال"],
+    "Ecclesiastes": ["الجامعة"],
+    "Song of Solomon": ["نشيد الأنشاد", "نشيد الانشاد", "نشيد"],
+    "Isaiah": ["إشعياء", "اشعياء"],
+    "Jeremiah": ["إرميا", "ارميا"],
+    "Lamentations": ["مراثي إرميا", "مراثي ارميا", "المراثي"],
+    "Ezekiel": ["حزقيال"],
+    "Daniel": ["دانيال"],
+    "Hosea": ["هوشع"],
+    "Joel": ["يوئيل"],
+    "Amos": ["عاموس"],
+    "Obadiah": ["عوبديا"],
+    "Jonah": ["يونان"],
+    "Micah": ["ميخا"],
+    "Nahum": ["ناحوم"],
+    "Habakkuk": ["حبقوق"],
+    "Zephaniah": ["صفنيا"],
+    "Haggai": ["حجّي", "حجي"],
+    "Zechariah": ["زكريا"],
+    "Malachi": ["ملاخي"],
+    "Matthew": ["متى", "متّى"],
+    "Mark": ["مرقس"],
+    "Luke": ["لوقا"],
+    "John": ["يوحنا", "يوحنّا"],
+    "Acts": ["أعمال الرسل", "اعمال الرسل"],
+    "Romans": ["رومية", "رسالة رومية"],
+    "1 Corinthians": [
+        "كورنثوس الاولى",
+        "كورنثوس الأولى",
+        "١ كورنثوس",
+        "1 كورنثوس",
+        "رسالة كورنثوس الاولى",
+    ],
+    "2 Corinthians": [
+        "كورنثوس الثانية",
+        "كورنثوس الثانيه",
+        "٢ كورنثوس",
+        "2 كورنثوس",
+        "رسالة كورنثوس الثانية",
+    ],
+    "Galatians": ["غلاطية", "رسالة غلاطية"],
+    "Ephesians": ["أفسس", "افسس", "رسالة أفسس"],
+    "Philippians": ["فيلبي", "رسالة فيلبي"],
+    "Colossians": ["كولوسي", "رسالة كولوسي"],
+    "1 Thessalonians": [
+        "تسالونيكي الاولى",
+        "تسالونيكي الأولى",
+        "١ تسالونيكي",
+        "1 تسالونيكي",
+    ],
+    "2 Thessalonians": [
+        "تسالونيكي الثانية",
+        "تسالونيكي الثانيه",
+        "٢ تسالونيكي",
+        "2 تسالونيكي",
+    ],
+    "1 Timothy": [
+        "تيموثاوس الاولى",
+        "تيموثاوس الأولى",
+        "١ تيموثاوس",
+        "1 تيموثاوس",
+    ],
+    "2 Timothy": [
+        "تيموثاوس الثانية",
+        "تيموثاوس الثانيه",
+        "٢ تيموثاوس",
+        "2 تيموثاوس",
+    ],
+    "Titus": ["تيطس"],
+    "Philemon": ["فيلمون"],
+    "Hebrews": ["العبرانيين", "رسالة العبرانيين"],
+    "James": ["يعقوب", "رسالة يعقوب"],
+    "1 Peter": [
+        "بطرس الاولى",
+        "بطرس الأولى",
+        "١ بطرس",
+        "1 بطرس",
+    ],
+    "2 Peter": [
+        "بطرس الثانية",
+        "بطرس الثانيه",
+        "٢ بطرس",
+        "2 بطرس",
+    ],
+    "1 John": [
+        "يوحنا الاولى",
+        "يوحنا الأولى",
+        "١ يوحنا",
+        "1 يوحنا",
+        "رسالة يوحنا الاولى",
+    ],
+    "2 John": [
+        "يوحنا الثانية",
+        "يوحنا الثانيه",
+        "٢ يوحنا",
+        "2 يوحنا",
+        "رسالة يوحنا الثانية",
+    ],
+    "3 John": [
+        "يوحنا الثالثة",
+        "يوحنا الثالثه",
+        "٣ يوحنا",
+        "3 يوحنا",
+        "رسالة يوحنا الثالثة",
+    ],
+    "Jude": ["يهوذا", "رسالة يهوذا"],
+    "Revelation": ["رؤيا يوحنا", "سفر الرؤيا", "الرؤيا"],
+}
+
+
+for english_name, variants in _ARABIC_BOOK_DOCUMENT_OVERRIDE_SOURCES.items():
+    _register_book_synonyms(english_name, *variants)
+
+
+_ARABIC_BOOK_DOCUMENT_OVERRIDES = {}
+for english_name, variants in _ARABIC_BOOK_DOCUMENT_OVERRIDE_SOURCES.items():
+    doc_id = english_name
+    tokens = {_normalize_book_token(english_name)}
+    tokens.update(_normalize_book_token(variant) for variant in variants)
+    for token in tokens:
+        if token:
+            _ARABIC_BOOK_DOCUMENT_OVERRIDES[token] = doc_id
 
 
 def _expand_with_synonyms(tokens):
@@ -148,6 +348,14 @@ def _resolve_book_document_id(language: str, version: str, book: str):
     direct_doc = collection.document(book)
     if direct_doc.get().exists:
         return book
+
+    normalized_book = _normalize_book_token(book)
+    if language and language.lower().startswith("arabic"):
+        override = _ARABIC_BOOK_DOCUMENT_OVERRIDES.get(normalized_book)
+        if override:
+            override_doc = collection.document(override)
+            if override_doc.get().exists:
+                return override
 
     candidates = _book_name_candidates(book)
     if not candidates:
