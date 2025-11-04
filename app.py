@@ -80,6 +80,19 @@ _BOOK_SYNONYMS = {
     "songofsolomon": ["songofsongs", "canticles"],
     "psalm": ["psalms"],
     "psalms": ["psalm"],
+    # Arabic gospel book names used by the frontend.
+    "متى": ["matthew", "mathew"],
+    "متّى": ["matthew", "mathew"],
+    "مرقس": ["mark"],
+    "لوقا": ["luke"],
+    "يوحنا": ["john"],
+    "يوحنّا": ["john"],
+    # Provide reverse lookups so English documents can match Arabic requests.
+    "matthew": ["متى", "متّى"],
+    "mathew": ["متى", "متّى"],
+    "mark": ["مرقس"],
+    "luke": ["لوقا"],
+    "john": ["يوحنا", "يوحنّا"],
 }
 
 
