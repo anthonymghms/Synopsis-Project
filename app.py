@@ -71,6 +71,13 @@ def _normalize_book_token(value: str) -> str:
     return "".join(ch.lower() for ch in normalized if ch.isalnum())
 
 
+def _select_bible_language(language: str) -> str:
+    normalized = (language or "").strip()
+    if normalized.lower().startswith("arabic"):
+        return "arabic"
+    return normalized
+
+
 def _select_bible_version(language: str, version: str) -> str:
     normalized_language = (language or "").strip().lower()
     requested_version = (version or "").strip()
@@ -444,6 +451,7 @@ def get_verse():
     chapter = request.args.get("chapter")
     verse = request.args.get("verse")  # Can be "1" or "1-3"
 
+    language = _select_bible_language(language)
     version = _select_bible_version(language, version)
 
     if not all([language, version, requested_book, chapter, verse]):
@@ -489,6 +497,7 @@ def get_chapter():
     requested_book = request.args.get("book")
     chapter = request.args.get("chapter")
 
+    language = _select_bible_language(language)
     version = _select_bible_version(language, version)
 
     if not all([language, version, requested_book, chapter]):
@@ -529,6 +538,7 @@ def get_chapter():
 
 
 def _topics_collection(language: str, version: str):
+    language = _select_bible_language(language)
     version = _select_bible_version(language, version)
     references = db.collection("references")
 
@@ -600,6 +610,7 @@ def get_topics():
     language = request.args.get("language", "english")
     version = request.args.get("version", "kjv")
 
+    language = _select_bible_language(language)
     version = _select_bible_version(language, version)
 
     topics_ref = _topics_collection(language, version)
