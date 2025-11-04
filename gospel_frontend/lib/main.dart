@@ -1070,6 +1070,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
 
+  LanguageOption get _languageOption {
+    final fromLanguage = _languageOptionForApiLanguage(widget.language);
+    if (fromLanguage != null) {
+      return fromLanguage;
+    }
+    return _languageOptionForVersion(widget.version);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1251,6 +1259,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: RichText(
+        textAlign: TextAlign.start,
         text: TextSpan(
           style: baseStyle,
           children: [
@@ -1277,12 +1286,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             'Full Chapter',
             style: theme.textTheme.titleMedium
                 ?.copyWith(fontWeight: FontWeight.w600),
+            textAlign: TextAlign.start,
           ),
           const SizedBox(height: 12),
           if (verses.isEmpty)
             Text(
               'No chapter text is available for this passage yet.',
               style: theme.textTheme.bodyMedium,
+              textAlign: TextAlign.start,
             )
           else
             ...verses
@@ -1313,6 +1324,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             _chapterError!,
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.error),
+            textAlign: TextAlign.start,
           ),
         ],
       ],
@@ -1354,57 +1366,65 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
     final theme = Theme.of(context);
     final meta = _metaSummary;
+    final direction = _languageOption.direction;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _referenceHeading,
-                    style: theme.textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  if (meta.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+    return Directionality(
+      textDirection: direction,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      meta,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                      _referenceHeading,
+                      style: theme.textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                      textAlign: TextAlign.start,
+                    ),
+                    if (meta.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        meta,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.start,
                       ),
-                    ),
+                    ],
+                    if (widget.topicName.trim().isNotEmpty &&
+                        widget.topicName.trim() != _referenceHeading) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'Topic: ${widget.topicName}',
+                        style: theme.textTheme.bodyMedium,
+                        textAlign: TextAlign.start,
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    if (_referenceVerses.isEmpty)
+                      Text(
+                        'No passage text is available for this reference yet.',
+                        style: theme.textTheme.bodyMedium,
+                        textAlign: TextAlign.start,
+                      )
+                    else
+                      ..._referenceVerses
+                          .map((verse) => _buildVerseParagraph(verse, theme))
+                          .toList(),
+                    const SizedBox(height: 32),
+                    _buildChapterSection(theme),
                   ],
-                  if (widget.topicName.trim().isNotEmpty &&
-                      widget.topicName.trim() != _referenceHeading) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      'Topic: ${widget.topicName}',
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  if (_referenceVerses.isEmpty)
-                    Text(
-                      'No passage text is available for this reference yet.',
-                      style: theme.textTheme.bodyMedium,
-                    )
-                  else
-                    ..._referenceVerses
-                        .map((verse) => _buildVerseParagraph(verse, theme))
-                        .toList(),
-                  const SizedBox(height: 32),
-                  _buildChapterSection(theme),
-                ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
