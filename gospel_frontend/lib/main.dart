@@ -14,6 +14,25 @@ const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
 
+class LanguageSelectionController {
+  LanguageSelectionController._();
+
+  static final LanguageSelectionController instance =
+      LanguageSelectionController._();
+
+  String _languageCode = defaultLanguage;
+
+  String get languageCode => _languageCode;
+
+  void update(String code) {
+    final normalized = code.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    _languageCode = normalized;
+  }
+}
+
 class LanguageOption {
   final String code;
   final String label;
@@ -343,7 +362,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
   List<Topic> _topics = [];
   bool _loading = true;
   String? _error;
-  String _selectedLanguageCode = defaultLanguage;
+  String _selectedLanguageCode =
+      LanguageSelectionController.instance.languageCode;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -351,6 +371,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   void initState() {
     super.initState();
+    LanguageSelectionController.instance.update(_selectedLanguageCode);
     fetchTopics();
   }
 
@@ -426,6 +447,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
               setState(() {
                 _selectedLanguageCode = value;
               });
+              LanguageSelectionController.instance.update(value);
               fetchTopics(_languageOptionForCode(value));
             },
             items: kSupportedLanguages
@@ -1081,6 +1103,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   @override
   void initState() {
     super.initState();
+    LanguageSelectionController.instance.update(_languageOption.code);
     _loadReference();
   }
 
@@ -1669,6 +1692,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   void initState() {
     super.initState();
+    LanguageSelectionController.instance.update(widget.languageOption.code);
     _allAuthors = widget.topic.references
         .map((e) => e.book)
         .toSet()
