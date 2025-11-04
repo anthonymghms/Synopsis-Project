@@ -71,6 +71,17 @@ def _normalize_book_token(value: str) -> str:
     return "".join(ch.lower() for ch in normalized if ch.isalnum())
 
 
+def _select_bible_version(language: str, version: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    requested_version = (version or "").strip()
+
+    if normalized_language.startswith("arabic"):
+        if not requested_version or requested_version.lower() == "kjv":
+            return "van dyck"
+
+    return requested_version
+
+
 _ORDINAL_WORDS = {
     "first": "1",
     "second": "2",
@@ -433,6 +444,8 @@ def get_verse():
     chapter = request.args.get("chapter")
     verse = request.args.get("verse")  # Can be "1" or "1-3"
 
+    version = _select_bible_version(language, version)
+
     if not all([language, version, requested_book, chapter, verse]):
         return Response(
             json.dumps({"error": "Missing params"}),
@@ -476,6 +489,8 @@ def get_chapter():
     requested_book = request.args.get("book")
     chapter = request.args.get("chapter")
 
+    version = _select_bible_version(language, version)
+
     if not all([language, version, requested_book, chapter]):
         return Response(
             json.dumps({"error": "Missing params"}),
@@ -514,6 +529,7 @@ def get_chapter():
 
 
 def _topics_collection(language: str, version: str):
+    version = _select_bible_version(language, version)
     references = db.collection("references")
 
     def _normalize(value: str) -> str:
@@ -583,6 +599,8 @@ def _topics_collection(language: str, version: str):
 def get_topics():
     language = request.args.get("language", "english")
     version = request.args.get("version", "kjv")
+
+    version = _select_bible_version(language, version)
 
     topics_ref = _topics_collection(language, version)
     topics = []
