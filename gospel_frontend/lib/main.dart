@@ -14,6 +14,8 @@ const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is ho
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
+const arabicVersionWithDiacritics = 'van dyck';
+const arabicVersionWithoutDiacritics = 'Van Dyke-';
 
 class LanguageSelectionController {
   LanguageSelectionController._();
@@ -174,10 +176,16 @@ LanguageOption _languageOptionForVersion(String version) {
   if (normalized == 'arabic2') {
     return _languageOptionForCode('arabic');
   }
-  if (normalized.contains('van') && normalized.contains('dyck')) {
+  if (normalized.contains('van') &&
+      (normalized.contains('dyck') || normalized.contains('dyke'))) {
     return _languageOptionForCode('arabic');
   }
   return _languageOptionForCode(defaultLanguage);
+}
+
+bool _isArabicWithoutDiacritics(String version) {
+  return version.trim().toLowerCase() ==
+      arabicVersionWithoutDiacritics.toLowerCase();
 }
 
 LanguageOption _resolveLanguageOption({
@@ -390,6 +398,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   String? _error;
   String _selectedLanguageCode =
       LanguageSelectionController.instance.languageCode;
+  bool _arabicWithDiacritics = true;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -398,18 +407,66 @@ class _TopicListScreenState extends State<TopicListScreen> {
   void initState() {
     super.initState();
     LanguageSelectionController.instance.update(_selectedLanguageCode);
+    _initializePreferences();
+  }
+
+  Future<void> _initializePreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final storedArabicPref = prefs.getBool('arabic_with_diacritics');
+      if (storedArabicPref != null) {
+        setState(() {
+          _arabicWithDiacritics = storedArabicPref;
+        });
+      }
+    } catch (_) {
+      // If persistence fails we silently fall back to defaults.
+    } finally {
+      if (mounted) {
+        fetchTopics();
+      }
+    }
+  }
+
+  bool get _isArabicSelected => _languageOption.code == 'arabic';
+
+  String _apiVersionFor(LanguageOption option) {
+    if (option.code == 'arabic' && !_arabicWithDiacritics) {
+      return arabicVersionWithoutDiacritics;
+    }
+    return option.apiVersion;
+  }
+
+  Future<void> _persistArabicPreference(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('arabic_with_diacritics', value);
+    } catch (_) {
+      // Ignore persistence failures.
+    }
+  }
+
+  void _toggleArabicDiacritics() {
+    final nextValue = !_arabicWithDiacritics;
+    setState(() {
+      _arabicWithDiacritics = nextValue;
+    });
+    _persistArabicPreference(nextValue);
     fetchTopics();
   }
 
   Future<void> fetchTopics([LanguageOption? option]) async {
     final languageOption = option ?? _languageOption;
+    final apiVersion = _apiVersionFor(languageOption);
+    final expectedLanguage = _languageOption.apiLanguage;
+    final expectedVersion = _apiVersionFor(_languageOption);
     setState(() {
       _loading = true;
       _error = null;
     });
     final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
       'language': languageOption.apiLanguage,
-      'version': languageOption.apiVersion,
+      'version': apiVersion,
     });
     try {
       final response = await http.get(uri);
@@ -418,8 +475,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
         if (!mounted) {
           return;
         }
-        if (_languageOption.apiLanguage != languageOption.apiLanguage ||
-            _languageOption.apiVersion != languageOption.apiVersion) {
+        if (_languageOption.apiLanguage != expectedLanguage ||
+            _apiVersionFor(_languageOption) != expectedVersion) {
           return;
         }
         setState(() {
@@ -430,8 +487,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
         if (!mounted) {
           return;
         }
-        if (_languageOption.apiLanguage != languageOption.apiLanguage ||
-            _languageOption.apiVersion != languageOption.apiVersion) {
+        if (_languageOption.apiLanguage != expectedLanguage ||
+            _apiVersionFor(_languageOption) != expectedVersion) {
           return;
         }
         setState(() {
@@ -443,8 +500,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
       if (!mounted) {
         return;
       }
-      if (_languageOption.apiLanguage != languageOption.apiLanguage ||
-          _languageOption.apiVersion != languageOption.apiVersion) {
+      if (_languageOption.apiLanguage != expectedLanguage ||
+          _apiVersionFor(_languageOption) != expectedVersion) {
         return;
       }
       setState(() {
@@ -487,6 +544,20 @@ class _TopicListScreenState extends State<TopicListScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildArabicDiacriticsButton(BuildContext context) {
+    if (!_isArabicSelected) {
+      return const SizedBox.shrink();
+    }
+    final label = _arabicWithDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
+    final icon =
+        _arabicWithDiacritics ? Icons.remove_circle_outline : Icons.add_circle_outline;
+    return OutlinedButton.icon(
+      onPressed: _toggleArabicDiacritics,
+      icon: Icon(icon),
+      label: Text(label),
     );
   }
 
@@ -533,6 +604,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                               runSpacing: 8,
                               children: [
                                 _buildLanguageDropdown(context),
+                                _buildArabicDiacriticsButton(context),
                                 FilledButton.icon(
                                   onPressed: () {
                                     ScaffoldMessenger.of(context)
@@ -567,6 +639,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                           topics: _topics,
                           onTopicSelected: _openTopic,
                           languageOption: languageOption,
+                          apiVersion: _apiVersionFor(languageOption),
                         ),
                       ),
                     ],
@@ -581,6 +654,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => AuthorComparisonScreen(
         languageOption: _languageOption,
+        apiVersion: _apiVersionFor(_languageOption),
         topic: topic,
         initialAuthors: authors,
       ),
@@ -594,11 +668,13 @@ class HarmonyTable extends StatefulWidget {
     required this.topics,
     this.onTopicSelected,
     required this.languageOption,
+    required this.apiVersion,
   });
 
   final List<Topic> topics;
   final ValueChanged<Topic>? onTopicSelected;
   final LanguageOption languageOption;
+  final String apiVersion;
 
   @override
   State<HarmonyTable> createState() => _HarmonyTableState();
@@ -743,17 +819,17 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
     final children = <Widget>[];
     for (var i = 0; i < filteredRefs.length; i++) {
-          children.add(
-            ReferenceHoverText(
-              reference: filteredRefs[i],
-              textStyle: style,
-              textAlign: align,
-              topicName: topic.name,
-              language: widget.languageOption.apiLanguage,
-              version: widget.languageOption.apiVersion,
-              tooltipMessage: widget.languageOption.tooltipMessage,
-            ),
-          );
+            children.add(
+              ReferenceHoverText(
+                reference: filteredRefs[i],
+                textStyle: style,
+                textAlign: align,
+                topicName: topic.name,
+                language: widget.languageOption.apiLanguage,
+                version: widget.apiVersion,
+                tooltipMessage: widget.languageOption.tooltipMessage,
+              ),
+            );
           if (i < filteredRefs.length - 1) {
             children.add(const SizedBox(height: 6));
           }
@@ -1117,6 +1193,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _loadingChapter = false;
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
+  bool _withDiacritics = true;
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -1130,7 +1207,25 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   void initState() {
     super.initState();
     LanguageSelectionController.instance.update(_languageOption.code);
+    _withDiacritics = !_isArabicWithoutDiacritics(widget.version);
     _loadReference();
+  }
+
+  String get _baseVersion {
+    final trimmed = widget.version.trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    return _languageOption.apiVersion;
+  }
+
+  String get _activeVersion {
+    if (_languageOption.code == 'arabic') {
+      return _withDiacritics
+          ? arabicVersionWithDiacritics
+          : arabicVersionWithoutDiacritics;
+    }
+    return _baseVersion;
   }
 
   String get _bookParameter {
@@ -1163,14 +1258,18 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   String get _metaSummary {
     final segments = <String>[];
-    final version = widget.version.trim();
+    final version = _activeVersion.trim();
     if (version.isNotEmpty) {
       final versionOption = _languageOptionForVersion(version);
-      if (versionOption.versionLabel.trim().isNotEmpty) {
-        segments.add(versionOption.versionLabel);
-      } else {
-        segments.add(version);
+      String displayVersion = versionOption.versionLabel.trim().isNotEmpty
+          ? versionOption.versionLabel
+          : version;
+      if (_languageOption.code == 'arabic') {
+        displayVersion = _withDiacritics
+            ? '$displayVersion (بالحركات)'
+            : '$displayVersion (بدون حركات)';
       }
+      segments.add(displayVersion.trim());
     }
     final apiLanguage = widget.language.trim();
     if (apiLanguage.isNotEmpty) {
@@ -1201,7 +1300,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     try {
       final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
         'language': widget.language,
-        'version': widget.version,
+        'version': _activeVersion,
         'book': bookParam,
         'chapter': widget.chapter.toString(),
         'verse': verseParam,
@@ -1249,7 +1348,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     try {
       final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
         'language': widget.language,
-        'version': widget.version,
+        'version': _activeVersion,
         'book': bookParam,
         'chapter': widget.chapter.toString(),
       });
@@ -1273,6 +1372,25 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _chapterError = 'Failed to load full chapter: $e';
         _loadingChapter = false;
       });
+    }
+  }
+
+  void _toggleReferenceDiacritics() {
+    if (_languageOption.code != 'arabic') {
+      return;
+    }
+    final shouldReloadChapter = _chapterVerses != null || _chapterError != null;
+    setState(() {
+      _withDiacritics = !_withDiacritics;
+      if (shouldReloadChapter) {
+        _chapterVerses = null;
+        _chapterError = null;
+        _loadingChapter = false;
+      }
+    });
+    _loadReference();
+    if (shouldReloadChapter) {
+      _loadFullChapter();
     }
   }
 
@@ -1380,6 +1498,20 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  Widget _buildArabicReferenceToggleButton() {
+    if (_languageOption.code != 'arabic') {
+      return const SizedBox.shrink();
+    }
+    final label = _withDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
+    final icon =
+        _withDiacritics ? Icons.remove_circle_outline : Icons.add_circle_outline;
+    return OutlinedButton.icon(
+      onPressed: _toggleReferenceDiacritics,
+      icon: Icon(icon),
+      label: Text(label),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
@@ -1444,6 +1576,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         ),
                         textAlign: TextAlign.start,
                       ),
+                    ],
+                    if (_languageOption.code == 'arabic') ...[
+                      const SizedBox(height: 12),
+                      _buildArabicReferenceToggleButton(),
                     ],
                     if (widget.topicName.trim().isNotEmpty &&
                         widget.topicName.trim() != _referenceHeading) ...[
@@ -1678,6 +1814,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                         builder: (_) => AuthorComparisonScreen(
                           languageOption:
                               _languageOptionForVersion(widget.version),
+                          apiVersion: widget.version,
                           topic: widget.topic,
                           initialAuthors:
                               _selected.toList()..sort(_compareBooks),
@@ -1697,11 +1834,13 @@ class AuthorComparisonScreen extends StatefulWidget {
   final LanguageOption languageOption;
   final Topic topic;
   final List<String> initialAuthors;
+  final String apiVersion;
   const AuthorComparisonScreen({
     super.key,
     required this.languageOption,
     required this.topic,
     required this.initialAuthors,
+    required this.apiVersion,
   });
 
   @override
@@ -1742,6 +1881,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
     try {
       final option = widget.languageOption;
+      final version = widget.apiVersion;
       final futures = _selected.map((author) async {
         final refs = widget.topic.references.where((r) => r.book == author);
         final parts = <Map<String, String>>[];
@@ -1749,7 +1889,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
           final url = "$apiBaseUrl/get_verse"
               "?language=${Uri.encodeComponent(option.apiLanguage)}"
-              "&version=${Uri.encodeComponent(option.apiVersion)}"
+              "&version=${Uri.encodeComponent(version)}"
               "&book=${Uri.encodeComponent(bookId)}"
               "&chapter=${ref.chapter}"
               "&verse=${Uri.encodeComponent(ref.verses)}";
