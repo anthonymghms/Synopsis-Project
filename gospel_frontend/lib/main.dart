@@ -428,31 +428,11 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
   }
 
-  bool get _isArabicSelected => _languageOption.code == 'arabic';
-
   String _apiVersionFor(LanguageOption option) {
     if (option.code == 'arabic' && !_arabicWithDiacritics) {
       return arabicVersionWithoutDiacritics;
     }
     return option.apiVersion;
-  }
-
-  Future<void> _persistArabicPreference(bool value) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('arabic_with_diacritics', value);
-    } catch (_) {
-      // Ignore persistence failures.
-    }
-  }
-
-  void _toggleArabicDiacritics() {
-    final nextValue = !_arabicWithDiacritics;
-    setState(() {
-      _arabicWithDiacritics = nextValue;
-    });
-    _persistArabicPreference(nextValue);
-    fetchTopics();
   }
 
   Future<void> fetchTopics([LanguageOption? option]) async {
@@ -547,20 +527,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     );
   }
 
-  Widget _buildArabicDiacriticsButton(BuildContext context) {
-    if (!_isArabicSelected) {
-      return const SizedBox.shrink();
-    }
-    final label = _arabicWithDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
-    final icon =
-        _arabicWithDiacritics ? Icons.remove_circle_outline : Icons.add_circle_outline;
-    return OutlinedButton.icon(
-      onPressed: _toggleArabicDiacritics,
-      icon: Icon(icon),
-      label: Text(label),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
@@ -604,7 +570,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
                               runSpacing: 8,
                               children: [
                                 _buildLanguageDropdown(context),
-                                _buildArabicDiacriticsButton(context),
                                 FilledButton.icon(
                                   onPressed: () {
                                     ScaffoldMessenger.of(context)
