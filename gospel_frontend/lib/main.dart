@@ -8,12 +8,14 @@ import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'reference_link_opener.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
+const String _arabicNoDiacriticsVersion = 'Van Dyke-';
 
 class LanguageSelectionController {
   LanguageSelectionController._();
@@ -1117,6 +1119,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _loadingChapter = false;
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
+  bool _includeArabicDiacritics = true;
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -1125,6 +1128,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
     return _languageOptionForVersion(widget.version);
   }
+
+  bool get _isArabic => _languageOption.code == 'arabic';
+
+  bool get _useNoDiacritics => _isArabic && !_includeArabicDiacritics;
 
   @override
   void initState() {
@@ -1178,7 +1185,91 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           _languageOptionForApiLanguage(apiLanguage)?.label ?? apiLanguage;
       segments.add(displayLanguage);
     }
+    if (_useNoDiacritics) {
+      segments.add('بدون حركات');
+    }
     return segments.join(' · ');
+  }
+
+  CollectionReference<Map<String, dynamic>> _arabicVerseCollection(
+      String bookId) {
+    return FirebaseFirestore.instance
+        .collection('bibles')
+        .doc('arabic')
+        .collection(_arabicNoDiacriticsVersion)
+        .doc(bookId)
+        .collection('chapters')
+        .doc(widget.chapter.toString())
+        .collection('verses');
+  }
+
+  List<int> _parseRequestedVerseNumbers(String verses) {
+    if (verses.trim().isEmpty) {
+      return const [1];
+    }
+    final segments = verses.split(',');
+    final results = <int>[];
+    for (final segment in segments) {
+      final trimmed = segment.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.contains('-')) {
+        final parts = trimmed.split('-').map((e) => e.trim()).toList();
+        if (parts.length == 2) {
+          final start = int.tryParse(parts.first);
+          final end = int.tryParse(parts.last);
+          if (start != null && end != null && end >= start) {
+            for (var i = start; i <= end; i++) {
+              results.add(i);
+            }
+            continue;
+          }
+        }
+      }
+      final number = int.tryParse(trimmed);
+      if (number != null) {
+        results.add(number);
+      }
+    }
+    if (results.isEmpty) {
+      return const [1];
+    }
+    return results.toSet().toList()..sort();
+  }
+
+  Future<List<_VerseLine>> _loadReferenceFromFirestore(
+      {required String bookId, required List<int> verseNumbers}) async {
+    final collection = _arabicVerseCollection(bookId);
+    final verses = <_VerseLine>[];
+    for (final number in verseNumbers) {
+      final doc = await collection.doc(number.toString()).get();
+      if (!doc.exists) {
+        continue;
+      }
+      final data = doc.data();
+      final text = (data?['text'] ?? '').toString().trim();
+      verses.add(_VerseLine(number: number, text: text));
+    }
+    verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
+    return verses;
+  }
+
+  Future<List<_VerseLine>> _loadFullChapterFromFirestore(
+      {required String bookId}) async {
+    final collection = _arabicVerseCollection(bookId);
+    final snapshot = await collection.get();
+    final verses = snapshot.docs.map((doc) {
+      final number = int.tryParse(doc.id) ?? doc.data()['verse'] ?? 0;
+      final text = (doc.data()['text'] ?? '').toString().trim();
+      int? parsedNumber;
+      if (number is int) {
+        parsedNumber = number;
+      } else {
+        parsedNumber = int.tryParse(number.toString());
+      }
+      return _VerseLine(number: parsedNumber, text: text);
+    }).toList();
+    verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
+    return verses;
   }
 
   Future<void> _loadReference() async {
@@ -1199,18 +1290,26 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
-        'language': widget.language,
-        'version': widget.version,
-        'book': bookParam,
-        'chapter': widget.chapter.toString(),
-        'verse': verseParam,
-      });
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
+      List<_VerseLine> verses;
+      if (_useNoDiacritics) {
+        final numbers = _parseRequestedVerseNumbers(verseParam);
+        verses = await _loadReferenceFromFirestore(
+            bookId: bookParam, verseNumbers: numbers);
+      } else {
+        final uri =
+            Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+          'language': widget.language,
+          'version': widget.version,
+          'book': bookParam,
+          'chapter': widget.chapter.toString(),
+          'verse': verseParam,
+        });
+        final response = await http.get(uri);
+        if (response.statusCode != 200) {
+          throw Exception('Error ${response.statusCode}');
+        }
+        verses = _parseVerses(response.body);
       }
-      final verses = _parseVerses(response.body);
       if (!mounted) {
         return;
       }
@@ -1247,17 +1346,24 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
-        'language': widget.language,
-        'version': widget.version,
-        'book': bookParam,
-        'chapter': widget.chapter.toString(),
-      });
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
+      List<_VerseLine> verses;
+      if (_useNoDiacritics) {
+        verses =
+            await _loadFullChapterFromFirestore(bookId: bookParam);
+      } else {
+        final uri =
+            Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
+          'language': widget.language,
+          'version': widget.version,
+          'book': bookParam,
+          'chapter': widget.chapter.toString(),
+        });
+        final response = await http.get(uri);
+        if (response.statusCode != 200) {
+          throw Exception('Error ${response.statusCode}');
+        }
+        verses = _parseVerses(response.body);
       }
-      final verses = _parseVerses(response.body);
       if (!mounted) {
         return;
       }
@@ -1380,6 +1486,51 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  Widget _buildDiacriticToggle(ThemeData theme) {
+    if (!_isArabic) {
+      return const SizedBox.shrink();
+    }
+    final isWithDiacritics = _includeArabicDiacritics;
+    final label = isWithDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
+    final helperText = isWithDiacritics
+        ? 'عرض النص بدون تشكيل'
+        : 'عرض النص مع التشكيل';
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FilledButton.tonalIcon(
+            onPressed: _loadingReference
+                ? null
+                : () {
+                    setState(() {
+                      _includeArabicDiacritics = !_includeArabicDiacritics;
+                      _chapterVerses = null;
+                      _chapterError = null;
+                      _loadingChapter = false;
+                    });
+                    _loadReference();
+                  },
+            icon: Icon(
+              isWithDiacritics
+                  ? Icons.text_fields_outlined
+                  : Icons.text_format_outlined,
+            ),
+            label: Text(label),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            helperText,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            textAlign: TextAlign.start,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
@@ -1444,6 +1595,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         ),
                         textAlign: TextAlign.start,
                       ),
+                    ],
+                    if (_isArabic) ...[
+                      const SizedBox(height: 12),
+                      _buildDiacriticToggle(theme),
                     ],
                     if (widget.topicName.trim().isNotEmpty &&
                         widget.topicName.trim() != _referenceHeading) ...[
