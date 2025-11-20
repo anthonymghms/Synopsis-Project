@@ -59,7 +59,7 @@ def parse_usfm(usfm_content):
 
 SERVICE_ACCOUNT_FILE = 'serviceAccountKey.json'
 BUCKET_NAME = 'synopsis-224b0.firebasestorage.app'
-USFM_FILE_PATH = 'MRK_arabic_van-dyck.usfm'
+USFM_FILE_PATH = 'arabic/New Arabic Version -/Ar-MRK-nav-.usfm'
 
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
@@ -73,24 +73,44 @@ bucket = client.bucket(BUCKET_NAME)
 blob = bucket.blob(USFM_FILE_PATH)
 usfm_content = blob.download_as_text(encoding='utf-8')
 
-parsed = parse_usfm(usfm_content)
-parts = os.path.basename(USFM_FILE_PATH).replace('.usfm', '').split('_')
 
-if len(parts) == 3:
-    book_code = parts[0]
-    language = parts[1].replace('-', ' ')
-    version = parts[2].replace('-', ' ')
+
+parsed = parse_usfm(usfm_content)
+
+# --- figure out identifiers safely ---
+
+# 1) Language and version (hardcode for now)
+language = "arabic"
+version = "Van Dyke-"
+
+# 2) Book ID: try from \id line, then fall back to filename
+raw_id = parsed.get('book_id')
+if raw_id:
+    # Example: "\id JHN" or "\id JHN John"
+    book_id = raw_id.strip().split()[0]
 else:
-    book_code = parsed['book_id'].strip()
-    language = "unknown"
-    version = "unknown"
+    # No \id found in the USFM → try to infer from file name
+    base_name = os.path.basename(USFM_FILE_PATH)
+    book_id = None
+    for code in USFM_BOOK_NAMES.keys():
+        if code.lower() in base_name.lower():
+            book_id = code
+            break
+
+    if not book_id:
+        raise ValueError(
+            "Could not determine book_id: no \\id line in USFM and "
+            "filename does not contain a known book code."
+        )
+
+book_name = USFM_BOOK_NAMES.get(book_id, book_id)
 
 # Get total verses for progress bar (optional)
 total_verses = sum(len(ch['verses']) for ch in parsed['chapters'].values())
 progress = tqdm(total=total_verses, desc="Uploading verses")
 
-book_id = parsed['book_id'].strip()
-book_name = USFM_BOOK_NAMES.get(book_id, book_id)
+
+
 for chapter_num, chapter_data in parsed['chapters'].items():
     # Reference to chapter doc
     chapter_ref = db.collection('bibles').document(language).collection(version).document(book_name).collection('chapters').document(str(chapter_num))
