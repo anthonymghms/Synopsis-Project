@@ -59,7 +59,7 @@ def parse_usfm(usfm_content):
 
 SERVICE_ACCOUNT_FILE = 'serviceAccountKey.json'
 BUCKET_NAME = 'synopsis-224b0.firebasestorage.app'
-USFM_FILE_PATH = 'arabic/New Arabic Version -/Ar-MRK-nav-.usfm'
+USFM_FILE_PATH = 'english/ASV/En-MRK-asv.usfm'
 
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
@@ -80,8 +80,8 @@ parsed = parse_usfm(usfm_content)
 # --- figure out identifiers safely ---
 
 # 1) Language and version (hardcode for now)
-language = "arabic"
-version = "Van Dyke-"
+language = "english"
+version = "ASV"
 
 # 2) Book ID: try from \id line, then fall back to filename
 raw_id = parsed.get('book_id')
