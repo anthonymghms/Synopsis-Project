@@ -60,7 +60,15 @@ class LanguageSelectionController {
   }
 }
 
+class BibleVersion {
+  final String id;
+  final String label;
+
+  const BibleVersion({required this.id, required this.label});
+}
+
 class LanguageOption {
+  final List<BibleVersion> versions;
   final String code;
   final String label;
   final String apiLanguage;
@@ -93,6 +101,7 @@ class LanguageOption {
     required this.gospelHeaders,
     required this.tooltipMessage,
     required this.comparePrompt,
+    required this.versions,
   });
 }
 
@@ -103,6 +112,10 @@ const List<LanguageOption> kSupportedLanguages = [
     apiLanguage: 'english',
     apiVersion: 'kjv',
     versionLabel: 'KJV',
+    versions: [
+      BibleVersion(id: 'kjv', label: 'KJV'),
+      BibleVersion(id: 'ASV', label: 'ASV'),
+    ],
     direction: TextDirection.ltr,
     title: 'Harmony of the Gospels',
     description:
@@ -122,6 +135,9 @@ const List<LanguageOption> kSupportedLanguages = [
     apiLanguage: 'arabic',
     apiVersion: 'van dyck',
     versionLabel: 'Van Dyck',
+    versions: [
+      BibleVersion(id: 'van dyck', label: 'Van Dyck'),
+    ],
     direction: TextDirection.rtl,
     title: 'تناغم الأناجيل',
     description:
@@ -142,6 +158,17 @@ LanguageOption _languageOptionForCode(String code) {
     (option) => option.code == code,
     orElse: () => kSupportedLanguages.first,
   );
+}
+
+BibleVersion? _versionOptionFor(LanguageOption option, String versionId) {
+  final normalized = versionId.trim().toLowerCase();
+  for (final version in option.versions) {
+    if (version.id.toLowerCase() == normalized ||
+        version.label.toLowerCase() == normalized) {
+      return version;
+    }
+  }
+  return null;
 }
 
 LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
@@ -167,7 +194,8 @@ LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
 LanguageOption _languageOptionForVersion(String version) {
   final normalized = version.trim().toLowerCase();
   for (final option in kSupportedLanguages) {
-    if (option.apiVersion.toLowerCase() == normalized ||
+    if (_versionOptionFor(option, normalized) != null ||
+        option.apiVersion.toLowerCase() == normalized ||
         option.code == normalized ||
         option.label.toLowerCase() == normalized) {
       return option;
@@ -181,6 +209,26 @@ LanguageOption _languageOptionForVersion(String version) {
     return _languageOptionForCode('arabic');
   }
   return _languageOptionForCode(defaultLanguage);
+}
+
+String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
+  final normalized = rawVersion.trim();
+  if (normalized.isEmpty) {
+    return option.apiVersion;
+  }
+
+  if (option.code == 'arabic') {
+    return _isArabicWithoutDiacritics(normalized)
+        ? arabicVersionWithoutDiacritics
+        : arabicVersionWithDiacritics;
+  }
+
+  final match = _versionOptionFor(option, normalized);
+  if (match != null) {
+    return match.id;
+  }
+
+  return option.apiVersion;
 }
 
 bool _isArabicWithoutDiacritics(String version) {
@@ -325,7 +373,7 @@ class GospelApp extends StatelessWidget {
         versionParam: rawVersion,
       );
       final language = languageOption.apiLanguage;
-      final version = languageOption.apiVersion;
+      final version = _sanitizeVersionForLanguage(languageOption, rawVersion);
       final bookDisplay =
           uri.queryParameters['bookDisplay'] ?? uri.queryParameters['book'] ?? '';
       final bookId = uri.queryParameters['bookId'] ?? '';
@@ -399,6 +447,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
   String _selectedLanguageCode =
       LanguageSelectionController.instance.languageCode;
   bool _arabicWithDiacritics = true;
+  final Map<String, String> _selectedVersions = {};
+  SharedPreferences? _prefs;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -414,11 +464,21 @@ class _TopicListScreenState extends State<TopicListScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final storedArabicPref = prefs.getBool('arabic_with_diacritics');
-      if (storedArabicPref != null) {
-        setState(() {
-          _arabicWithDiacritics = storedArabicPref;
-        });
+      final versionSelections = <String, String>{};
+      for (final option in kSupportedLanguages) {
+        final storedVersion =
+            prefs.getString('selected_version_${option.code}') ?? '';
+        if (storedVersion.trim().isNotEmpty) {
+          versionSelections[option.code] = storedVersion.trim();
+        }
       }
+      setState(() {
+        _prefs = prefs;
+        if (storedArabicPref != null) {
+          _arabicWithDiacritics = storedArabicPref;
+        }
+        _selectedVersions.addAll(versionSelections);
+      });
     } catch (_) {
       // If persistence fails we silently fall back to defaults.
     } finally {
@@ -428,9 +488,37 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
   }
 
+  Future<void> _updateVersionForLanguage(
+      LanguageOption option, String versionId) async {
+    final normalized = versionId.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    setState(() {
+      _selectedVersions[option.code] = normalized;
+    });
+    try {
+      final prefs = _prefs ?? await SharedPreferences.getInstance();
+      _prefs = prefs;
+      await prefs.setString('selected_version_${option.code}', normalized);
+    } catch (_) {
+      // Ignore persistence errors to keep UX smooth.
+    }
+    if (mounted && option.code == _selectedLanguageCode) {
+      fetchTopics(option);
+    }
+  }
+
   String _apiVersionFor(LanguageOption option) {
     if (option.code == 'arabic' && !_arabicWithDiacritics) {
       return arabicVersionWithoutDiacritics;
+    }
+    final selectedVersion = _selectedVersions[option.code];
+    if (selectedVersion != null && selectedVersion.trim().isNotEmpty) {
+      return selectedVersion.trim();
+    }
+    if (option.versions.isNotEmpty) {
+      return option.versions.first.id;
     }
     return option.apiVersion;
   }
@@ -527,6 +615,75 @@ class _TopicListScreenState extends State<TopicListScreen> {
     );
   }
 
+  String _versionLabelFor(LanguageOption option) {
+    final selectedVersion = _selectedVersions[option.code] ??
+        (option.versions.isNotEmpty
+            ? option.versions.first.id
+            : option.apiVersion);
+    final versionOption = _versionOptionFor(option, selectedVersion);
+    final baseLabel = versionOption?.label ?? option.versionLabel;
+    if (option.code == 'arabic') {
+      return _arabicWithDiacritics ? baseLabel : '$baseLabel (بدون حركات)';
+    }
+    return baseLabel;
+  }
+
+  Future<void> _showVersionSelector(
+      BuildContext context, LanguageOption option) async {
+    final currentSelection = _selectedVersions[option.code] ??
+        (option.versions.isNotEmpty
+            ? option.versions.first.id
+            : option.apiVersion);
+    await showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Select version (${option.label})',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              ...option.versions.map(
+                (version) => RadioListTile<String>(
+                  title: Text(version.label),
+                  value: version.id,
+                  groupValue: currentSelection,
+                  onChanged: (value) {
+                    if (value != null) {
+                      Navigator.of(context).pop();
+                      _updateVersionForLanguage(option, value);
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVersionButton(
+      BuildContext context, LanguageOption languageOption) {
+    if (languageOption.versions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final hasMultipleVersions = languageOption.versions.length > 1;
+    return OutlinedButton.icon(
+      onPressed:
+          hasMultipleVersions ? () => _showVersionSelector(context, languageOption) : null,
+      icon: const Icon(Icons.menu_book_outlined),
+      label: Text('Version: ${_versionLabelFor(languageOption)}'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
@@ -570,6 +727,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                               runSpacing: 8,
                               children: [
                                 _buildLanguageDropdown(context),
+                                _buildVersionButton(context, languageOption),
                                 FilledButton.icon(
                                   onPressed: () {
                                     ScaffoldMessenger.of(context)
@@ -1159,6 +1317,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
   bool _withDiacritics = true;
+  late String _selectedVersion;
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -1172,12 +1331,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   void initState() {
     super.initState();
     LanguageSelectionController.instance.update(_languageOption.code);
-    _withDiacritics = !_isArabicWithoutDiacritics(widget.version);
+    _selectedVersion =
+        _sanitizeVersionForLanguage(_languageOption, widget.version);
+    _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _loadReference();
   }
 
   String get _baseVersion {
-    final trimmed = widget.version.trim();
+    final trimmed = _selectedVersion.trim();
     if (trimmed.isNotEmpty) {
       return trimmed;
     }
@@ -1225,10 +1386,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final segments = <String>[];
     final version = _activeVersion.trim();
     if (version.isNotEmpty) {
-      final versionOption = _languageOptionForVersion(version);
-      String displayVersion = versionOption.versionLabel.trim().isNotEmpty
-          ? versionOption.versionLabel
-          : version;
+      final languageOption = _languageOptionForVersion(version);
+      final versionOption = _versionOptionFor(languageOption, version);
+      String displayVersion =
+          (versionOption?.label ?? languageOption.versionLabel).trim();
+      if (displayVersion.isEmpty) {
+        displayVersion = version;
+      }
       if (_languageOption.code == 'arabic') {
         displayVersion = _withDiacritics
             ? '$displayVersion (بالحركات)'
@@ -1359,6 +1523,40 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
+  Future<void> _updateSelectedVersion(String newVersion) async {
+    final sanitized = _sanitizeVersionForLanguage(_languageOption, newVersion);
+    if (sanitized == _selectedVersion &&
+        (_languageOption.code != 'arabic' ||
+            _withDiacritics == !_isArabicWithoutDiacritics(sanitized))) {
+      return;
+    }
+    final shouldReloadChapter = _chapterVerses != null || _chapterError != null;
+
+    setState(() {
+      _selectedVersion = sanitized;
+      if (_languageOption.code == 'arabic') {
+        _withDiacritics = !_isArabicWithoutDiacritics(sanitized);
+      }
+      if (shouldReloadChapter) {
+        _chapterVerses = null;
+        _chapterError = null;
+        _loadingChapter = false;
+      }
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_version_${_languageOption.code}', sanitized);
+    } catch (_) {
+      // Ignore persistence errors and continue.
+    }
+
+    _loadReference();
+    if (shouldReloadChapter) {
+      _loadFullChapter();
+    }
+  }
+
   List<_VerseLine> _parseVerses(String body) {
     final decoded = json.decode(body);
     if (decoded is! List) {
@@ -1477,6 +1675,64 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  String _currentVersionLabel() {
+    final version = _activeVersion;
+    final option = _languageOptionForVersion(version);
+    final match = _versionOptionFor(option, version);
+    return match?.label ?? option.versionLabel;
+  }
+
+  void _showVersionPicker() {
+    final versions = _languageOption.versions;
+    final current = _activeVersion;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Select version (${_languageOption.label})',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              ...versions.map(
+                (version) => RadioListTile<String>(
+                  title: Text(version.label),
+                  value: version.id,
+                  groupValue: current,
+                  onChanged: (value) {
+                    if (value != null) {
+                      Navigator.of(context).pop();
+                      _updateSelectedVersion(value);
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVersionSwitchButton() {
+    final versions = _languageOption.versions;
+    if (versions.length < 2) {
+      return const SizedBox.shrink();
+    }
+    return OutlinedButton.icon(
+      onPressed: _showVersionPicker,
+      icon: const Icon(Icons.menu_book_outlined),
+      label: Text('Version: ${_currentVersionLabel()}'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
@@ -1513,6 +1769,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final theme = Theme.of(context);
     final meta = _metaSummary;
     final direction = _languageOption.direction;
+    final actionButtons = <Widget>[
+      _buildVersionSwitchButton(),
+      _buildArabicReferenceToggleButton(),
+    ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
       textDirection: direction,
@@ -1542,9 +1802,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         textAlign: TextAlign.start,
                       ),
                     ],
-                    if (_languageOption.code == 'arabic') ...[
+                    if (actionButtons.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      _buildArabicReferenceToggleButton(),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: actionButtons,
+                      ),
                     ],
                     if (widget.topicName.trim().isNotEmpty &&
                         widget.topicName.trim() != _referenceHeading) ...[
