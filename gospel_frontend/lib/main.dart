@@ -211,6 +211,26 @@ LanguageOption _languageOptionForVersion(String version) {
   return _languageOptionForCode(defaultLanguage);
 }
 
+String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
+  final normalized = rawVersion.trim();
+  if (normalized.isEmpty) {
+    return option.apiVersion;
+  }
+
+  if (option.code == 'arabic') {
+    return _isArabicWithoutDiacritics(normalized)
+        ? arabicVersionWithoutDiacritics
+        : arabicVersionWithDiacritics;
+  }
+
+  final match = _versionOptionFor(option, normalized);
+  if (match != null) {
+    return match.id;
+  }
+
+  return option.apiVersion;
+}
+
 bool _isArabicWithoutDiacritics(String version) {
   return version.trim().toLowerCase() ==
       arabicVersionWithoutDiacritics.toLowerCase();
@@ -353,7 +373,7 @@ class GospelApp extends StatelessWidget {
         versionParam: rawVersion,
       );
       final language = languageOption.apiLanguage;
-      final version = languageOption.apiVersion;
+      final version = _sanitizeVersionForLanguage(languageOption, rawVersion);
       final bookDisplay =
           uri.queryParameters['bookDisplay'] ?? uri.queryParameters['book'] ?? '';
       final bookId = uri.queryParameters['bookId'] ?? '';
@@ -1297,6 +1317,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
   bool _withDiacritics = true;
+  late String _selectedVersion;
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -1310,12 +1331,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   void initState() {
     super.initState();
     LanguageSelectionController.instance.update(_languageOption.code);
-    _withDiacritics = !_isArabicWithoutDiacritics(widget.version);
+    _selectedVersion =
+        _sanitizeVersionForLanguage(_languageOption, widget.version);
+    _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _loadReference();
   }
 
   String get _baseVersion {
-    final trimmed = widget.version.trim();
+    final trimmed = _selectedVersion.trim();
     if (trimmed.isNotEmpty) {
       return trimmed;
     }
@@ -1500,6 +1523,40 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
+  Future<void> _updateSelectedVersion(String newVersion) async {
+    final sanitized = _sanitizeVersionForLanguage(_languageOption, newVersion);
+    if (sanitized == _selectedVersion &&
+        (_languageOption.code != 'arabic' ||
+            _withDiacritics == !_isArabicWithoutDiacritics(sanitized))) {
+      return;
+    }
+    final shouldReloadChapter = _chapterVerses != null || _chapterError != null;
+
+    setState(() {
+      _selectedVersion = sanitized;
+      if (_languageOption.code == 'arabic') {
+        _withDiacritics = !_isArabicWithoutDiacritics(sanitized);
+      }
+      if (shouldReloadChapter) {
+        _chapterVerses = null;
+        _chapterError = null;
+        _loadingChapter = false;
+      }
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_version_${_languageOption.code}', sanitized);
+    } catch (_) {
+      // Ignore persistence errors and continue.
+    }
+
+    _loadReference();
+    if (shouldReloadChapter) {
+      _loadFullChapter();
+    }
+  }
+
   List<_VerseLine> _parseVerses(String body) {
     final decoded = json.decode(body);
     if (decoded is! List) {
@@ -1618,6 +1675,64 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  String _currentVersionLabel() {
+    final version = _activeVersion;
+    final option = _languageOptionForVersion(version);
+    final match = _versionOptionFor(option, version);
+    return match?.label ?? option.versionLabel;
+  }
+
+  void _showVersionPicker() {
+    final versions = _languageOption.versions;
+    final current = _activeVersion;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Select version (${_languageOption.label})',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              ...versions.map(
+                (version) => RadioListTile<String>(
+                  title: Text(version.label),
+                  value: version.id,
+                  groupValue: current,
+                  onChanged: (value) {
+                    if (value != null) {
+                      Navigator.of(context).pop();
+                      _updateSelectedVersion(value);
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVersionSwitchButton() {
+    final versions = _languageOption.versions;
+    if (versions.length < 2) {
+      return const SizedBox.shrink();
+    }
+    return OutlinedButton.icon(
+      onPressed: _showVersionPicker,
+      icon: const Icon(Icons.menu_book_outlined),
+      label: Text('Version: ${_currentVersionLabel()}'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
@@ -1654,6 +1769,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final theme = Theme.of(context);
     final meta = _metaSummary;
     final direction = _languageOption.direction;
+    final actionButtons = <Widget>[
+      _buildVersionSwitchButton(),
+      _buildArabicReferenceToggleButton(),
+    ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
       textDirection: direction,
@@ -1683,9 +1802,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         textAlign: TextAlign.start,
                       ),
                     ],
-                    if (_languageOption.code == 'arabic') ...[
+                    if (actionButtons.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      _buildArabicReferenceToggleButton(),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: actionButtons,
+                      ),
                     ],
                     if (widget.topicName.trim().isNotEmpty &&
                         widget.topicName.trim() != _referenceHeading) ...[
