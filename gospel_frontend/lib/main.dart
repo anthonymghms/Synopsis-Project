@@ -283,6 +283,13 @@ const Map<String, String> gospelNameSynonyms = {
   'يوحنّا': 'John',
 };
 
+const Map<String, String> _arabicGospelDisplayNames = {
+  'Matthew': 'متى',
+  'Mark': 'مرقس',
+  'Luke': 'لوقا',
+  'John': 'يوحنا',
+};
+
 String _normalizeGospelName(String name) {
   final trimmed = name.trim();
   final lower = trimmed.toLowerCase();
@@ -301,6 +308,14 @@ int _gospelIndex(String book) {
       canonicalGospelsIndex[book] ??
       canonicalGospelsIndex[book.toLowerCase()] ??
       canonicalGospelsIndex.length;
+}
+
+String _displayGospelName(String book, LanguageOption option) {
+  final canonical = _normalizeGospelName(book);
+  if (option.code == 'arabic') {
+    return _arabicGospelDisplayNames[canonical] ?? canonical;
+  }
+  return canonical;
 }
 
 int _compareBooks(String a, String b) {
@@ -1137,6 +1152,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.language = defaultLanguage,
     this.version = defaultVersion,
     this.tooltipMessage = 'Click to view more',
+    this.labelOverride = '',
   });
 
   final GospelReference reference;
@@ -1146,6 +1162,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String language;
   final String version;
   final String tooltipMessage;
+  final String labelOverride;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -1251,7 +1268,10 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       decoration: TextDecoration.underline,
       decorationColor: theme.colorScheme.primary,
     );
-    final text = widget.reference.formattedReference;
+    final override = widget.labelOverride.trim();
+    final text = override.isNotEmpty
+        ? override
+        : widget.reference.formattedReference;
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return Tooltip(
@@ -2000,7 +2020,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
   void initState() {
     super.initState();
     authors = widget.topic.references
-        .map((e) => e.book)
+        .map((e) => _normalizeGospelName(e.book))
         .toSet()
         .toList()
       ..sort(_compareBooks);
@@ -2008,6 +2028,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final option = _languageOptionForVersion(widget.version);
     return MainScaffold(
       title: "Choose Authors",
       body: Column(
@@ -2018,7 +2039,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
               itemBuilder: (context, idx) {
                 final author = authors[idx];
                 return CheckboxListTile(
-                  title: Text(author),
+                  title: Text(_displayGospelName(author, option)),
                   value: _selected.contains(author),
                   onChanged: (val) {
                     setState(() {
@@ -2076,23 +2097,71 @@ class AuthorComparisonScreen extends StatefulWidget {
   State<AuthorComparisonScreen> createState() => _AuthorComparisonScreenState();
 }
 
+class _AuthorTextEntry {
+  const _AuthorTextEntry({
+    required this.reference,
+    required this.title,
+    required this.text,
+    required this.displayAuthor,
+  });
+
+  final GospelReference reference;
+  final String title;
+  final String text;
+  final String displayAuthor;
+}
+
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   late final List<String> _allAuthors;
   late Set<String> _selected;
-  Map<String, List<Map<String, String>>> _texts = {};
+  Map<String, List<_AuthorTextEntry>> _texts = {};
   String? _error;
   bool _loading = true;
+  bool _withDiacritics = true;
+
+  String get _activeVersion {
+    if (widget.languageOption.code == 'arabic') {
+      return _withDiacritics
+          ? arabicVersionWithDiacritics
+          : arabicVersionWithoutDiacritics;
+    }
+    return widget.apiVersion;
+  }
+
+  String _displayAuthorName(String author) {
+    return _displayGospelName(author, widget.languageOption);
+  }
 
   @override
   void initState() {
     super.initState();
     LanguageSelectionController.instance.update(widget.languageOption.code);
     _allAuthors = widget.topic.references
-        .map((e) => e.book)
+        .map((e) => _normalizeGospelName(e.book))
         .toSet()
         .toList();
     _allAuthors.sort(_compareBooks);
-    _selected = widget.initialAuthors.toSet();
+    _selected = widget.initialAuthors.map(_normalizeGospelName).toSet();
+    _withDiacritics =
+        !_isArabicWithoutDiacritics(_sanitizeVersionForLanguage(
+            widget.languageOption, widget.apiVersion));
+    fetchTexts();
+  }
+
+  Future<void> _toggleArabicDiacritics() async {
+    if (widget.languageOption.code != 'arabic') {
+      return;
+    }
+    final newValue = !_withDiacritics;
+    setState(() {
+      _withDiacritics = newValue;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('arabic_with_diacritics', newValue);
+    } catch (_) {
+      // Ignore persistence issues.
+    }
     fetchTexts();
   }
 
@@ -2110,10 +2179,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
     try {
       final option = widget.languageOption;
-      final version = widget.apiVersion;
+      final version = _activeVersion;
       final futures = _selected.map((author) async {
-        final refs = widget.topic.references.where((r) => r.book == author);
-        final parts = <Map<String, String>>[];
+        final refs = widget.topic.references
+            .where((r) => _normalizeGospelName(r.book) == author);
+        final displayAuthor = _displayAuthorName(author);
+        final parts = <_AuthorTextEntry>[];
         for (final ref in refs) {
           final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
           final url = "$apiBaseUrl/get_verse"
@@ -2130,8 +2201,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           final refLabel = ref.formattedReference;
-          final title = refLabel.isEmpty ? author : "$author $refLabel";
-          parts.add({'title': title, 'text': text});
+          final title =
+              refLabel.isEmpty ? displayAuthor : "$displayAuthor $refLabel";
+          parts.add(_AuthorTextEntry(
+            reference: ref,
+            title: title,
+            text: text,
+            displayAuthor: displayAuthor,
+          ));
         }
         return MapEntry(author, parts);
       });
@@ -2149,6 +2226,20 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     }
   }
 
+  Widget _buildDiacriticsToggle(LanguageOption option) {
+    if (option.code != 'arabic') {
+      return const SizedBox.shrink();
+    }
+    final label = _withDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
+    final icon =
+        _withDiacritics ? Icons.remove_circle_outline : Icons.add_circle_outline;
+    return OutlinedButton.icon(
+      onPressed: _toggleArabicDiacritics,
+      icon: Icon(icon),
+      label: Text(label),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final option = widget.languageOption;
@@ -2160,24 +2251,28 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           children: [
             Wrap(
               spacing: 8,
-              children: _allAuthors
-                  .map(
-                    (author) => FilterChip(
-                      label: Text(author),
-                      selected: _selected.contains(author),
-                      onSelected: (val) {
-                        setState(() {
-                          if (val) {
-                            _selected.add(author);
-                          } else {
-                            _selected.remove(author);
-                          }
-                        });
-                        fetchTexts();
-                      },
-                    ),
-                  )
-                  .toList(),
+              runSpacing: 8,
+              children: [
+                ..._allAuthors
+                    .map(
+                      (author) => FilterChip(
+                        label: Text(_displayAuthorName(author)),
+                        selected: _selected.contains(author),
+                        onSelected: (val) {
+                          setState(() {
+                            if (val) {
+                              _selected.add(author);
+                            } else {
+                              _selected.remove(author);
+                            }
+                          });
+                          fetchTexts();
+                        },
+                      ),
+                    )
+                    .toList(),
+                _buildDiacriticsToggle(option),
+              ],
             ),
             const SizedBox(height: 16),
             Expanded(
@@ -2222,22 +2317,52 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                   return const SizedBox.shrink();
                                                 }
                                                 final entry = entries[i];
+                                                final headingStyle =
+                                                    Theme.of(context)
+                                                        .textTheme
+                                                        .titleSmall
+                                                        ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        );
+                                                final referenceLabel =
+                                                    entry.reference
+                                                        .formattedReference
+                                                        .trim();
+                                                final heading =
+                                                    referenceLabel.isEmpty
+                                                        ? Text(
+                                                            entry.title,
+                                                            style:
+                                                                headingStyle,
+                                                          )
+                                                        : ReferenceHoverText(
+                                                            reference:
+                                                                entry.reference,
+                                                            textStyle:
+                                                                headingStyle,
+                                                            textAlign:
+                                                                TextAlign.start,
+                                                            topicName:
+                                                                widget
+                                                                    .topic
+                                                                    .name,
+                                                            language: option
+                                                                .apiLanguage,
+                                                            version:
+                                                                _activeVersion,
+                                                            tooltipMessage: option
+                                                                .tooltipMessage,
+                                                            labelOverride:
+                                                                entry.title,
+                                                          );
                                                 return Column(
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
                                                   children: [
-                                                    Text(
-                                                      entry['title'] ?? '',
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .titleSmall
-                                                          ?.copyWith(
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                          ),
-                                                    ),
+                                                    heading,
                                                     const SizedBox(height: 4),
-                                                    Text(entry['text'] ?? ''),
+                                                    Text(entry.text),
                                                   ],
                                                 );
                                               }(),
