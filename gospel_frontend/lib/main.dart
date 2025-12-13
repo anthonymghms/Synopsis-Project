@@ -445,16 +445,64 @@ LanguageOption _languageOptionForVersion(String version) {
   return _languageOptionForCode(defaultLanguage);
 }
 
-String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
-  final normalized = rawVersion.trim();
-  if (normalized.isEmpty) {
-    return option.apiVersion;
+String _normalizeArabicBaseVersion(String version) {
+  final trimmed = version.trim();
+  if (trimmed.endsWith('-')) {
+    return trimmed.substring(0, trimmed.length - 1).toLowerCase();
+  }
+  return trimmed.toLowerCase();
+}
+
+String? _resolveArabicVersion(LanguageOption option,
+    {required bool withDiacritics, String? preferredVersion}) {
+  final preferredBase =
+      preferredVersion != null && preferredVersion.trim().isNotEmpty
+          ? _normalizeArabicBaseVersion(preferredVersion)
+          : null;
+
+  BibleVersion? fallback;
+  for (final version in option.versions) {
+    final matchesDiacritics =
+        _isArabicWithoutDiacritics(version.id) == !withDiacritics;
+    if (!matchesDiacritics) {
+      continue;
+    }
+    if (preferredBase != null &&
+        _normalizeArabicBaseVersion(version.id) == preferredBase) {
+      return version.id;
+    }
+    fallback ??= version;
   }
 
+  if (preferredVersion != null && preferredVersion.trim().isNotEmpty) {
+    final normalizedPreferred = preferredVersion.trim();
+    if (withDiacritics && _isArabicWithoutDiacritics(normalizedPreferred)) {
+      return normalizedPreferred.endsWith('-')
+          ? normalizedPreferred.substring(0, normalizedPreferred.length - 1)
+          : normalizedPreferred;
+    }
+    if (!withDiacritics && !_isArabicWithoutDiacritics(normalizedPreferred)) {
+      return '${normalizedPreferred}-';
+    }
+    return normalizedPreferred;
+  }
+
+  return fallback?.id ??
+      (withDiacritics ? arabicVersionWithDiacritics : arabicVersionWithoutDiacritics);
+}
+
+String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
+  final normalized = rawVersion.trim();
+
   if (option.code == 'arabic') {
-    return _isArabicWithoutDiacritics(normalized)
-        ? arabicVersionWithoutDiacritics
-        : arabicVersionWithDiacritics;
+    return _resolveArabicVersion(option,
+            withDiacritics: !_isArabicWithoutDiacritics(normalized),
+            preferredVersion: normalized.isNotEmpty ? normalized : option.apiVersion) ??
+        option.apiVersion;
+  }
+
+  if (normalized.isEmpty) {
+    return option.apiVersion;
   }
 
   final match = _versionOptionFor(option, normalized);
@@ -807,24 +855,24 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   String _apiVersionFor(LanguageOption option) {
     final selectedVersion = _selectedVersions[option.code]?.trim();
+    if (option.code == 'arabic') {
+      final baseVersion = (selectedVersion != null && selectedVersion.isNotEmpty)
+          ? selectedVersion
+          : (option.versions.isNotEmpty
+              ? option.versions.first.id
+              : option.apiVersion);
+      return _resolveArabicVersion(option,
+              withDiacritics: _arabicWithDiacritics,
+              preferredVersion: baseVersion) ??
+          baseVersion;
+    }
+
     if (selectedVersion != null && selectedVersion.isNotEmpty) {
       return selectedVersion;
     }
 
     if (option.versions.isNotEmpty) {
-      final defaultVersion = option.versions.first.id;
-      if (option.code == 'arabic' && !_arabicWithDiacritics) {
-        return _isArabicWithoutDiacritics(defaultVersion)
-            ? defaultVersion
-            : '$defaultVersion-';
-      }
-      return defaultVersion;
-    }
-
-    if (option.code == 'arabic' && !_arabicWithDiacritics) {
-      return _isArabicWithoutDiacritics(option.apiVersion)
-          ? option.apiVersion
-          : '${option.apiVersion}-';
+      return option.versions.first.id;
     }
 
     return option.apiVersion;
@@ -1697,9 +1745,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   String get _activeVersion {
     if (_languageOption.code == 'arabic') {
-      return _withDiacritics
-          ? arabicVersionWithDiacritics
-          : arabicVersionWithoutDiacritics;
+      return _resolveArabicVersion(_languageOption,
+              withDiacritics: _withDiacritics,
+              preferredVersion: _selectedVersion) ??
+          _languageOption.apiVersion;
     }
     return _baseVersion;
   }
@@ -2451,9 +2500,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   String get _activeVersion {
     if (widget.languageOption.code == 'arabic') {
-      return _withDiacritics
-          ? arabicVersionWithDiacritics
-          : arabicVersionWithoutDiacritics;
+      return _resolveArabicVersion(widget.languageOption,
+              withDiacritics: _withDiacritics,
+              preferredVersion: widget.apiVersion) ??
+          widget.apiVersion;
     }
     return widget.apiVersion;
   }
