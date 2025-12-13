@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:gospel_frontend/auth_screen.dart';
 import 'package:gospel_frontend/main_scaffold.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -103,9 +104,38 @@ class LanguageOption {
     required this.comparePrompt,
     required this.versions,
   });
+
+  LanguageOption copyWith({
+    List<BibleVersion>? versions,
+    String? code,
+    String? label,
+    String? apiLanguage,
+    String? apiVersion,
+    String? versionLabel,
+    TextDirection? direction,
+  }) {
+    return LanguageOption(
+      code: code ?? this.code,
+      label: label ?? this.label,
+      apiLanguage: apiLanguage ?? this.apiLanguage,
+      apiVersion: apiVersion ?? this.apiVersion,
+      versionLabel: versionLabel ?? this.versionLabel,
+      direction: direction ?? this.direction,
+      title: title,
+      description: description,
+      downloadLabel: downloadLabel,
+      resetLabel: resetLabel,
+      pdfUnavailableMessage: pdfUnavailableMessage,
+      subjectsHeader: subjectsHeader,
+      gospelHeaders: gospelHeaders,
+      tooltipMessage: tooltipMessage,
+      comparePrompt: comparePrompt,
+      versions: versions ?? this.versions,
+    );
+  }
 }
 
-const List<LanguageOption> kSupportedLanguages = [
+const List<LanguageOption> kBaseLanguageOptions = [
   LanguageOption(
     code: 'english',
     label: 'English',
@@ -153,10 +183,97 @@ const List<LanguageOption> kSupportedLanguages = [
   ),
 ];
 
+List<LanguageOption> _supportedLanguages =
+    List<LanguageOption>.from(kBaseLanguageOptions);
+
+final Map<String, LanguageOption> _baseLanguageLookup = {
+  for (final option in kBaseLanguageOptions)
+    option.code.toLowerCase(): option,
+};
+
+String _formatLanguageLabel(String raw) {
+  if (raw.isEmpty) {
+    return raw;
+  }
+  if (raw.length == 1) {
+    return raw.toUpperCase();
+  }
+  return raw[0].toUpperCase() + raw.substring(1);
+}
+
+LanguageOption _fallbackLanguageOption(
+    String languageId, List<BibleVersion> versions) {
+  final template = _baseLanguageLookup['english'] ?? kBaseLanguageOptions.first;
+  final sanitizedVersions = versions.isNotEmpty ? versions : template.versions;
+  final apiVersion =
+      sanitizedVersions.isNotEmpty ? sanitizedVersions.first.id : template.apiVersion;
+  final normalizedCode = languageId.trim().isEmpty
+      ? template.code
+      : languageId.trim().toLowerCase();
+  return template.copyWith(
+    code: normalizedCode,
+    label: _formatLanguageLabel(languageId),
+    apiLanguage: languageId,
+    apiVersion: apiVersion,
+    versions: sanitizedVersions,
+    direction: TextDirection.ltr,
+  );
+}
+
+Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
+  final snapshot = await FirebaseFirestore.instance.collection('bibles').get();
+  if (snapshot.docs.isEmpty) {
+    return kBaseLanguageOptions;
+  }
+
+  final List<LanguageOption> options = [];
+  for (final doc in snapshot.docs) {
+    final languageId = doc.id.trim();
+    if (languageId.isEmpty) {
+      continue;
+    }
+    final normalizedCode = languageId.toLowerCase();
+    final baseOption = _baseLanguageLookup[normalizedCode];
+    final data = doc.data();
+    final labelFromData = (data['label'] as String?)?.trim();
+    final directionField = (data['direction'] as String?)?.trim().toLowerCase();
+    final List<BibleVersion> versions = [];
+    final subCollections = await doc.reference.listCollections();
+    for (final collection in subCollections) {
+      versions.add(BibleVersion(id: collection.id, label: collection.id));
+    }
+    versions.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+
+    final template = baseOption ?? _fallbackLanguageOption(languageId, versions);
+    final sanitizedVersions = versions.isNotEmpty ? versions : template.versions;
+    final apiVersion = sanitizedVersions.isNotEmpty
+        ? sanitizedVersions.first.id
+        : template.apiVersion;
+    final direction = directionField == 'rtl'
+        ? TextDirection.rtl
+        : directionField == 'ltr'
+            ? TextDirection.ltr
+            : template.direction;
+
+    options.add(template.copyWith(
+      code: normalizedCode,
+      label: labelFromData?.isNotEmpty == true
+          ? labelFromData!
+          : (baseOption?.label ?? _formatLanguageLabel(languageId)),
+      apiLanguage: languageId,
+      apiVersion: apiVersion,
+      versions: sanitizedVersions,
+      direction: direction,
+    ));
+  }
+
+  return options.isNotEmpty ? options : kBaseLanguageOptions;
+}
+
 LanguageOption _languageOptionForCode(String code) {
-  return kSupportedLanguages.firstWhere(
+  return _supportedLanguages.firstWhere(
     (option) => option.code == code,
-    orElse: () => kSupportedLanguages.first,
+    orElse: () => _supportedLanguages.first,
   );
 }
 
@@ -183,7 +300,7 @@ LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
   };
   final canonical = aliases[normalized] ?? normalized;
   try {
-    return kSupportedLanguages.firstWhere(
+    return _supportedLanguages.firstWhere(
       (option) => option.apiLanguage.toLowerCase() == canonical,
     );
   } catch (_) {
@@ -193,7 +310,7 @@ LanguageOption? _languageOptionForApiLanguage(String apiLanguage) {
 
 LanguageOption _languageOptionForVersion(String version) {
   final normalized = version.trim().toLowerCase();
-  for (final option in kSupportedLanguages) {
+  for (final option in _supportedLanguages) {
     if (_versionOptionFor(option, normalized) != null ||
         option.apiVersion.toLowerCase() == normalized ||
         option.code == normalized ||
@@ -459,6 +576,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
   List<Topic> _topics = [];
   bool _loading = true;
   String? _error;
+  bool _languagesLoading = true;
+  String? _languageLoadError;
   String _selectedLanguageCode =
       LanguageSelectionController.instance.languageCode;
   bool _arabicWithDiacritics = true;
@@ -473,6 +592,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     super.initState();
     LanguageSelectionController.instance.update(_selectedLanguageCode);
     _initializePreferences();
+    _refreshLanguagesFromFirestore();
   }
 
   Future<void> _initializePreferences() async {
@@ -480,7 +600,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       final prefs = await SharedPreferences.getInstance();
       final storedArabicPref = prefs.getBool('arabic_with_diacritics');
       final versionSelections = <String, String>{};
-      for (final option in kSupportedLanguages) {
+      for (final option in _supportedLanguages) {
         final storedVersion =
             prefs.getString('selected_version_${option.code}') ?? '';
         if (storedVersion.trim().isNotEmpty) {
@@ -496,6 +616,46 @@ class _TopicListScreenState extends State<TopicListScreen> {
       });
     } catch (_) {
       // If persistence fails we silently fall back to defaults.
+    } finally {
+      if (mounted && !_languagesLoading) {
+        fetchTopics();
+      }
+    }
+  }
+
+  Future<void> _refreshLanguagesFromFirestore() async {
+    setState(() {
+      _languagesLoading = true;
+      _languageLoadError = null;
+    });
+    try {
+      final options = await _loadLanguagesFromFirestore();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _supportedLanguages = options;
+        _languagesLoading = false;
+      });
+
+      final hasSelection =
+          _supportedLanguages.any((option) => option.code == _selectedLanguageCode);
+      if (!hasSelection && _supportedLanguages.isNotEmpty) {
+        final fallbackCode = _supportedLanguages.first.code;
+        setState(() {
+          _selectedLanguageCode = fallbackCode;
+        });
+        LanguageSelectionController.instance.update(fallbackCode);
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _languageLoadError = 'Unable to load available languages (using defaults).';
+        _languagesLoading = false;
+        _supportedLanguages = kBaseLanguageOptions;
+      });
     } finally {
       if (mounted) {
         fetchTopics();
@@ -596,7 +756,15 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   Widget _buildLanguageDropdown(BuildContext context) {
     final theme = Theme.of(context);
-    return DropdownButtonHideUnderline(
+
+    if (_languagesLoading) {
+      return const SizedBox(
+        height: 48,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final dropdown = DropdownButtonHideUnderline(
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border.all(color: theme.colorScheme.outlineVariant),
@@ -616,7 +784,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
               LanguageSelectionController.instance.update(value);
               fetchTopics(_languageOptionForCode(value));
             },
-            items: kSupportedLanguages
+            items: _supportedLanguages
                 .map(
                   (option) => DropdownMenuItem(
                     value: option.code,
@@ -628,6 +796,31 @@ class _TopicListScreenState extends State<TopicListScreen> {
         ),
       ),
     );
+
+    if (_languageLoadError != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.warning_amber_outlined, color: Colors.orange),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _languageLoadError!,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          dropdown,
+        ],
+      );
+    }
+
+    return dropdown;
   }
 
   String _versionLabelFor(LanguageOption option) {
@@ -1950,7 +2143,7 @@ class ChooseVersionScreen extends StatefulWidget {
 }
 
 class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
-  final List<LanguageOption> availableOptions = kSupportedLanguages;
+  final List<LanguageOption> availableOptions = _supportedLanguages;
 
   String? _selected;
 
