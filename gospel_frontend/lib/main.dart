@@ -15,7 +15,7 @@ const apiBaseUrl = "http://164.68.108.181:8000"; // Change if your backend is ho
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
-const arabicVersionWithDiacritics = 'van dyck';
+const arabicVersionWithDiacritics = 'Van Dyke';
 const arabicVersionWithoutDiacritics = 'Van Dyke-';
 const _versionFieldCandidates = [
   'versions',
@@ -172,10 +172,14 @@ const List<LanguageOption> kBaseLanguageOptions = [
     code: 'arabic',
     label: 'العربية',
     apiLanguage: 'arabic',
-    apiVersion: 'van dyck',
-    versionLabel: 'Van Dyck',
+    apiVersion: arabicVersionWithDiacritics,
+    versionLabel: 'Van Dyke',
     versions: [
-      BibleVersion(id: 'van dyck', label: 'Van Dyck'),
+      BibleVersion(id: 'Van Dyke', label: 'Van Dyke'),
+      BibleVersion(id: 'Van Dyke-', label: 'Van Dyke (بدون حركات)'),
+      BibleVersion(id: 'New Arabic Version', label: 'New Arabic Version'),
+      BibleVersion(
+          id: 'New Arabic Version-', label: 'New Arabic Version (بدون حركات)'),
     ],
     direction: TextDirection.rtl,
     title: 'تناغم الأناجيل',
@@ -447,10 +451,19 @@ LanguageOption _languageOptionForVersion(String version) {
 
 String _normalizeArabicBaseVersion(String version) {
   final trimmed = version.trim();
-  if (trimmed.endsWith('-')) {
-    return trimmed.substring(0, trimmed.length - 1).toLowerCase();
+  if (trimmed.isEmpty) {
+    return '';
   }
-  return trimmed.toLowerCase();
+
+  final withoutSuffix =
+      trimmed.endsWith('-') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+  final normalized = withoutSuffix.toLowerCase();
+
+  if (normalized.contains('dyck')) {
+    return normalized.replaceAll('dyck', 'dyke');
+  }
+
+  return normalized;
 }
 
 String? _resolveArabicVersion(LanguageOption option,
@@ -467,14 +480,17 @@ String? _resolveArabicVersion(LanguageOption option,
     if (!matchesDiacritics) {
       continue;
     }
+    fallback ??= version;
     if (preferredBase != null &&
         _normalizeArabicBaseVersion(version.id) == preferredBase) {
       return version.id;
     }
-    fallback ??= version;
   }
 
   if (preferredVersion != null && preferredVersion.trim().isNotEmpty) {
+    if (fallback != null) {
+      return fallback.id;
+    }
     final normalizedPreferred = preferredVersion.trim();
     if (withDiacritics && _isArabicWithoutDiacritics(normalizedPreferred)) {
       return normalizedPreferred.endsWith('-')
@@ -495,10 +511,12 @@ String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
   final normalized = rawVersion.trim();
 
   if (option.code == 'arabic') {
-    return _resolveArabicVersion(option,
-            withDiacritics: !_isArabicWithoutDiacritics(normalized),
-            preferredVersion: normalized.isNotEmpty ? normalized : option.apiVersion) ??
-        option.apiVersion;
+    final effectiveVersion =
+        normalized.isNotEmpty ? normalized : option.apiVersion.trim();
+    final resolved = _resolveArabicVersion(option,
+        withDiacritics: !_isArabicWithoutDiacritics(effectiveVersion),
+        preferredVersion: effectiveVersion);
+    return resolved ?? option.apiVersion;
   }
 
   if (normalized.isEmpty) {
@@ -761,6 +779,49 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _refreshLanguagesFromFirestore();
   }
 
+  Future<void> _reconcileSelectedVersions() async {
+    if (_supportedLanguages.isEmpty || _selectedVersions.isEmpty) {
+      return;
+    }
+
+    final prefs = _prefs ?? await SharedPreferences.getInstance();
+    _prefs = prefs;
+    final Map<String, String> updates = {};
+
+    for (final option in _supportedLanguages) {
+      final stored = _selectedVersions[option.code];
+      if (stored == null) {
+        continue;
+      }
+      final sanitized = _sanitizeVersionForLanguage(option, stored);
+      if (sanitized != stored) {
+        updates[option.code] = sanitized;
+      }
+    }
+
+    if (updates.isEmpty) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _selectedVersions.addAll(updates);
+        final normalizedArabic = _selectedVersions['arabic'];
+        if (normalizedArabic != null && normalizedArabic.trim().isNotEmpty) {
+          _arabicWithDiacritics = !_isArabicWithoutDiacritics(normalizedArabic);
+        }
+      });
+    }
+
+    for (final entry in updates.entries) {
+      try {
+        await prefs.setString('selected_version_${entry.key}', entry.value);
+      } catch (_) {
+        // Ignore persistence errors so UI stays responsive.
+      }
+    }
+  }
+
   Future<void> _initializePreferences() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -803,6 +864,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
         _supportedLanguages = options;
         _languagesLoading = false;
       });
+
+      await _reconcileSelectedVersions();
 
       final hasSelection =
           _supportedLanguages.any((option) => option.code == _selectedLanguageCode);
@@ -861,18 +924,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
           : (option.versions.isNotEmpty
               ? option.versions.first.id
               : option.apiVersion);
-      return _resolveArabicVersion(option,
+      final resolved = _resolveArabicVersion(option,
               withDiacritics: _arabicWithDiacritics,
               preferredVersion: baseVersion) ??
-          baseVersion;
+          _sanitizeVersionForLanguage(option, baseVersion);
+      return resolved;
     }
 
     if (selectedVersion != null && selectedVersion.isNotEmpty) {
-      return selectedVersion;
+      return _sanitizeVersionForLanguage(option, selectedVersion);
     }
 
     if (option.versions.isNotEmpty) {
-      return option.versions.first.id;
+      return _sanitizeVersionForLanguage(option, option.versions.first.id);
     }
 
     return option.apiVersion;
