@@ -17,6 +17,15 @@ const defaultLanguage = "english";
 const defaultVersion = "kjv";
 const arabicVersionWithDiacritics = 'van dyck';
 const arabicVersionWithoutDiacritics = 'Van Dyke-';
+const _versionFieldCandidates = [
+  'versions',
+  'availableVersions',
+  'available_versions',
+  'versionList',
+  'version_list',
+  'supportedVersions',
+  'supported_versions',
+];
 
 class LanguageSelectionController {
   LanguageSelectionController._();
@@ -220,6 +229,82 @@ LanguageOption _fallbackLanguageOption(
   );
 }
 
+String _versionLabel(String languageId, String versionId) {
+  final normalizedLanguage = languageId.trim().toLowerCase();
+  final normalizedVersion = versionId.trim();
+  if (normalizedLanguage == 'arabic') {
+    final isWithoutDiacritics = _isArabicWithoutDiacritics(normalizedVersion);
+    final stripped = normalizedVersion.endsWith('-')
+        ? normalizedVersion.substring(0, normalizedVersion.length - 1).trim()
+        : normalizedVersion;
+    final baseLabel = _formatLanguageLabel(
+        stripped.isNotEmpty ? stripped : normalizedVersion);
+    return isWithoutDiacritics ? '$baseLabel (بدون حركات)' : baseLabel;
+  }
+  return _formatLanguageLabel(normalizedVersion);
+}
+
+void _collectVersionId(dynamic value, Set<String> versionIds) {
+  final id = value?.toString().trim();
+  if (id != null && id.isNotEmpty) {
+    versionIds.add(id);
+  }
+}
+
+void _collectVersionIdsFromField(dynamic field, Set<String> versionIds) {
+  if (field is Iterable) {
+    for (final entry in field) {
+      _collectVersionId(entry, versionIds);
+    }
+  } else if (field is Map) {
+    for (final entry in field.entries) {
+      _collectVersionId(entry.key, versionIds);
+    }
+  }
+}
+
+void _collectVersionIdsFromData(
+    Map<String, dynamic> data, Set<String> versionIds) {
+  for (final candidate in _versionFieldCandidates) {
+    if (data.containsKey(candidate)) {
+      _collectVersionIdsFromField(data[candidate], versionIds);
+    }
+  }
+
+  for (final entry in data.entries) {
+    final key = entry.key.toString().trim();
+    if (key.isEmpty || key == 'label' || key == 'direction') {
+      continue;
+    }
+    versionIds.add(key);
+  }
+}
+
+Future<void> _collectVersionManifestDocs(
+    DocumentReference<Map<String, dynamic>> docRef,
+    Set<String> versionIds) async {
+  const manifestPaths = [
+    ['versions', 'manifest'],
+    ['versions', '_index'],
+    ['metadata', 'versions'],
+    ['meta', 'versions'],
+    ['version_manifest', 'index'],
+    ['version_manifest', 'all'],
+  ];
+
+  for (final path in manifestPaths) {
+    try {
+      final snapshot = await docRef.collection(path[0]).doc(path[1]).get();
+      if (snapshot.exists) {
+        final data = snapshot.data() ?? {};
+        _collectVersionIdsFromData(data, versionIds);
+      }
+    } catch (_) {
+      // Ignore manifest lookup failures and keep trying other sources.
+    }
+  }
+}
+
 Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
   final docRef = FirebaseFirestore.instance.collection('bibles').doc(languageId);
   final Set<String> versionIds = {};
@@ -227,34 +312,12 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
   try {
     final docSnapshot = await docRef.get();
     final data = docSnapshot.data() ?? {};
-    final versionsField = data['versions'];
-
-    if (versionsField is Iterable) {
-      for (final entry in versionsField) {
-        final id = entry?.toString().trim();
-        if (id != null && id.isNotEmpty) {
-          versionIds.add(id);
-        }
-      }
-    } else if (versionsField is Map) {
-      for (final entry in versionsField.entries) {
-        final id = entry.key.toString().trim();
-        if (id.isNotEmpty) {
-          versionIds.add(id);
-        }
-      }
-    }
-
-    for (final entry in data.entries) {
-      final key = entry.key.toString().trim();
-      if (key.isEmpty || key == 'label' || key == 'direction') {
-        continue;
-      }
-      versionIds.add(key);
-    }
+    _collectVersionIdsFromData(data, versionIds);
   } catch (_) {
-    // If fetching the document fails, we fall back to any other sources below.
+    // If fetching the document fails, we fall back to other sources below.
   }
+
+  await _collectVersionManifestDocs(docRef, versionIds);
 
   try {
     final versionsCollection = await docRef.collection('versions').get();
@@ -263,13 +326,17 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
       if (id.isNotEmpty) {
         versionIds.add(id);
       }
+      final versionData = versionDoc.data();
+      _collectVersionIdsFromData(versionData, versionIds);
     }
   } catch (_) {
     // The collection may not exist or security rules may block listing.
   }
 
   final versions = versionIds
-      .map((id) => BibleVersion(id: id, label: _formatLanguageLabel(id)))
+      .map((id) => BibleVersion(
+          id: id,
+          label: _versionLabel(languageId, id)))
       .toList();
   versions.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
   return versions;
@@ -399,8 +466,9 @@ String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
 }
 
 bool _isArabicWithoutDiacritics(String version) {
-  return version.trim().toLowerCase() ==
-      arabicVersionWithoutDiacritics.toLowerCase();
+  final normalized = version.trim().toLowerCase();
+  return normalized == arabicVersionWithoutDiacritics.toLowerCase() ||
+      normalized.endsWith('-');
 }
 
 LanguageOption _resolveLanguageOption({
@@ -721,6 +789,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
     setState(() {
       _selectedVersions[option.code] = normalized;
+      if (option.code == 'arabic') {
+        _arabicWithDiacritics = !_isArabicWithoutDiacritics(normalized);
+      }
     });
     try {
       final prefs = _prefs ?? await SharedPreferences.getInstance();
@@ -735,16 +806,27 @@ class _TopicListScreenState extends State<TopicListScreen> {
   }
 
   String _apiVersionFor(LanguageOption option) {
-    if (option.code == 'arabic' && !_arabicWithDiacritics) {
-      return arabicVersionWithoutDiacritics;
+    final selectedVersion = _selectedVersions[option.code]?.trim();
+    if (selectedVersion != null && selectedVersion.isNotEmpty) {
+      return selectedVersion;
     }
-    final selectedVersion = _selectedVersions[option.code];
-    if (selectedVersion != null && selectedVersion.trim().isNotEmpty) {
-      return selectedVersion.trim();
-    }
+
     if (option.versions.isNotEmpty) {
-      return option.versions.first.id;
+      final defaultVersion = option.versions.first.id;
+      if (option.code == 'arabic' && !_arabicWithDiacritics) {
+        return _isArabicWithoutDiacritics(defaultVersion)
+            ? defaultVersion
+            : '$defaultVersion-';
+      }
+      return defaultVersion;
     }
+
+    if (option.code == 'arabic' && !_arabicWithDiacritics) {
+      return _isArabicWithoutDiacritics(option.apiVersion)
+          ? option.apiVersion
+          : '${option.apiVersion}-';
+    }
+
     return option.apiVersion;
   }
 
@@ -881,7 +963,12 @@ class _TopicListScreenState extends State<TopicListScreen> {
     final versionOption = _versionOptionFor(option, selectedVersion);
     final baseLabel = versionOption?.label ?? option.versionLabel;
     if (option.code == 'arabic') {
-      return _arabicWithDiacritics ? baseLabel : '$baseLabel (بدون حركات)';
+      if (versionOption != null) {
+        return versionOption.label;
+      }
+      return _isArabicWithoutDiacritics(selectedVersion)
+          ? '$baseLabel (بدون حركات)'
+          : baseLabel;
     }
     return baseLabel;
   }
