@@ -220,6 +220,61 @@ LanguageOption _fallbackLanguageOption(
   );
 }
 
+Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
+  final docRef = FirebaseFirestore.instance.collection('bibles').doc(languageId);
+  final Set<String> versionIds = {};
+
+  try {
+    final docSnapshot = await docRef.get();
+    final data = docSnapshot.data() ?? {};
+    final versionsField = data['versions'];
+
+    if (versionsField is Iterable) {
+      for (final entry in versionsField) {
+        final id = entry?.toString().trim();
+        if (id != null && id.isNotEmpty) {
+          versionIds.add(id);
+        }
+      }
+    } else if (versionsField is Map) {
+      for (final entry in versionsField.entries) {
+        final id = entry.key.toString().trim();
+        if (id.isNotEmpty) {
+          versionIds.add(id);
+        }
+      }
+    }
+
+    for (final entry in data.entries) {
+      final key = entry.key.toString().trim();
+      if (key.isEmpty || key == 'label' || key == 'direction') {
+        continue;
+      }
+      versionIds.add(key);
+    }
+  } catch (_) {
+    // If fetching the document fails, we fall back to any other sources below.
+  }
+
+  try {
+    final versionsCollection = await docRef.collection('versions').get();
+    for (final versionDoc in versionsCollection.docs) {
+      final id = versionDoc.id.trim();
+      if (id.isNotEmpty) {
+        versionIds.add(id);
+      }
+    }
+  } catch (_) {
+    // The collection may not exist or security rules may block listing.
+  }
+
+  final versions = versionIds
+      .map((id) => BibleVersion(id: id, label: _formatLanguageLabel(id)))
+      .toList();
+  versions.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+  return versions;
+}
+
 Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
   final snapshot = await FirebaseFirestore.instance.collection('bibles').get();
   if (snapshot.docs.isEmpty) {
@@ -237,12 +292,7 @@ Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
     final data = doc.data();
     final labelFromData = (data['label'] as String?)?.trim();
     final directionField = (data['direction'] as String?)?.trim().toLowerCase();
-    final List<BibleVersion> versions = [];
-    final subCollections = await doc.reference.listCollections();
-    for (final collection in subCollections) {
-      versions.add(BibleVersion(id: collection.id, label: collection.id));
-    }
-    versions.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    final versions = await _loadVersionsForLanguage(languageId);
 
     final template = baseOption ?? _fallbackLanguageOption(languageId, versions);
     final sanitizedVersions = versions.isNotEmpty ? versions : template.versions;
