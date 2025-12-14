@@ -1780,6 +1780,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   List<_VerseLine>? _chapterVerses;
   bool _withDiacritics = true;
   late String _selectedVersion;
+  final List<_ComparisonPassage> _comparisons = [];
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -1815,6 +1816,24 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           _languageOption.apiVersion;
     }
     return _baseVersion;
+  }
+
+  String _comparisonVersion(LanguageOption option, String version,
+      {bool? withDiacritics}) {
+    if (option.code == 'arabic') {
+      final prefersDiacritics = withDiacritics ??
+          !_isArabicWithoutDiacritics(version.isNotEmpty
+              ? version
+              : option.apiVersion.trim());
+      return _resolveArabicVersion(option,
+              withDiacritics: prefersDiacritics, preferredVersion: version) ??
+          option.apiVersion;
+    }
+    final normalized = version.trim();
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    return option.apiVersion;
   }
 
   String get _bookParameter {
@@ -2196,6 +2215,254 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  Widget _buildAddComparisonButton() {
+    return OutlinedButton.icon(
+      onPressed: _showComparisonPicker,
+      icon: const Icon(Icons.library_add),
+      label: const Text('Add comparison'),
+    );
+  }
+
+  void _showComparisonPicker() {
+    if (_supportedLanguages.isEmpty) {
+      return;
+    }
+    LanguageOption selectedLanguage = _languageOption;
+    String selectedVersion = _activeVersion;
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              final versions = selectedLanguage.versions;
+              if (selectedVersion.isEmpty && versions.isNotEmpty) {
+                selectedVersion = versions.first.id;
+              }
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Add comparison translation',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<LanguageOption>(
+                      value: selectedLanguage,
+                      decoration: const InputDecoration(labelText: 'Language'),
+                      items: _supportedLanguages
+                          .map(
+                            (option) => DropdownMenuItem(
+                              value: option,
+                              child: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedLanguage = value;
+                          selectedVersion = value.apiVersion;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedVersion,
+                      decoration: const InputDecoration(labelText: 'Version'),
+                      items: (versions.isEmpty
+                              ? [BibleVersion(id: selectedVersion, label: selectedVersion)]
+                              : versions)
+                          .map(
+                            (version) => DropdownMenuItem(
+                              value: version.id,
+                              child: Text(version.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedVersion = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _addComparison(selectedLanguage, selectedVersion);
+                      },
+                      child: const Text('Add translation'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _addComparison(LanguageOption option, String version) {
+    final sanitized = _sanitizeVersionForLanguage(option, version);
+    final existing = _comparisons.indexWhere((entry) =>
+        entry.language.code == option.code &&
+        entry.version.toLowerCase() == sanitized.toLowerCase());
+    if (existing != -1) {
+      _loadComparisonPassage(_comparisons[existing]);
+      return;
+    }
+
+    final entry = _ComparisonPassage(
+      language: option,
+      version: sanitized,
+      withDiacritics: !_isArabicWithoutDiacritics(sanitized),
+    );
+    setState(() {
+      _comparisons.add(entry);
+    });
+    _loadComparisonPassage(entry);
+  }
+
+  Future<void> _loadComparisonPassage(_ComparisonPassage entry) async {
+    final bookParam = _bookParameter;
+    if (widget.chapter <= 0 || bookParam.isEmpty) {
+      setState(() {
+        entry.error = 'This reference is missing details needed to load the text.';
+      });
+      return;
+    }
+    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
+
+    setState(() {
+      entry.loading = true;
+      entry.error = null;
+      entry.verses = const [];
+    });
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+        'language': entry.language.apiLanguage,
+        'version': _comparisonVersion(entry.language, entry.version,
+            withDiacritics: entry.withDiacritics),
+        'book': bookParam,
+        'chapter': widget.chapter.toString(),
+        'verse': verseParam,
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final verses = _parseVerses(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        entry.verses = verses;
+        entry.loading = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        entry.error = 'Failed to load comparison: $e';
+        entry.loading = false;
+      });
+    }
+  }
+
+  void _removeComparison(_ComparisonPassage entry) {
+    setState(() {
+      _comparisons.remove(entry);
+    });
+  }
+
+  Widget _buildComparisonSection(ThemeData theme) {
+    if (_comparisons.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Comparisons',
+          style:
+              theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        ..._comparisons
+            .map((entry) => _buildComparisonCard(entry, theme))
+            .toList(),
+      ],
+    );
+  }
+
+  Widget _buildComparisonCard(_ComparisonPassage entry, ThemeData theme) {
+    final versionLabel = _versionLabel(entry.language.code, entry.version);
+    final header = '${entry.language.label} · $versionLabel';
+    final textDirection = entry.language.direction;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Directionality(
+          textDirection: textDirection,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      header,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => _removeComparison(entry),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove comparison',
+                  ),
+                ],
+              ),
+              if (entry.loading) ...[
+                const SizedBox(height: 12),
+                const LinearProgressIndicator(),
+              ] else if (entry.error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  entry.error!,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+              ] else if (entry.verses.isEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'No passage text is available for this translation yet.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ] else ...[
+                const SizedBox(height: 12),
+                ...entry.verses
+                    .map((verse) => _buildVerseParagraph(verse, theme))
+                    .toList(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
@@ -2235,6 +2502,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final actionButtons = <Widget>[
       _buildVersionSwitchButton(),
       _buildArabicReferenceToggleButton(),
+      _buildAddComparisonButton(),
     ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
@@ -2293,6 +2561,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       ..._referenceVerses
                           .map((verse) => _buildVerseParagraph(verse, theme))
                           .toList(),
+                    const SizedBox(height: 24),
+                    _buildComparisonSection(theme),
                     const SizedBox(height: 32),
                     _buildChapterSection(theme),
                   ],
@@ -2311,6 +2581,24 @@ class _VerseLine {
 
   final int? number;
   final String text;
+}
+
+class _ComparisonPassage {
+  _ComparisonPassage({
+    required this.language,
+    required this.version,
+    this.verses = const <_VerseLine>[],
+    this.error,
+    this.loading = false,
+    this.withDiacritics = true,
+  });
+
+  final LanguageOption language;
+  String version;
+  List<_VerseLine> verses;
+  String? error;
+  bool loading;
+  bool withDiacritics;
 }
 
 class Topic {
