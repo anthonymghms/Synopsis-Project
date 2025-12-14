@@ -1614,19 +1614,20 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isHovered = false;
   bool _isLaunching = false;
 
-  Alignment _alignmentForTextAlign(TextAlign align) {
+  AlignmentGeometry _alignmentForTextAlign(TextAlign align) {
     switch (align) {
       case TextAlign.center:
         return Alignment.center;
       case TextAlign.right:
         return Alignment.centerRight;
       case TextAlign.left:
+        return Alignment.centerLeft;
       case TextAlign.start:
-        return Alignment.centerLeft;
+        return AlignmentDirectional.centerStart;
       case TextAlign.end:
-        return Alignment.centerRight;
+        return AlignmentDirectional.centerEnd;
       case TextAlign.justify:
-        return Alignment.centerLeft;
+        return AlignmentDirectional.centerStart;
     }
   }
 
@@ -2891,6 +2892,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return option.apiVersion;
   }
 
+  String get _languageVersionSummary {
+    final option = widget.languageOption;
+    final versionLabel = _versionLabel(option.code, _activeVersion);
+    return '${option.label} · $versionLabel';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3290,6 +3297,22 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                     .toList(),
                 _buildDiacriticsToggle(option),
               ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  _languageVersionSummary,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant,
+                      ),
+                  textAlign: TextAlign.start,
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             Expanded(
