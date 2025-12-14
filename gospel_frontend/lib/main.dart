@@ -1360,6 +1360,43 @@ class _HarmonyTableState extends State<HarmonyTable> {
     return map;
   }
 
+  Widget _buildNumberedTopic({
+    required int index,
+    required Topic topic,
+    required TextAlign textAlign,
+    required bool isRtl,
+    TextStyle? textStyle,
+  }) {
+    final alignment = isRtl ? Alignment.centerRight : Alignment.centerLeft;
+    final number = (index + 1).toString();
+
+    return Align(
+      alignment: alignment,
+      child: Row(
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment:
+            isRtl ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+        children: [
+          Text(
+            number,
+            style: textStyle,
+            textAlign: TextAlign.start,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              topic.name,
+              style: textStyle,
+              textAlign: textAlign,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
@@ -1483,10 +1520,12 @@ class _HarmonyTableState extends State<HarmonyTable> {
                     : () => widget.onTopicSelected!(topic),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: Text(
-                    topic.name,
-                    style: subjectStyle,
+                  child: _buildNumberedTopic(
+                    index: i,
+                    topic: topic,
                     textAlign: subjectAlign,
+                    isRtl: isRtl,
+                    textStyle: subjectStyle,
                   ),
                 ),
               ),
