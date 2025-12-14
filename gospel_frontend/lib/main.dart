@@ -1920,7 +1920,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerses(response.body);
+      final verses = _parseVerseLines(response.body);
       if (!mounted) {
         return;
       }
@@ -1967,7 +1967,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerses(response.body);
+      final verses = _parseVerseLines(response.body);
       if (!mounted) {
         return;
       }
@@ -2037,29 +2037,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (shouldReloadChapter) {
       _loadFullChapter();
     }
-  }
-
-  List<_VerseLine> _parseVerses(String body) {
-    final decoded = json.decode(body);
-    if (decoded is! List) {
-      return const <_VerseLine>[];
-    }
-    final verses = decoded
-        .whereType<Map<String, dynamic>>()
-        .map((item) {
-          final rawNumber = item['verse'];
-          int? number;
-          if (rawNumber is int) {
-            number = rawNumber;
-          } else if (rawNumber is String) {
-            number = int.tryParse(rawNumber);
-          }
-          final text = (item['text'] ?? '').toString().trim();
-          return _VerseLine(number: number, text: text);
-        })
-        .toList();
-    verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
-    return verses;
   }
 
   Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme) {
@@ -2359,7 +2336,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerses(response.body);
+      final verses = _parseVerseLines(response.body);
       if (!mounted) {
         return;
       }
@@ -2581,6 +2558,29 @@ class _VerseLine {
 
   final int? number;
   final String text;
+}
+
+List<_VerseLine> _parseVerseLines(String body) {
+  final decoded = json.decode(body);
+  if (decoded is! List) {
+    return const <_VerseLine>[];
+  }
+  final verses = decoded
+      .whereType<Map<String, dynamic>>()
+      .map((item) {
+        final rawNumber = item['verse'];
+        int? number;
+        if (rawNumber is int) {
+          number = rawNumber;
+        } else if (rawNumber is String) {
+          number = int.tryParse(rawNumber);
+        }
+        final text = (item['text'] ?? '').toString().trim();
+        return _VerseLine(number: number, text: text);
+      })
+      .toList();
+  verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
+  return verses;
 }
 
 class _ComparisonPassage {
@@ -2846,6 +2846,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   late final List<String> _allAuthors;
   late Set<String> _selected;
   Map<String, List<_AuthorTextEntry>> _texts = {};
+  final Map<String, List<_ComparisonPassage>> _entryComparisons = {};
   String? _error;
   bool _loading = true;
   bool _withDiacritics = true;
@@ -2862,6 +2863,32 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   String _displayAuthorName(String author) {
     return _displayGospelName(author, widget.languageOption);
+  }
+
+  String _entryKey(GospelReference reference) {
+    final normalizedBook = _normalizeGospelName(reference.book);
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    return '${normalizedBook.toLowerCase()}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  String _comparisonVersionFor(LanguageOption option, String version,
+      {bool? withDiacritics}) {
+    if (option.code == 'arabic') {
+      final prefersDiacritics = withDiacritics ??
+          !_isArabicWithoutDiacritics(version.isNotEmpty
+              ? version
+              : option.apiVersion.trim());
+      return _resolveArabicVersion(option,
+              withDiacritics: prefersDiacritics, preferredVersion: version) ??
+          option.apiVersion;
+    }
+    final normalized = version.trim();
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    return option.apiVersion;
   }
 
   @override
@@ -2908,6 +2935,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _entryComparisons.clear();
     });
     try {
       final option = widget.languageOption;
@@ -2956,6 +2984,263 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _loading = false;
       });
     }
+  }
+
+  void _showEntryComparisonPicker(GospelReference reference) {
+    if (_supportedLanguages.isEmpty) {
+      return;
+    }
+    LanguageOption selectedLanguage = widget.languageOption;
+    String selectedVersion = _activeVersion;
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              final versions = selectedLanguage.versions;
+              if (selectedVersion.isEmpty && versions.isNotEmpty) {
+                selectedVersion = versions.first.id;
+              }
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Add comparison translation',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<LanguageOption>(
+                      value: selectedLanguage,
+                      decoration: const InputDecoration(labelText: 'Language'),
+                      items: _supportedLanguages
+                          .map(
+                            (option) => DropdownMenuItem(
+                              value: option,
+                              child: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedLanguage = value;
+                          selectedVersion = value.apiVersion;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedVersion,
+                      decoration: const InputDecoration(labelText: 'Version'),
+                      items: (versions.isEmpty
+                              ? [BibleVersion(id: selectedVersion, label: selectedVersion)]
+                              : versions)
+                          .map(
+                            (version) => DropdownMenuItem(
+                              value: version.id,
+                              child: Text(version.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedVersion = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _addEntryComparison(reference, selectedLanguage, selectedVersion);
+                      },
+                      child: const Text('Add translation'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _addEntryComparison(
+      GospelReference reference, LanguageOption option, String version) {
+    final sanitized = _sanitizeVersionForLanguage(option, version);
+    final key = _entryKey(reference);
+    final comparisons = _entryComparisons[key] ?? <_ComparisonPassage>[];
+    final existingIndex = comparisons.indexWhere((entry) =>
+        entry.language.code == option.code &&
+        entry.version.toLowerCase() == sanitized.toLowerCase());
+    if (existingIndex != -1) {
+      _loadEntryComparison(reference, comparisons[existingIndex]);
+      return;
+    }
+
+    final entry = _ComparisonPassage(
+      language: option,
+      version: sanitized,
+      withDiacritics: !_isArabicWithoutDiacritics(sanitized),
+    );
+    setState(() {
+      _entryComparisons[key] = List<_ComparisonPassage>.from(comparisons)
+        ..add(entry);
+    });
+    _loadEntryComparison(reference, entry);
+  }
+
+  Future<void> _loadEntryComparison(
+      GospelReference reference, _ComparisonPassage entry) async {
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    if (reference.chapter <= 0 || bookParam.isEmpty) {
+      setState(() {
+        entry.error = 'This reference is missing details needed to load the text.';
+      });
+      return;
+    }
+    final verseParam =
+        reference.verses.trim().isEmpty ? '1' : reference.verses.trim();
+
+    setState(() {
+      entry.loading = true;
+      entry.error = null;
+      entry.verses = const [];
+    });
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+        'language': entry.language.apiLanguage,
+        'version': _comparisonVersionFor(entry.language, entry.version,
+            withDiacritics: entry.withDiacritics),
+        'book': bookParam,
+        'chapter': reference.chapter.toString(),
+        'verse': verseParam,
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final verses = _parseVerseLines(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        entry.verses = verses;
+        entry.loading = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        entry.error = 'Failed to load comparison: $e';
+        entry.loading = false;
+      });
+    }
+  }
+
+  void _removeEntryComparison(GospelReference reference, _ComparisonPassage entry) {
+    final key = _entryKey(reference);
+    final existing = _entryComparisons[key];
+    if (existing == null) {
+      return;
+    }
+    setState(() {
+      final updated = List<_ComparisonPassage>.from(existing)..remove(entry);
+      if (updated.isEmpty) {
+        _entryComparisons.remove(key);
+      } else {
+        _entryComparisons[key] = updated;
+      }
+    });
+  }
+
+  Widget _buildEntryComparisonCard(
+      GospelReference reference, _ComparisonPassage entry, ThemeData theme) {
+    final versionLabel = _versionLabel(entry.language.code, entry.version);
+    final header = '${entry.language.label} · $versionLabel';
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Directionality(
+          textDirection: entry.language.direction,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      header,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => _removeEntryComparison(reference, entry),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove comparison',
+                  ),
+                ],
+              ),
+              if (entry.loading) ...[
+                const SizedBox(height: 8),
+                const LinearProgressIndicator(),
+              ] else if (entry.error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  entry.error!,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.error),
+                ),
+              ] else if (entry.verses.isEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'No passage text is available for this translation yet.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ] else ...[
+                const SizedBox(height: 8),
+                ...entry.verses
+                    .map((verse) => _buildComparisonVerse(verse, theme))
+                    .toList(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComparisonVerse(_VerseLine verse, ThemeData theme) {
+    final baseStyle =
+        theme.textTheme.bodyMedium?.copyWith(height: 1.5) ??
+            const TextStyle(fontSize: 15, height: 1.5);
+    final numberStyle = baseStyle.copyWith(fontWeight: FontWeight.w600);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RichText(
+        text: TextSpan(
+          style: baseStyle,
+          children: [
+            if (verse.number != null && verse.number! > 0)
+              TextSpan(text: '${verse.number}. ', style: numberStyle),
+            TextSpan(text: verse.text),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildDiacriticsToggle(LanguageOption option) {
@@ -3049,14 +3334,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                   return const SizedBox.shrink();
                                                 }
                                                 final entry = entries[i];
-                                                final headingStyle =
-                                                    Theme.of(context)
-                                                        .textTheme
-                                                        .titleSmall
-                                                        ?.copyWith(
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                        );
+                                                final theme =
+                                                    Theme.of(context);
+                                                final headingStyle = theme
+                                                    .textTheme
+                                                    .titleSmall
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    );
                                                 final referenceLabel =
                                                     entry.reference
                                                         .formattedReference
@@ -3088,6 +3374,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                             labelOverride:
                                                                 entry.title,
                                                           );
+                                                final comparisons =
+                                                    _entryComparisons[
+                                                            _entryKey(
+                                                                entry.reference)] ??
+                                                        const <_ComparisonPassage>[];
                                                 return Column(
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
@@ -3095,6 +3386,35 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                     heading,
                                                     const SizedBox(height: 4),
                                                     Text(entry.text),
+                                                    if (comparisons.isNotEmpty) ...[
+                                                      const SizedBox(height: 8),
+                                                      ...comparisons
+                                                          .map(
+                                                            (comparison) =>
+                                                                _buildEntryComparisonCard(
+                                                                    entry
+                                                                        .reference,
+                                                                    comparison,
+                                                                    theme),
+                                                          )
+                                                          .toList(),
+                                                    ],
+                                                    const SizedBox(height: 8),
+                                                    Align(
+                                                      alignment:
+                                                          AlignmentDirectional
+                                                              .centerStart,
+                                                      child: TextButton.icon(
+                                                        onPressed: () =>
+                                                            _showEntryComparisonPicker(
+                                                                entry
+                                                                    .reference),
+                                                        icon: const Icon(
+                                                            Icons.library_add),
+                                                        label: const Text(
+                                                            'Add translation'),
+                                                      ),
+                                                    ),
                                                   ],
                                                 );
                                               }(),
