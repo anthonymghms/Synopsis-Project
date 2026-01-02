@@ -3134,6 +3134,17 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return '${normalizedBook.toLowerCase()}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
   }
 
+  List<GospelReference> get _visibleReferences {
+    final references = <String, GospelReference>{};
+    for (final author in _selected) {
+      for (final entry in _texts[author] ?? const <_AuthorTextEntry>[]) {
+        final key = _entryKey(entry.reference);
+        references.putIfAbsent(key, () => entry.reference);
+      }
+    }
+    return references.values.toList();
+  }
+
   String _comparisonVersionFor(LanguageOption option, String version,
       {bool? withDiacritics}) {
     if (option.code == 'arabic') {
@@ -3253,7 +3264,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     }
   }
 
-  void _showEntryComparisonPicker(GospelReference reference) {
+  void _showComparisonPicker(
+      void Function(LanguageOption option, String version) onConfirm) {
     if (_supportedLanguages.isEmpty) {
       return;
     }
@@ -3325,7 +3337,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                     FilledButton(
                       onPressed: () {
                         Navigator.of(context).pop();
-                        _addEntryComparison(reference, selectedLanguage, selectedVersion);
+                        onConfirm(selectedLanguage, selectedVersion);
                       },
                       child: const Text('Add translation'),
                     ),
@@ -3337,6 +3349,18 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         );
       },
     );
+  }
+
+  void _showTopicComparisonPicker() {
+    final references = _visibleReferences;
+    if (references.isEmpty) {
+      return;
+    }
+    _showComparisonPicker((language, version) {
+      for (final reference in references) {
+        _addEntryComparison(reference, language, version);
+      }
+    });
   }
 
   void _addEntryComparison(
@@ -3574,6 +3598,20 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: FilledButton.icon(
+                  onPressed: (_visibleReferences.isEmpty || _loading)
+                      ? null
+                      : _showTopicComparisonPicker,
+                  icon: const Icon(Icons.library_add),
+                  label: const Text('Add translation'),
+                ),
+              ),
+            ),
             const SizedBox(height: 16),
             Expanded(
               child: _selected.isEmpty
@@ -3677,27 +3715,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                                 _buildEntryComparisonCard(
                                                                     entry
                                                                         .reference,
-                                                                    comparison,
-                                                                    theme),
+                                                                  comparison,
+                                                                  theme),
                                                           )
                                                           .toList(),
                                                     ],
                                                     const SizedBox(height: 8),
-                                                    Align(
-                                                      alignment:
-                                                          AlignmentDirectional
-                                                              .centerStart,
-                                                      child: TextButton.icon(
-                                                        onPressed: () =>
-                                                            _showEntryComparisonPicker(
-                                                                entry
-                                                                    .reference),
-                                                        icon: const Icon(
-                                                            Icons.library_add),
-                                                        label: const Text(
-                                                            'Add translation'),
-                                                      ),
-                                                    ),
                                                   ],
                                                 );
                                               }(),
