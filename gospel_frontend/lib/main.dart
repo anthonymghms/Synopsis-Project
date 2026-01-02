@@ -733,10 +733,10 @@ class GospelApp extends StatelessWidget {
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
-          builder: (context) => TopicListScreen(
-            initialLanguage: languageOption.code,
-            initialVersion: sanitizedVersion,
-            initialTopicId: initialTopicId,
+          builder: (context) => TopicDetailScreen(
+            languageOption: languageOption,
+            apiVersion: sanitizedVersion,
+            topicId: initialTopicId,
           ),
         ),
       );
@@ -771,6 +771,141 @@ class AuthGate extends StatelessWidget {
         }
         return const AuthScreen();
       },
+    );
+  }
+}
+
+class TopicDetailScreen extends StatefulWidget {
+  const TopicDetailScreen({
+    super.key,
+    required this.languageOption,
+    required this.apiVersion,
+    required this.topicId,
+  });
+
+  final LanguageOption languageOption;
+  final String apiVersion;
+  final String topicId;
+
+  @override
+  State<TopicDetailScreen> createState() => _TopicDetailScreenState();
+}
+
+class _TopicDetailScreenState extends State<TopicDetailScreen> {
+  Topic? _topic;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    LanguageSelectionController.instance.update(widget.languageOption.code);
+    _loadTopic();
+  }
+
+  Future<void> _loadTopic() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
+      'language': widget.languageOption.apiLanguage,
+      'version': widget.apiVersion,
+    });
+
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        setState(() {
+          _error = 'Error: ${response.statusCode}';
+          _loading = false;
+        });
+        return;
+      }
+
+      final List data = json.decode(response.body);
+      final topics = data.map((e) => Topic.fromJson(e)).toList();
+      final match = _findTopic(topics);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _topic = match;
+        _loading = false;
+        if (match == null) {
+          _error = 'Topic not found';
+        }
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = 'Failed to fetch topic: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  Topic? _findTopic(List<Topic> topics) {
+    final normalizedId = widget.topicId.trim().toLowerCase();
+    for (final topic in topics) {
+      final id = topic.id.trim();
+      if (id.isNotEmpty && id.toLowerCase() == normalizedId) {
+        return topic;
+      }
+      final name = topic.name.trim();
+      if (name.isNotEmpty && name.toLowerCase() == normalizedId) {
+        return topic;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textDirection = widget.languageOption.direction;
+
+    if (_loading) {
+      return Directionality(
+        textDirection: textDirection,
+        child: const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Directionality(
+        textDirection: textDirection,
+        child: Scaffold(
+          appBar: AppBar(),
+          body: Center(child: Text(_error!)),
+        ),
+      );
+    }
+
+    final topic = _topic;
+    if (topic == null) {
+      return Directionality(
+        textDirection: textDirection,
+        child: const Scaffold(
+          body: Center(child: Text('Topic not found')),
+        ),
+      );
+    }
+
+    final authors = topic.references.map((e) => e.book).toSet().toList()
+      ..sort(_compareBooks);
+
+    return AuthorComparisonScreen(
+      languageOption: widget.languageOption,
+      apiVersion: widget.apiVersion,
+      topic: topic,
+      initialAuthors: authors,
     );
   }
 }
