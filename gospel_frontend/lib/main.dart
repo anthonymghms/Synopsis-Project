@@ -3623,12 +3623,24 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               alignment: AlignmentDirectional.centerStart,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: FilledButton.icon(
-                  onPressed: (_visibleReferences.isEmpty || _loading)
-                      ? null
-                      : _showTopicComparisonPicker,
-                  icon: const Icon(Icons.library_add),
-                  label: const Text('Add translation'),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: (_visibleReferences.isEmpty || _loading)
+                          ? null
+                          : _showTopicComparisonPicker,
+                      icon: const Icon(Icons.library_add),
+                      label: const Text('Add translation'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _loading ? null : _showTranslationChangePicker,
+                      icon: const Icon(Icons.translate),
+                      label: const Text('Change translation'),
+                    ),
+                  ],
                 ),
               ),
             ),
