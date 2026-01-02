@@ -3111,19 +3111,20 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   String? _error;
   bool _loading = true;
   bool _withDiacritics = true;
+  late LanguageOption _languageOption;
+  late String _apiVersion;
 
   String get _activeVersion {
-    if (widget.languageOption.code == 'arabic') {
-      return _resolveArabicVersion(widget.languageOption,
-              withDiacritics: _withDiacritics,
-              preferredVersion: widget.apiVersion) ??
-          widget.apiVersion;
+    if (_languageOption.code == 'arabic') {
+      return _resolveArabicVersion(_languageOption,
+              withDiacritics: _withDiacritics, preferredVersion: _apiVersion) ??
+          _apiVersion;
     }
-    return widget.apiVersion;
+    return _apiVersion;
   }
 
   String _displayAuthorName(String author) {
-    return _displayGospelName(author, widget.languageOption);
+    return _displayGospelName(author, _languageOption);
   }
 
   String _entryKey(GospelReference reference) {
@@ -3164,7 +3165,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   }
 
   String get _languageVersionSummary {
-    final option = widget.languageOption;
+    final option = _languageOption;
     final versionLabel = _versionLabel(option.code, _activeVersion);
     return '${option.label} · $versionLabel';
   }
@@ -3172,21 +3173,21 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   void initState() {
     super.initState();
-    LanguageSelectionController.instance.update(widget.languageOption.code);
+    _languageOption = widget.languageOption;
+    _apiVersion = _sanitizeVersionForLanguage(_languageOption, widget.apiVersion);
+    _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
+    LanguageSelectionController.instance.update(_languageOption.code);
     _allAuthors = widget.topic.references
         .map((e) => _normalizeGospelName(e.book))
         .toSet()
         .toList();
     _allAuthors.sort(_compareBooks);
     _selected = widget.initialAuthors.map(_normalizeGospelName).toSet();
-    _withDiacritics =
-        !_isArabicWithoutDiacritics(_sanitizeVersionForLanguage(
-            widget.languageOption, widget.apiVersion));
     fetchTexts();
   }
 
   Future<void> _toggleArabicDiacritics() async {
-    if (widget.languageOption.code != 'arabic') {
+    if (_languageOption.code != 'arabic') {
       return;
     }
     final newValue = !_withDiacritics;
@@ -3216,7 +3217,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       _entryComparisons.clear();
     });
     try {
-      final option = widget.languageOption;
+      final option = _languageOption;
       final version = _activeVersion;
       final futures = _selected.map((author) async {
         final refs = widget.topic.references
@@ -3265,11 +3266,13 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   }
 
   void _showComparisonPicker(
-      void Function(LanguageOption option, String version) onConfirm) {
+      void Function(LanguageOption option, String version) onConfirm,
+      {String title = 'Add comparison translation',
+      String confirmLabel = 'Add translation'}) {
     if (_supportedLanguages.isEmpty) {
       return;
     }
-    LanguageOption selectedLanguage = widget.languageOption;
+    LanguageOption selectedLanguage = _languageOption;
     String selectedVersion = _activeVersion;
 
     showModalBottomSheet<void>(
@@ -3289,7 +3292,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Add comparison translation',
+                      title,
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 12),
@@ -3339,7 +3342,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         Navigator.of(context).pop();
                         onConfirm(selectedLanguage, selectedVersion);
                       },
-                      child: const Text('Add translation'),
+                      child: Text(confirmLabel),
                     ),
                   ],
                 ),
@@ -3361,6 +3364,23 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _addEntryComparison(reference, language, version);
       }
     });
+  }
+
+  void _showTranslationChangePicker() {
+    _showComparisonPicker(
+      (language, version) {
+        setState(() {
+          _languageOption = language;
+          _apiVersion = _sanitizeVersionForLanguage(language, version);
+          _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
+          _entryComparisons.clear();
+        });
+        LanguageSelectionController.instance.update(language.code);
+        fetchTexts();
+      },
+      title: 'Change translation',
+      confirmLabel: 'Change translation',
+    );
   }
 
   void _addEntryComparison(
@@ -3550,7 +3570,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final option = widget.languageOption;
+    final option = _languageOption;
     return Directionality(
       textDirection: option.direction,
       child: MainScaffold(
