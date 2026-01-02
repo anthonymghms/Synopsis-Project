@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -715,6 +716,32 @@ class GospelApp extends StatelessWidget {
       );
     }
 
+    if (path == '/topic') {
+      final initialLanguage = uri.queryParameters['language'] ?? defaultLanguage;
+      final initialVersion = uri.queryParameters['version'] ?? defaultVersion;
+      final initialTopicId = uri.queryParameters['topicId'] ?? '';
+
+      final languageOption = _resolveLanguageOption(
+        languageParam: initialLanguage,
+        versionParam: initialVersion,
+      );
+      final sanitizedVersion = _sanitizeVersionForLanguage(
+        languageOption,
+        initialVersion,
+      );
+
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => AuthGate(
+          builder: (context) => TopicListScreen(
+            initialLanguage: languageOption.code,
+            initialVersion: sanitizedVersion,
+            initialTopicId: initialTopicId,
+          ),
+        ),
+      );
+    }
+
     return MaterialPageRoute(
       settings: settings,
       builder: (_) => AuthGate(
@@ -749,7 +776,16 @@ class AuthGate extends StatelessWidget {
 }
 
 class TopicListScreen extends StatefulWidget {
-  const TopicListScreen({super.key});
+  const TopicListScreen({
+    super.key,
+    this.initialTopicId,
+    this.initialLanguage,
+    this.initialVersion,
+  });
+
+  final String? initialTopicId;
+  final String? initialLanguage;
+  final String? initialVersion;
   @override
   State<TopicListScreen> createState() => _TopicListScreenState();
 }
@@ -767,6 +803,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   bool _arabicWithDiacritics = true;
   final Map<String, String> _selectedVersions = {};
   SharedPreferences? _prefs;
+  String? _pendingTopicId;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -774,6 +811,25 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   void initState() {
     super.initState();
+    final initialLanguage = widget.initialLanguage?.trim();
+    final initialVersion = widget.initialVersion?.trim();
+    if (initialLanguage != null && initialLanguage.isNotEmpty) {
+      final resolved = _resolveLanguageOption(
+        languageParam: initialLanguage,
+        versionParam: initialVersion,
+      );
+      _selectedLanguageCode = resolved.code;
+      if (initialVersion != null && initialVersion.isNotEmpty) {
+        _selectedVersions[_selectedLanguageCode] =
+            _sanitizeVersionForLanguage(resolved, initialVersion);
+        if (_selectedLanguageCode == 'arabic') {
+          _arabicWithDiacritics = !_isArabicWithoutDiacritics(initialVersion);
+        }
+      }
+    }
+    _pendingTopicId = widget.initialTopicId?.trim().isNotEmpty == true
+        ? widget.initialTopicId!.trim()
+        : null;
     LanguageSelectionController.instance.update(_selectedLanguageCode);
     _initializePreferences();
     _refreshLanguagesFromFirestore();
@@ -970,6 +1026,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           _topics = data.map((e) => Topic.fromJson(e)).toList();
           _loading = false;
         });
+        _openPendingTopicIfNeeded();
       } else {
         if (!mounted) {
           return;
@@ -996,6 +1053,24 @@ class _TopicListScreenState extends State<TopicListScreen> {
         _loading = false;
       });
     }
+  }
+
+  void _openPendingTopicIfNeeded() {
+    if (_pendingTopicId == null || _pendingTopicId!.isEmpty) {
+      return;
+    }
+    Topic? match;
+    for (final topic in _topics) {
+      if (topic.id == _pendingTopicId) {
+        match = topic;
+        break;
+      }
+    }
+    if (match == null) {
+      return;
+    }
+    _pendingTopicId = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openTopic(match!));
   }
 
   Widget _buildLanguageDropdown(BuildContext context) {
@@ -1231,6 +1306,17 @@ class _TopicListScreenState extends State<TopicListScreen> {
   void _openTopic(Topic topic) {
     final authors = topic.references.map((e) => e.book).toSet().toList()
       ..sort(_compareBooks);
+    if (kIsWeb) {
+      final language = _languageOption;
+      final version = _apiVersionFor(language);
+      final uri = Uri(path: '/topic', queryParameters: {
+        'language': language.apiLanguage,
+        'version': version,
+        'topicId': topic.id.isNotEmpty ? topic.id : topic.name,
+      });
+      openReferenceLink(uri);
+      return;
+    }
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => AuthorComparisonScreen(
         languageOption: _languageOption,
