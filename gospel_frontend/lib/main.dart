@@ -963,7 +963,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   String? _languageLoadError;
   String _selectedLanguageCode =
       LanguageSelectionController.instance.languageCode;
-  bool _arabicWithDiacritics = true;
+  bool _arabicWithDiacritics = false;
   final Map<String, String> _selectedVersions = {};
   SharedPreferences? _prefs;
   String? _pendingTopicId;
@@ -1117,8 +1117,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (normalized.isEmpty) {
       return;
     }
-    final arabicWithDiacritics =
-        option.code == 'arabic' && !_isArabicWithoutDiacritics(normalized);
+    final arabicWithDiacritics = false;
     setState(() {
       _selectedVersions[option.code] = normalized;
       if (option.code == 'arabic') {
@@ -2316,7 +2315,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     setState(() {
       _selectedVersion = sanitized;
       if (_languageOption.code == 'arabic') {
-        _withDiacritics = !_isArabicWithoutDiacritics(sanitized);
+        _withDiacritics = false;
       }
       if (shouldReloadChapter) {
         _chapterVerses = null;
