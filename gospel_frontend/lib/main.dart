@@ -2603,7 +2603,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final entry = _ComparisonPassage(
       language: option,
       version: sanitized,
-      withDiacritics: !_isArabicWithoutDiacritics(sanitized),
+      withDiacritics: option.code == 'arabic'
+          ? _withDiacritics
+          : !_isArabicWithoutDiacritics(sanitized),
     );
     setState(() {
       _comparisons.add(entry);
@@ -2685,8 +2687,37 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  void _toggleComparisonDiacritics(_ComparisonPassage entry) {
+    if (entry.language.code != 'arabic') {
+      return;
+    }
+    setState(() {
+      entry.withDiacritics = !entry.withDiacritics;
+    });
+    _loadComparisonPassage(entry);
+  }
+
+  Widget _buildComparisonDiacriticsToggle(_ComparisonPassage entry) {
+    if (entry.language.code != 'arabic') {
+      return const SizedBox.shrink();
+    }
+    final label = entry.withDiacritics ? 'إزالة الحركات' : 'إضافة الحركات';
+    final icon = entry.withDiacritics
+        ? Icons.remove_circle_outline
+        : Icons.add_circle_outline;
+    return OutlinedButton.icon(
+      onPressed: () => _toggleComparisonDiacritics(entry),
+      icon: Icon(icon),
+      label: Text(label),
+    );
+  }
+
   Widget _buildComparisonCard(_ComparisonPassage entry, ThemeData theme) {
-    final versionLabel = _versionLabel(entry.language.code, entry.version);
+    final resolvedVersion = entry.language.code == 'arabic'
+        ? _comparisonVersion(entry.language, entry.version,
+            withDiacritics: entry.withDiacritics)
+        : entry.version;
+    final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
     final header = '${entry.language.label} · $versionLabel';
     final textDirection = entry.language.direction;
 
@@ -2715,6 +2746,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   ),
                 ],
               ),
+              if (entry.language.code == 'arabic') ...[
+                const SizedBox(height: 8),
+                _buildComparisonDiacriticsToggle(entry),
+              ],
               if (entry.loading) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),
@@ -3236,6 +3271,13 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final newValue = !_withDiacritics;
     setState(() {
       _withDiacritics = newValue;
+      _entryComparisons.forEach((key, entries) {
+        for (final entry in entries) {
+          if (entry.language.code == 'arabic') {
+            entry.withDiacritics = newValue;
+          }
+        }
+      });
     });
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -3243,21 +3285,27 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     } catch (_) {
       // Ignore persistence issues.
     }
-    fetchTexts();
+    await fetchTexts(preserveComparisons: true);
+    _reloadEntryComparisons(onlyArabic: true);
   }
 
-  Future<void> fetchTexts() async {
+  Future<void> fetchTexts({bool preserveComparisons = false}) async {
     if (_selected.isEmpty) {
       setState(() {
         _texts = {};
         _loading = false;
+        if (!preserveComparisons) {
+          _entryComparisons.clear();
+        }
       });
       return;
     }
     setState(() {
       _loading = true;
       _error = null;
-      _entryComparisons.clear();
+      if (!preserveComparisons) {
+        _entryComparisons.clear();
+      }
     });
     try {
       final option = _languageOption;
@@ -3306,6 +3354,31 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _loading = false;
       });
     }
+  }
+
+  void _reloadEntryComparisons({bool onlyArabic = false}) {
+    if (_entryComparisons.isEmpty) {
+      return;
+    }
+    final references = _visibleReferences;
+    if (references.isEmpty) {
+      return;
+    }
+    final referenceLookup = <String, GospelReference>{
+      for (final reference in references) _entryKey(reference): reference,
+    };
+    _entryComparisons.forEach((key, entries) {
+      final reference = referenceLookup[key];
+      if (reference == null) {
+        return;
+      }
+      for (final entry in entries) {
+        if (onlyArabic && entry.language.code != 'arabic') {
+          continue;
+        }
+        _loadEntryComparison(reference, entry);
+      }
+    });
   }
 
   void _showComparisonPicker(
@@ -3448,7 +3521,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final entry = _ComparisonPassage(
       language: option,
       version: sanitized,
-      withDiacritics: !_isArabicWithoutDiacritics(sanitized),
+      withDiacritics: option.code == 'arabic'
+          ? _withDiacritics
+          : !_isArabicWithoutDiacritics(sanitized),
     );
     setState(() {
       _entryComparisons[key] = List<_ComparisonPassage>.from(comparisons)
@@ -3527,7 +3602,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   Widget _buildEntryComparisonCard(
       GospelReference reference, _ComparisonPassage entry, ThemeData theme) {
-    final versionLabel = _versionLabel(entry.language.code, entry.version);
+    final resolvedVersion = entry.language.code == 'arabic'
+        ? _comparisonVersionFor(entry.language, entry.version,
+            withDiacritics: entry.withDiacritics)
+        : entry.version;
+    final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
     final header = '${entry.language.label} · $versionLabel';
     return Card(
       margin: const EdgeInsets.only(top: 8),
