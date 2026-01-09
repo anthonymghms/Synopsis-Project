@@ -177,10 +177,9 @@ const List<LanguageOption> kBaseLanguageOptions = [
     versionLabel: 'Van Dyke',
     versions: [
       BibleVersion(id: 'Van Dyke', label: 'Van Dyke'),
-      BibleVersion(id: 'Van Dyke-', label: 'Van Dyke (بدون حركات)'),
+      BibleVersion(id: 'Van Dyke-', label: 'Van Dyke'),
       BibleVersion(id: 'New Arabic Version', label: 'New Arabic Version'),
-      BibleVersion(
-          id: 'New Arabic Version-', label: 'New Arabic Version (بدون حركات)'),
+      BibleVersion(id: 'New Arabic Version-', label: 'New Arabic Version'),
     ],
     direction: TextDirection.rtl,
     title: 'تناغم الأناجيل',
@@ -238,13 +237,12 @@ String _versionLabel(String languageId, String versionId) {
   final normalizedLanguage = languageId.trim().toLowerCase();
   final normalizedVersion = versionId.trim();
   if (normalizedLanguage == 'arabic') {
-    final isWithoutDiacritics = _isArabicWithoutDiacritics(normalizedVersion);
     final stripped = normalizedVersion.endsWith('-')
         ? normalizedVersion.substring(0, normalizedVersion.length - 1).trim()
         : normalizedVersion;
     final baseLabel = _formatLanguageLabel(
         stripped.isNotEmpty ? stripped : normalizedVersion);
-    return isWithoutDiacritics ? '$baseLabel (بدون حركات)' : baseLabel;
+    return baseLabel;
   }
   return _formatLanguageLabel(normalizedVersion);
 }
@@ -1320,9 +1318,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       if (versionOption != null) {
         return versionOption.label;
       }
-      return _isArabicWithoutDiacritics(selectedVersion)
-          ? '$baseLabel (بدون حركات)'
-          : baseLabel;
+      return baseLabel;
     }
     return baseLabel;
   }
@@ -2172,11 +2168,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           (versionOption?.label ?? languageOption.versionLabel).trim();
       if (displayVersion.isEmpty) {
         displayVersion = version;
-      }
-      if (_languageOption.code == 'arabic') {
-        displayVersion = _withDiacritics
-            ? '$displayVersion (بالحركات)'
-            : '$displayVersion (بدون حركات)';
       }
       segments.add(displayVersion.trim());
     }
