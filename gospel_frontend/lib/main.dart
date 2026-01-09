@@ -538,6 +538,34 @@ bool _isArabicWithoutDiacritics(String version) {
       normalized.endsWith('-');
 }
 
+String _arabicBaseVersion(String version) {
+  final trimmed = version.trim();
+  if (trimmed.isEmpty) {
+    return trimmed;
+  }
+  if (trimmed.endsWith('-')) {
+    return trimmed.substring(0, trimmed.length - 1).trim();
+  }
+  return trimmed;
+}
+
+List<BibleVersion> _selectableVersions(LanguageOption option) {
+  if (option.code != 'arabic') {
+    return option.versions;
+  }
+  final filtered = option.versions
+      .where((version) => !_isArabicWithoutDiacritics(version.id))
+      .toList();
+  return filtered.isNotEmpty ? filtered : option.versions;
+}
+
+String _selectionVersionValue(LanguageOption option, String versionId) {
+  if (option.code != 'arabic') {
+    return versionId;
+  }
+  return _arabicBaseVersion(versionId);
+}
+
 LanguageOption _resolveLanguageOption({
   String? languageParam,
   String? versionParam,
@@ -1089,16 +1117,21 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (normalized.isEmpty) {
       return;
     }
+    final arabicWithDiacritics =
+        option.code == 'arabic' && !_isArabicWithoutDiacritics(normalized);
     setState(() {
       _selectedVersions[option.code] = normalized;
       if (option.code == 'arabic') {
-        _arabicWithDiacritics = !_isArabicWithoutDiacritics(normalized);
+        _arabicWithDiacritics = arabicWithDiacritics;
       }
     });
     try {
       final prefs = _prefs ?? await SharedPreferences.getInstance();
       _prefs = prefs;
       await prefs.setString('selected_version_${option.code}', normalized);
+      if (option.code == 'arabic') {
+        await prefs.setBool('arabic_with_diacritics', arabicWithDiacritics);
+      }
     } catch (_) {
       // Ignore persistence errors to keep UX smooth.
     }
@@ -1297,10 +1330,14 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   Future<void> _showVersionSelector(
       BuildContext context, LanguageOption option) async {
-    final currentSelection = _selectedVersions[option.code] ??
-        (option.versions.isNotEmpty
-            ? option.versions.first.id
-            : option.apiVersion);
+    final availableVersions = _selectableVersions(option);
+    final currentSelection = _selectionVersionValue(
+      option,
+      _selectedVersions[option.code] ??
+          (option.versions.isNotEmpty
+              ? option.versions.first.id
+              : option.apiVersion),
+    );
     await showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -1316,7 +1353,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              ...option.versions.map(
+              ...availableVersions.map(
                 (version) => RadioListTile<String>(
                   title: Text(version.label),
                   value: version.id,
@@ -1339,10 +1376,11 @@ class _TopicListScreenState extends State<TopicListScreen> {
 
   Widget _buildVersionButton(
       BuildContext context, LanguageOption languageOption) {
-    if (languageOption.versions.isEmpty) {
+    final availableVersions = _selectableVersions(languageOption);
+    if (availableVersions.isEmpty) {
       return const SizedBox.shrink();
     }
-    final hasMultipleVersions = languageOption.versions.length > 1;
+    final hasMultipleVersions = availableVersions.length > 1;
     return OutlinedButton.icon(
       onPressed:
           hasMultipleVersions ? () => _showVersionSelector(context, languageOption) : null,
@@ -2403,8 +2441,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   void _showVersionPicker() {
-    final versions = _languageOption.versions;
-    final current = _activeVersion;
+    final versions = _selectableVersions(_languageOption);
+    final current = _selectionVersionValue(_languageOption, _activeVersion);
     showModalBottomSheet<void>(
       context: context,
       builder: (context) {
@@ -2442,7 +2480,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Widget _buildVersionSwitchButton() {
-    final versions = _languageOption.versions;
+    final versions = _selectableVersions(_languageOption);
     if (versions.length < 2) {
       return const SizedBox.shrink();
     }
@@ -2474,7 +2512,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         return SafeArea(
           child: StatefulBuilder(
             builder: (context, setModalState) {
-              final versions = selectedLanguage.versions;
+              final versions = _selectableVersions(selectedLanguage);
+              if (selectedVersion.isEmpty && versions.isNotEmpty) {
+                selectedVersion = versions.first.id;
+              }
+              selectedVersion =
+                  _selectionVersionValue(selectedLanguage, selectedVersion);
               if (selectedVersion.isEmpty && versions.isNotEmpty) {
                 selectedVersion = versions.first.id;
               }
@@ -2504,7 +2547,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         if (value == null) return;
                         setModalState(() {
                           selectedLanguage = value;
-                          selectedVersion = value.apiVersion;
+                          selectedVersion =
+                              _selectionVersionValue(value, value.apiVersion);
                         });
                       },
                     ),
@@ -3281,7 +3325,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         return SafeArea(
           child: StatefulBuilder(
             builder: (context, setModalState) {
-              final versions = selectedLanguage.versions;
+              final versions = _selectableVersions(selectedLanguage);
+              if (selectedVersion.isEmpty && versions.isNotEmpty) {
+                selectedVersion = versions.first.id;
+              }
+              selectedVersion =
+                  _selectionVersionValue(selectedLanguage, selectedVersion);
               if (selectedVersion.isEmpty && versions.isNotEmpty) {
                 selectedVersion = versions.first.id;
               }
@@ -3311,7 +3360,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         if (value == null) return;
                         setModalState(() {
                           selectedLanguage = value;
-                          selectedVersion = value.apiVersion;
+                          selectedVersion =
+                              _selectionVersionValue(value, value.apiVersion);
                         });
                       },
                     ),
@@ -3781,6 +3831,3 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 }
-
-
-
