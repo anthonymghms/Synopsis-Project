@@ -670,6 +670,9 @@ String _combineBookAndReference(
   }
   final formattedReference =
       _formatReferenceForDirection(reference, direction);
+  if (direction == TextDirection.rtl) {
+    return '$formattedReference $trimmedBook';
+  }
   return '$trimmedBook $formattedReference';
 }
 
