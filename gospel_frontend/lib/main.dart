@@ -646,6 +646,33 @@ String _displayGospelName(String book, LanguageOption option) {
   return canonical;
 }
 
+final RegExp _referenceDigitsPattern = RegExp(r'\d');
+
+String _formatReferenceForDirection(String reference, TextDirection direction) {
+  if (direction != TextDirection.rtl) {
+    return reference;
+  }
+  if (!_referenceDigitsPattern.hasMatch(reference)) {
+    return reference;
+  }
+  return '\u2066$reference\u2069';
+}
+
+String _combineBookAndReference(
+    String book, String reference, TextDirection direction) {
+  final trimmedBook = book.trim();
+  final trimmedReference = reference.trim();
+  if (trimmedBook.isEmpty) {
+    return _formatReferenceForDirection(reference, direction);
+  }
+  if (trimmedReference.isEmpty) {
+    return trimmedBook;
+  }
+  final formattedReference =
+      _formatReferenceForDirection(reference, direction);
+  return '$trimmedBook $formattedReference';
+}
+
 int _compareBooks(String a, String b) {
   final indexA = _gospelIndex(a);
   final indexB = _gospelIndex(b);
@@ -1695,6 +1722,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 reference: filteredRefs[i],
                 textStyle: style,
                 textAlign: align,
+                textDirection: widget.languageOption.direction,
                 topicName: topic.name,
                 language: widget.languageOption.apiLanguage,
                 version: widget.apiVersion,
@@ -1883,6 +1911,7 @@ class ReferenceHoverText extends StatefulWidget {
     required this.reference,
     this.textStyle,
     this.textAlign = TextAlign.center,
+    this.textDirection = TextDirection.ltr,
     this.topicName = '',
     this.language = defaultLanguage,
     this.version = defaultVersion,
@@ -1893,6 +1922,7 @@ class ReferenceHoverText extends StatefulWidget {
   final GospelReference reference;
   final TextStyle? textStyle;
   final TextAlign textAlign;
+  final TextDirection textDirection;
   final String topicName;
   final String language;
   final String version;
@@ -2008,6 +2038,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final text = override.isNotEmpty
         ? override
         : widget.reference.formattedReference;
+    final formattedText =
+        _formatReferenceForDirection(text, widget.textDirection);
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return Tooltip(
@@ -2026,7 +2058,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: Text(
-                text,
+                formattedText,
                 style: _isHovered ? hoverStyle : baseStyle,
                 textAlign: widget.textAlign,
                 softWrap: true,
@@ -2141,11 +2173,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String get _referenceHeading {
     final book = widget.displayBook.trim();
     final override = widget.referenceLabelOverride.trim();
+    final direction =
+        _languageOptionForApiLanguage(widget.language)?.direction ??
+            TextDirection.ltr;
     if (override.isNotEmpty) {
       if (book.isEmpty) {
-        return override;
+        return _formatReferenceForDirection(override, direction);
       }
-      return '$book $override';
+      return _combineBookAndReference(book, override, direction);
     }
     if (book.isEmpty) {
       return 'Reference';
@@ -2154,8 +2189,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return book;
     }
     final verses = widget.verses.trim();
-    final base = '$book ${widget.chapter}';
-    return verses.isEmpty ? base : '$base:$verses';
+    final reference = verses.isEmpty
+        ? '${widget.chapter}'
+        : '${widget.chapter}:$verses';
+    return _combineBookAndReference(book, reference, direction);
   }
 
   String get _metaSummary {
@@ -3322,8 +3359,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           final refLabel = ref.formattedReference;
-          final title =
-              refLabel.isEmpty ? displayAuthor : "$displayAuthor $refLabel";
+          final direction = option.direction;
+          final title = refLabel.isEmpty
+              ? displayAuthor
+              : _combineBookAndReference(displayAuthor, refLabel, direction);
           parts.add(_AuthorTextEntry(
             reference: ref,
             title: title,
@@ -3833,6 +3872,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                                 headingStyle,
                                                             textAlign:
                                                                 TextAlign.start,
+                                                            textDirection:
+                                                                option
+                                                                    .direction,
                                                             topicName:
                                                                 widget
                                                                     .topic
