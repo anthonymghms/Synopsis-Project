@@ -687,10 +687,15 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
   return '\u200E$reference\u200E';
 }
 
-String _formatReferenceLabel(String label, LanguageOption option,
-    {TextDirection? directionOverride}) {
+String _formatReferenceLabel(
+  String label,
+  LanguageOption option, {
+  TextDirection? directionOverride,
+  bool localizeDigits = true,
+}) {
   final direction = directionOverride ?? option.direction;
-  final localized = _localizeReferenceNumbers(label, option);
+  final localized =
+      localizeDigits ? _localizeReferenceNumbers(label, option) : label;
   if (direction != TextDirection.rtl ||
       !_referenceDigitsPattern.hasMatch(localized)) {
     return localized;
@@ -1794,6 +1799,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 language: widget.languageOption.apiLanguage,
                 version: widget.apiVersion,
                 tooltipMessage: widget.languageOption.tooltipMessage,
+                localizeDigits: widget.languageOption.code != 'arabic',
               ),
             );
           if (i < filteredRefs.length - 1) {
@@ -1985,6 +1991,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.version = defaultVersion,
     this.tooltipMessage = 'Click to view more',
     this.labelOverride = '',
+    this.localizeDigits = true,
   });
 
   final GospelReference reference;
@@ -1996,6 +2003,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String version;
   final String tooltipMessage;
   final String labelOverride;
+  final bool localizeDigits;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -2034,7 +2042,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _languageOptionForVersion(widget.version);
     final label = languageOption == null
         ? reference.formattedReference
-        : _formatReferenceLabel(reference.formattedReference, languageOption);
+        : _formatReferenceLabel(
+            reference.formattedReference,
+            languageOption,
+            localizeDigits: widget.localizeDigits,
+          );
 
     final queryParameters = <String, String>{
       'book': bookParam,
@@ -2119,6 +2131,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             text,
             languageOption,
             directionOverride: widget.textDirection,
+            localizeDigits: widget.localizeDigits,
           );
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
