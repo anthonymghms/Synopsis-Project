@@ -1835,8 +1835,6 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 language: widget.languageOption.apiLanguage,
                 version: widget.apiVersion,
                 tooltipMessage: widget.languageOption.tooltipMessage,
-                localizeDigits: widget.languageOption.code != 'arabic',
-                arabicPunctuation: widget.languageOption.code != 'arabic',
               ),
             );
           if (i < filteredRefs.length - 1) {
