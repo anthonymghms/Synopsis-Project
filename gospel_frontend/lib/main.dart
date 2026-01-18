@@ -667,14 +667,41 @@ String _localizeReferenceNumbers(String reference, LanguageOption option) {
   if (option.code != 'arabic') {
     return reference;
   }
-  final normalizedRange = reference.replaceAllMapped(
-    RegExp(r'(\d)\s*-\s*(\d)'),
-    (match) => '${match[1]}–${match[2]}',
-  );
-  return normalizedRange.replaceAllMapped(
+  return reference.replaceAllMapped(
     RegExp(r'\d'),
     (match) => _arabicDigitMap[match[0]] ?? match[0]!,
   );
+}
+
+String _normalizeReferenceText(
+  String reference, {
+  bool normalizeDashes = false,
+  bool arabicPunctuation = false,
+}) {
+  var normalized = reference.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (normalizeDashes) {
+    normalized =
+        normalized.replaceAllMapped(RegExp(r'\s*[-—]\s*'), (match) => '–');
+  }
+  if (arabicPunctuation) {
+    normalized = normalized.replaceAll(',', '،').replaceAll(';', '؛');
+  }
+  normalized = normalized.replaceAll(RegExp(r'\s*:\s*'), ':');
+  if (normalizeDashes) {
+    normalized = normalized.replaceAll(RegExp(r'\s*–\s*'), '–');
+  } else {
+    normalized = normalized.replaceAll(RegExp(r'\s*-\s*'), '-');
+  }
+  if (arabicPunctuation) {
+    normalized = normalized
+        .replaceAll(RegExp(r'\s*،\s*'), '،')
+        .replaceAll(RegExp(r'\s*؛\s*'), '؛');
+  } else {
+    normalized = normalized
+        .replaceAll(RegExp(r'\s*,\s*'), ',')
+        .replaceAll(RegExp(r'\s*;\s*'), ';');
+  }
+  return normalized;
 }
 
 String _formatReferenceForDirection(String reference, TextDirection direction) {
@@ -692,15 +719,22 @@ String _formatReferenceLabel(
   LanguageOption option, {
   TextDirection? directionOverride,
   bool localizeDigits = true,
+  bool arabicPunctuation = true,
 }) {
   final direction = directionOverride ?? option.direction;
-  final localized =
-      localizeDigits ? _localizeReferenceNumbers(label, option) : label;
-  if (direction != TextDirection.rtl ||
-      !_referenceDigitsPattern.hasMatch(localized)) {
-    return localized;
+  var normalized = _normalizeReferenceText(
+    label,
+    normalizeDashes: localizeDigits || arabicPunctuation,
+    arabicPunctuation: arabicPunctuation,
+  );
+  if (localizeDigits) {
+    normalized = _localizeReferenceNumbers(normalized, option);
   }
-  return localized.replaceAllMapped(
+  if (direction != TextDirection.rtl ||
+      !_referenceDigitsPattern.hasMatch(normalized)) {
+    return normalized;
+  }
+  return normalized.replaceAllMapped(
     _referenceSegmentPattern,
     (match) => '\u200E${match[0]}\u200E',
   );
@@ -732,8 +766,10 @@ String _combineBookAndReference(
     return trimmedBook;
   }
   final direction = directionOverride ?? option.direction;
-  final formattedReference =
-      _formatReferenceForLanguage(reference, option, directionOverride: direction);
+  final formattedReference = option.code == 'arabic'
+      ? _formatReferenceLabel(reference, option)
+      : _formatReferenceForLanguage(reference, option,
+          directionOverride: direction);
   if (option.code == 'arabic') {
     return '$trimmedBook $formattedReference';
   }
@@ -1800,6 +1836,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 version: widget.apiVersion,
                 tooltipMessage: widget.languageOption.tooltipMessage,
                 localizeDigits: widget.languageOption.code != 'arabic',
+                arabicPunctuation: widget.languageOption.code != 'arabic',
               ),
             );
           if (i < filteredRefs.length - 1) {
@@ -1992,6 +2029,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.tooltipMessage = 'Click to view more',
     this.labelOverride = '',
     this.localizeDigits = true,
+    this.arabicPunctuation = true,
   });
 
   final GospelReference reference;
@@ -2004,6 +2042,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String tooltipMessage;
   final String labelOverride;
   final bool localizeDigits;
+  final bool arabicPunctuation;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -2046,6 +2085,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             reference.formattedReference,
             languageOption,
             localizeDigits: widget.localizeDigits,
+            arabicPunctuation: widget.arabicPunctuation,
           );
 
     final queryParameters = <String, String>{
@@ -2132,6 +2172,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             languageOption,
             directionOverride: widget.textDirection,
             localizeDigits: widget.localizeDigits,
+            arabicPunctuation: widget.arabicPunctuation,
           );
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
