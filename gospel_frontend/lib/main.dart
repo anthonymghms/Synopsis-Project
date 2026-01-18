@@ -2060,7 +2060,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   double _previewHeight(Size screenSize) {
-    return math.min(240, screenSize.height - 24).clamp(140, 240).toDouble();
+    return math.min(520, screenSize.height - 24).clamp(200, 520).toDouble();
   }
 
   Offset _previewOffset(Rect target, Size screenSize, double width,
