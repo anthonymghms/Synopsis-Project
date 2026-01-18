@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math' as math;
 import 'reference_link_opener.dart';
 
 // ---- CONFIGURATION ----
@@ -1939,6 +1940,13 @@ class ReferenceHoverText extends StatefulWidget {
 class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isHovered = false;
   bool _isLaunching = false;
+  bool _loadingPreview = false;
+  String? _previewError;
+  List<_VerseLine> _previewVerses = const <_VerseLine>[];
+  OverlayEntry? _previewEntry;
+  bool _previewLoaded = false;
+
+  static final Map<String, _ReferencePreviewCache> _previewCache = {};
 
   AlignmentGeometry _alignmentForTextAlign(TextAlign align) {
     switch (align) {
@@ -2028,6 +2036,232 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     }
   }
 
+  String _previewCacheKey(GospelReference reference) {
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    return '${widget.language}|${widget.version}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  String _previewHeading() {
+    final book = widget.reference.book.trim();
+    if (book.isEmpty || widget.reference.chapter <= 0) {
+      return widget.reference.formattedReference;
+    }
+    final verses = widget.reference.verses.trim();
+    final reference = verses.isEmpty
+        ? '${widget.reference.chapter}'
+        : '${widget.reference.chapter}:$verses';
+    return _combineBookAndReference(book, reference, widget.textDirection);
+  }
+
+  double _previewWidth(Size screenSize) {
+    return math.min(360, screenSize.width - 24).clamp(220, 360).toDouble();
+  }
+
+  double _previewHeight(Size screenSize) {
+    return math.min(240, screenSize.height - 24).clamp(140, 240).toDouble();
+  }
+
+  Offset _previewOffset(Rect target, Size screenSize, double width,
+      double height) {
+    const gutter = 8.0;
+    const spacing = 12.0;
+    final spaceRight = screenSize.width - target.right - spacing;
+    final spaceLeft = target.left - spacing;
+    final placeRight = spaceRight >= width || spaceRight >= spaceLeft;
+
+    final spaceBelow = screenSize.height - target.bottom - spacing;
+    final spaceAbove = target.top - spacing;
+    final placeBelow = spaceBelow >= height || spaceBelow >= spaceAbove;
+
+    final dx = placeRight ? target.right + spacing : target.left - width - spacing;
+    final dy = placeBelow ? target.bottom + gutter : target.top - height - gutter;
+
+    final clampedX = dx.clamp(gutter, screenSize.width - width - gutter);
+    final clampedY = dy.clamp(gutter, screenSize.height - height - gutter);
+    return Offset(clampedX.toDouble(), clampedY.toDouble());
+  }
+
+  Future<void> _loadPreview() async {
+    if (_loadingPreview || _previewLoaded) {
+      return;
+    }
+    final reference = widget.reference;
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    if (bookParam.isEmpty || reference.chapter <= 0) {
+      return;
+    }
+
+    final cacheKey = _previewCacheKey(reference);
+    final cached = _previewCache[cacheKey];
+    if (cached != null) {
+      setState(() {
+        _previewLoaded = true;
+        _previewVerses = cached.verses;
+        _previewError = cached.error;
+      });
+      _previewEntry?.markNeedsBuild();
+      return;
+    }
+
+    setState(() {
+      _loadingPreview = true;
+      _previewError = null;
+    });
+    _previewEntry?.markNeedsBuild();
+
+    final verseParam = reference.verses.trim().isEmpty
+        ? '1'
+        : reference.verses.trim();
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+        'language': widget.language,
+        'version': widget.version,
+        'book': bookParam,
+        'chapter': reference.chapter.toString(),
+        'verse': verseParam,
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final verses = _parseVerseLines(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _previewLoaded = true;
+        _loadingPreview = false;
+        _previewVerses = verses;
+      });
+      _previewCache[cacheKey] =
+          _ReferencePreviewCache(verses: verses, error: null);
+      _previewEntry?.markNeedsBuild();
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _previewLoaded = true;
+        _loadingPreview = false;
+        _previewError = 'Failed to load preview.';
+      });
+      _previewCache[cacheKey] =
+          _ReferencePreviewCache(verses: const <_VerseLine>[], error: _previewError);
+      _previewEntry?.markNeedsBuild();
+    }
+  }
+
+  void _showPreview() {
+    if (_previewEntry != null) {
+      return;
+    }
+    final overlay = Overlay.of(context, rootOverlay: true);
+    if (overlay == null) {
+      return;
+    }
+    _previewEntry = OverlayEntry(builder: (overlayContext) {
+      final renderBox = context.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.hasSize) {
+        return const SizedBox.shrink();
+      }
+      final target = renderBox.localToGlobal(Offset.zero) & renderBox.size;
+      final screenSize = MediaQuery.of(overlayContext).size;
+      final width = _previewWidth(screenSize);
+      final height = _previewHeight(screenSize);
+      final offset = _previewOffset(target, screenSize, width, height);
+      final theme = Theme.of(overlayContext);
+
+      return Positioned(
+        left: offset.dx,
+        top: offset.dy,
+        width: width,
+        child: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(12),
+          color: theme.colorScheme.surface,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: height),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Directionality(
+                textDirection: widget.textDirection,
+                child: _buildPreviewContent(theme),
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+    overlay.insert(_previewEntry!);
+  }
+
+  void _hidePreview() {
+    _previewEntry?.remove();
+    _previewEntry = null;
+  }
+
+  Widget _buildPreviewContent(ThemeData theme) {
+    final headingStyle = theme.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
+    final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_previewHeading(), style: headingStyle),
+        const SizedBox(height: 8),
+        if (_loadingPreview)
+          const Center(child: CircularProgressIndicator())
+        else if (_previewError != null)
+          Text(_previewError!, style: bodyStyle?.copyWith(color: theme.colorScheme.error))
+        else if (_previewVerses.isEmpty)
+          Text(
+            'No passage text is available for this reference yet.',
+            style: bodyStyle,
+          )
+        else
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _previewVerses
+                    .map((verse) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: RichText(
+                            text: TextSpan(
+                              style: bodyStyle,
+                              children: [
+                                if (verse.number != null && verse.number! > 0)
+                                  TextSpan(
+                                      text: '${verse.number}. ',
+                                      style: numberStyle),
+                                TextSpan(text: verse.text),
+                              ],
+                            ),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _hidePreview();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2045,33 +2279,46 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _formatReferenceForDirection(text, widget.textDirection);
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
-    return Tooltip(
-      message: widget.tooltipMessage,
-      waitDuration: const Duration(milliseconds: 150),
-      child: MouseRegion(
-        cursor:
-            text.isEmpty ? SystemMouseCursors.basic : SystemMouseCursors.click,
-        onEnter: (_) => _updateHover(true),
-        onExit: (_) => _updateHover(false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: text.isEmpty ? null : _handleTap,
-          child: Align(
-            alignment: alignment,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Text(
-                formattedText,
-                style: _isHovered ? hoverStyle : baseStyle,
-                textAlign: widget.textAlign,
-                softWrap: true,
-              ),
+    return MouseRegion(
+      cursor:
+          text.isEmpty ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onEnter: (_) {
+        if (text.isEmpty) {
+          return;
+        }
+        _updateHover(true);
+        _showPreview();
+        _loadPreview();
+      },
+      onExit: (_) {
+        _updateHover(false);
+        _hidePreview();
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: text.isEmpty ? null : _handleTap,
+        child: Align(
+          alignment: alignment,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Text(
+              formattedText,
+              style: _isHovered ? hoverStyle : baseStyle,
+              textAlign: widget.textAlign,
+              softWrap: true,
             ),
           ),
         ),
       ),
     );
   }
+}
+
+class _ReferencePreviewCache {
+  const _ReferencePreviewCache({required this.verses, this.error});
+
+  final List<_VerseLine> verses;
+  final String? error;
 }
 
 class ReferenceViewerPage extends StatefulWidget {
