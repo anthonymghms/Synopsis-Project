@@ -646,7 +646,34 @@ String _displayGospelName(String book, LanguageOption option) {
   return canonical;
 }
 
-final RegExp _referenceDigitsPattern = RegExp(r'\d');
+final RegExp _referenceDigitsPattern = RegExp(r'[0-9\u0660-\u0669]');
+
+const Map<String, String> _arabicDigitMap = {
+  '0': '٠',
+  '1': '١',
+  '2': '٢',
+  '3': '٣',
+  '4': '٤',
+  '5': '٥',
+  '6': '٦',
+  '7': '٧',
+  '8': '٨',
+  '9': '٩',
+};
+
+String _localizeReferenceNumbers(String reference, LanguageOption option) {
+  if (option.code != 'arabic') {
+    return reference;
+  }
+  final normalizedRange = reference.replaceAllMapped(
+    RegExp(r'(\d)\s*-\s*(\d)'),
+    (match) => '${match[1]}–${match[2]}',
+  );
+  return normalizedRange.replaceAllMapped(
+    RegExp(r'\d'),
+    (match) => _arabicDigitMap[match[0]] ?? match[0]!,
+  );
+}
 
 String _formatReferenceForDirection(String reference, TextDirection direction) {
   if (direction != TextDirection.rtl) {
@@ -658,18 +685,37 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
   return '\u2066$reference\u2069';
 }
 
+String _formatReferenceForLanguage(
+  String reference,
+  LanguageOption option, {
+  TextDirection? directionOverride,
+}) {
+  final direction = directionOverride ?? option.direction;
+  final localized = _localizeReferenceNumbers(reference, option);
+  return _formatReferenceForDirection(localized, direction);
+}
+
 String _combineBookAndReference(
-    String book, String reference, TextDirection direction) {
+  String book,
+  String reference,
+  LanguageOption option, {
+  TextDirection? directionOverride,
+}) {
   final trimmedBook = book.trim();
   final trimmedReference = reference.trim();
   if (trimmedBook.isEmpty) {
-    return _formatReferenceForDirection(reference, direction);
+    return _formatReferenceForLanguage(reference, option,
+        directionOverride: directionOverride);
   }
   if (trimmedReference.isEmpty) {
     return trimmedBook;
   }
-  final formattedReference =
-      _formatReferenceForDirection(reference, direction);
+  final direction = directionOverride ?? option.direction;
+  final formattedReference = _formatReferenceForLanguage(reference, option,
+      directionOverride: direction);
+  if (option.code == 'arabic') {
+    return '$trimmedBook $formattedReference';
+  }
   if (direction == TextDirection.rtl) {
     return '$formattedReference $trimmedBook';
   }
@@ -1649,10 +1695,12 @@ class _HarmonyTableState extends State<HarmonyTable> {
     required Topic topic,
     required TextAlign textAlign,
     required bool isRtl,
+    required LanguageOption languageOption,
     TextStyle? textStyle,
   }) {
     final alignment = isRtl ? Alignment.centerRight : Alignment.centerLeft;
     final number = (index + 1).toString();
+    final displayNumber = _localizeReferenceNumbers(number, languageOption);
 
     return Align(
       alignment: alignment,
@@ -1664,7 +1712,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
         children: [
           Text(
-            number,
+            displayNumber,
             style: textStyle,
             textAlign: TextAlign.start,
           ),
@@ -1810,6 +1858,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                     topic: topic,
                     textAlign: subjectAlign,
                     isRtl: isRtl,
+                    languageOption: languageOption,
                     textStyle: subjectStyle,
                   ),
                 ),
@@ -1965,6 +2014,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     if (bookParam.isEmpty || reference.chapter <= 0) {
       return null;
     }
+    final languageOption = _languageOptionForApiLanguage(widget.language) ??
+        _languageOptionForVersion(widget.version);
+    final label = languageOption == null
+        ? reference.formattedReference
+        : _localizeReferenceNumbers(reference.formattedReference, languageOption);
 
     final queryParameters = <String, String>{
       'book': bookParam,
@@ -1972,7 +2026,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       'chapter': reference.chapter.toString(),
       'language': widget.language,
       'version': widget.version,
-      'label': reference.formattedReference,
+      'label': label,
     };
 
     final verses = reference.verses.trim();
@@ -2041,8 +2095,15 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final text = override.isNotEmpty
         ? override
         : widget.reference.formattedReference;
-    final formattedText =
-        _formatReferenceForDirection(text, widget.textDirection);
+    final languageOption = _languageOptionForApiLanguage(widget.language) ??
+        _languageOptionForVersion(widget.version);
+    final formattedText = languageOption == null
+        ? _formatReferenceForDirection(text, widget.textDirection)
+        : _formatReferenceForLanguage(
+            text,
+            languageOption,
+            directionOverride: widget.textDirection,
+          );
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return Tooltip(
@@ -2176,14 +2237,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String get _referenceHeading {
     final book = widget.displayBook.trim();
     final override = widget.referenceLabelOverride.trim();
-    final direction =
-        _languageOptionForApiLanguage(widget.language)?.direction ??
-            TextDirection.ltr;
+    final languageOption =
+        _languageOptionForApiLanguage(widget.language) ?? _languageOption;
+    final direction = languageOption.direction;
     if (override.isNotEmpty) {
       if (book.isEmpty) {
-        return _formatReferenceForDirection(override, direction);
+        return _formatReferenceForLanguage(override, languageOption);
       }
-      return _combineBookAndReference(book, override, direction);
+      return _combineBookAndReference(book, override, languageOption);
     }
     if (book.isEmpty) {
       return 'Reference';
@@ -2195,7 +2256,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final reference = verses.isEmpty
         ? '${widget.chapter}'
         : '${widget.chapter}:$verses';
-    return _combineBookAndReference(book, reference, direction);
+    return _combineBookAndReference(book, reference, languageOption);
   }
 
   String get _metaSummary {
@@ -3362,10 +3423,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final text =
               verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
           final refLabel = ref.formattedReference;
-          final direction = option.direction;
           final title = refLabel.isEmpty
               ? displayAuthor
-              : _combineBookAndReference(displayAuthor, refLabel, direction);
+              : _combineBookAndReference(displayAuthor, refLabel, option);
           parts.add(_AuthorTextEntry(
             reference: ref,
             title: title,
