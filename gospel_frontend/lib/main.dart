@@ -647,6 +647,8 @@ String _displayGospelName(String book, LanguageOption option) {
 }
 
 final RegExp _referenceDigitsPattern = RegExp(r'[0-9\u0660-\u0669]');
+final RegExp _referenceSegmentPattern =
+    RegExp(r'[0-9\u0660-\u0669][0-9\u0660-\u0669:–-]*');
 
 const Map<String, String> _arabicDigitMap = {
   '0': '٠',
@@ -682,7 +684,21 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
   if (!_referenceDigitsPattern.hasMatch(reference)) {
     return reference;
   }
-  return '\u2066$reference\u2069';
+  return '\u200E$reference\u200E';
+}
+
+String _formatReferenceLabel(String label, LanguageOption option,
+    {TextDirection? directionOverride}) {
+  final direction = directionOverride ?? option.direction;
+  final localized = _localizeReferenceNumbers(label, option);
+  if (direction != TextDirection.rtl ||
+      !_referenceDigitsPattern.hasMatch(localized)) {
+    return localized;
+  }
+  return localized.replaceAllMapped(
+    _referenceSegmentPattern,
+    (match) => '\u200E${match[0]}\u200E',
+  );
 }
 
 String _formatReferenceForLanguage(
@@ -711,8 +727,8 @@ String _combineBookAndReference(
     return trimmedBook;
   }
   final direction = directionOverride ?? option.direction;
-  final formattedReference = _formatReferenceForLanguage(reference, option,
-      directionOverride: direction);
+  final formattedReference =
+      _formatReferenceForLanguage(reference, option, directionOverride: direction);
   if (option.code == 'arabic') {
     return '$trimmedBook $formattedReference';
   }
@@ -2018,7 +2034,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _languageOptionForVersion(widget.version);
     final label = languageOption == null
         ? reference.formattedReference
-        : _localizeReferenceNumbers(reference.formattedReference, languageOption);
+        : _formatReferenceLabel(reference.formattedReference, languageOption);
 
     final queryParameters = <String, String>{
       'book': bookParam,
@@ -2099,7 +2115,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _languageOptionForVersion(widget.version);
     final formattedText = languageOption == null
         ? _formatReferenceForDirection(text, widget.textDirection)
-        : _formatReferenceForLanguage(
+        : _formatReferenceLabel(
             text,
             languageOption,
             directionOverride: widget.textDirection,
