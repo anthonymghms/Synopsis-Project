@@ -2110,7 +2110,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   String _previewHeading() {
-    final book = widget.reference.book.trim();
+    final languageOption = _languageOptionForApiLanguage(widget.language);
+    final book = _displayGospelName(
+            widget.reference.book,
+            languageOption ?? _languageOptionForCode(defaultLanguage))
+        .trim();
     if (book.isEmpty || widget.reference.chapter <= 0) {
       return _formatReferenceForLanguage(
         widget.reference.formattedReference,
