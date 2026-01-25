@@ -648,6 +648,21 @@ String _displayGospelName(String book, LanguageOption option) {
 }
 
 final RegExp _referenceDigitsPattern = RegExp(r'\d');
+final RegExp _referencePattern = RegExp(r'^(\d+):(\d+)(?:-(\d+))?$');
+final RegExp _bidiControlPattern =
+    RegExp(r'[\u2066\u2067\u2068\u2069\u200E\u200F]');
+const Map<String, String> _arabicIndicDigits = {
+  '0': '٠',
+  '1': '١',
+  '2': '٢',
+  '3': '٣',
+  '4': '٤',
+  '5': '٥',
+  '6': '٦',
+  '7': '٧',
+  '8': '٨',
+  '9': '٩',
+};
 
 String _formatReferenceForDirection(String reference, TextDirection direction) {
   if (direction != TextDirection.rtl) {
@@ -659,18 +674,66 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
   return '\u2066$reference\u2069';
 }
 
+String _stripBidiControls(String input) =>
+    input.replaceAll(_bidiControlPattern, '');
+
+String _toArabicIndicDigits(String input) => input.replaceAllMapped(
+    _referenceDigitsPattern, (match) => _arabicIndicDigits[match.group(0)]!);
+
+String _formatArabicReference(String reference) {
+  final trimmed = reference.trim();
+  if (trimmed.isEmpty) {
+    return reference;
+  }
+  final normalized = _stripBidiControls(trimmed);
+  final match = _referencePattern.firstMatch(normalized);
+  if (match == null) {
+    return reference;
+  }
+  final chapter = _toArabicIndicDigits(match.group(1)!);
+  final verse1 = _toArabicIndicDigits(match.group(2)!);
+  final verse2Raw = match.group(3);
+  if (verse2Raw != null) {
+    final verse2 = _toArabicIndicDigits(verse2Raw);
+    return '\u2067$chapter\u200F:\u200F$verse1\u200F-\u200F$verse2\u2069';
+  }
+  return '\u2067$chapter\u200F:\u200F$verse1\u2069';
+}
+
+String _formatReferenceForLanguage(String reference, TextDirection direction,
+    {required bool isArabic}) {
+  if (isArabic) {
+    return _formatArabicReference(reference);
+  }
+  return _formatReferenceForDirection(reference, direction);
+}
+
+bool _isArabicLanguage(String language) {
+  final trimmed = language.trim();
+  if (trimmed.isEmpty) {
+    return false;
+  }
+  final option = _languageOptionForApiLanguage(trimmed);
+  if (option != null) {
+    return option.code == 'arabic';
+  }
+  final normalized = trimmed.toLowerCase();
+  return normalized == 'arabic' || normalized == 'arabic2' || normalized == 'ar';
+}
+
 String _combineBookAndReference(
-    String book, String reference, TextDirection direction) {
+    String book, String reference, TextDirection direction,
+    {bool isArabic = false}) {
   final trimmedBook = book.trim();
   final trimmedReference = reference.trim();
   if (trimmedBook.isEmpty) {
-    return _formatReferenceForDirection(reference, direction);
+    return _formatReferenceForLanguage(reference, direction, isArabic: isArabic);
   }
   if (trimmedReference.isEmpty) {
     return trimmedBook;
   }
   final formattedReference =
-      _formatReferenceForDirection(reference, direction);
+      _formatReferenceForLanguage(reference, direction, isArabic: isArabic);
   if (direction == TextDirection.rtl) {
     return '$formattedReference $trimmedBook';
   }
@@ -2046,13 +2109,22 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   String _previewHeading() {
     final book = widget.reference.book.trim();
     if (book.isEmpty || widget.reference.chapter <= 0) {
-      return widget.reference.formattedReference;
+      return _formatReferenceForLanguage(
+        widget.reference.formattedReference,
+        widget.textDirection,
+        isArabic: _isArabicLanguage(widget.language),
+      );
     }
     final verses = widget.reference.verses.trim();
     final reference = verses.isEmpty
         ? '${widget.reference.chapter}'
         : '${widget.reference.chapter}:$verses';
-    return _combineBookAndReference(book, reference, widget.textDirection);
+    return _combineBookAndReference(
+      book,
+      reference,
+      widget.textDirection,
+      isArabic: _isArabicLanguage(widget.language),
+    );
   }
 
   double _previewWidth(Size screenSize) {
@@ -2276,7 +2348,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         ? override
         : widget.reference.formattedReference;
     final formattedText =
-        _formatReferenceForDirection(text, widget.textDirection);
+        _formatReferenceForLanguage(text, widget.textDirection,
+            isArabic: _isArabicLanguage(widget.language));
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return MouseRegion(
@@ -2428,9 +2501,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             TextDirection.ltr;
     if (override.isNotEmpty) {
       if (book.isEmpty) {
-        return _formatReferenceForDirection(override, direction);
+        return _formatReferenceForLanguage(override, direction,
+            isArabic: _isArabicLanguage(widget.language));
       }
-      return _combineBookAndReference(book, override, direction);
+      return _combineBookAndReference(book, override, direction,
+          isArabic: _isArabicLanguage(widget.language));
     }
     if (book.isEmpty) {
       return 'Reference';
@@ -2442,7 +2517,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final reference = verses.isEmpty
         ? '${widget.chapter}'
         : '${widget.chapter}:$verses';
-    return _combineBookAndReference(book, reference, direction);
+    return _combineBookAndReference(book, reference, direction,
+        isArabic: _isArabicLanguage(widget.language));
   }
 
   String get _metaSummary {
@@ -3612,7 +3688,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final direction = option.direction;
           final title = refLabel.isEmpty
               ? displayAuthor
-              : _combineBookAndReference(displayAuthor, refLabel, direction);
+              : _combineBookAndReference(displayAuthor, refLabel, direction,
+                  isArabic: option.code == 'arabic');
           parts.add(_AuthorTextEntry(
             reference: ref,
             title: title,
