@@ -4081,11 +4081,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     if (references.isEmpty) {
       return;
     }
-    _showComparisonPicker((language, version) {
-      for (final reference in references) {
-        _addEntryComparison(reference, language, version);
-      }
-    });
+    _showTopicMultiComparisonPicker(references);
   }
 
   void _showTranslationChangePicker() {
@@ -4103,6 +4099,285 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       },
       title: 'Change main translation',
       confirmLabel: 'Change main translation',
+    );
+  }
+
+  String _entryComparisonKey(LanguageOption option, String version) {
+    return '${option.code}|${version.toLowerCase()}';
+  }
+
+  void _showTopicMultiComparisonPicker(List<GospelReference> references) {
+    if (_supportedLanguages.isEmpty) {
+      return;
+    }
+    final mainLanguage = _languageOption;
+    final mainVersion =
+        _sanitizeVersionForLanguage(mainLanguage, _activeVersion);
+    LanguageOption selectedLanguage = mainLanguage;
+    final selectedByLanguage = <String, Set<String>>{};
+
+    void addSelection(LanguageOption language, String version) {
+      final sanitized = _sanitizeVersionForLanguage(language, version);
+      selectedByLanguage
+          .putIfAbsent(language.code, () => <String>{})
+          .add(sanitized);
+    }
+
+    for (final entries in _entryComparisons.values) {
+      for (final entry in entries) {
+        addSelection(entry.language, entry.version);
+      }
+    }
+    addSelection(mainLanguage, mainVersion);
+
+    List<_VersionChoice> buildChoices(LanguageOption language) {
+      final choices = <String, _VersionChoice>{};
+      for (final version in _selectableVersions(language)) {
+        final sanitized = _sanitizeVersionForLanguage(language, version.id);
+        choices[sanitized.toLowerCase()] = _VersionChoice(
+          version: sanitized,
+          label: version.label,
+        );
+      }
+      for (final selected in selectedByLanguage[language.code] ?? {}) {
+        choices.putIfAbsent(
+          selected.toLowerCase(),
+          () => _VersionChoice(
+            version: selected,
+            label: _versionLabel(language.code, selected),
+          ),
+        );
+      }
+      final ordered = choices.values.toList()
+        ..sort((a, b) => a.label.compareTo(b.label));
+      return ordered;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              final currentSelections = selectedByLanguage.putIfAbsent(
+                selectedLanguage.code,
+                () => <String>{},
+              );
+              final choices = buildChoices(selectedLanguage);
+
+              Future<void> openVersionSelector() async {
+                await showDialog<void>(
+                  context: context,
+                  builder: (context) {
+                    return StatefulBuilder(
+                      builder: (context, setDialogState) {
+                        return AlertDialog(
+                          title: Text(
+                            'Select versions (${selectedLanguage.label})',
+                          ),
+                          content: SizedBox(
+                            width: double.maxFinite,
+                            child: ListView(
+                              shrinkWrap: true,
+                              children: choices.map((choice) {
+                                final isMain = selectedLanguage.code ==
+                                        mainLanguage.code &&
+                                    choice.version.toLowerCase() ==
+                                        mainVersion.toLowerCase();
+                                final isSelected = currentSelections
+                                    .contains(choice.version);
+                                return CheckboxListTile(
+                                  value: isMain ? true : isSelected,
+                                  onChanged: isMain
+                                      ? null
+                                      : (value) {
+                                          setDialogState(() {
+                                            if (value == true) {
+                                              currentSelections
+                                                  .add(choice.version);
+                                            } else {
+                                              currentSelections
+                                                  .remove(choice.version);
+                                            }
+                                          });
+                                          setModalState(() {});
+                                        },
+                                  title: Text(choice.label),
+                                  subtitle: isMain
+                                      ? const Text('Main translation')
+                                      : null,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text('Done'),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                );
+              }
+
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Add comparison translation',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<LanguageOption>(
+                      value: selectedLanguage,
+                      decoration: const InputDecoration(labelText: 'Language'),
+                      items: _supportedLanguages
+                          .map(
+                            (option) => DropdownMenuItem(
+                              value: option,
+                              child: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedLanguage = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: openVersionSelector,
+                      child: InputDecorator(
+                        decoration:
+                            const InputDecoration(labelText: 'Versions'),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: currentSelections.isEmpty
+                                    ? [
+                                        Text(
+                                          'Select versions',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                        ),
+                                      ]
+                                    : currentSelections.map((version) {
+                                        final label = _versionLabel(
+                                            selectedLanguage.code, version);
+                                        final isMain =
+                                            selectedLanguage.code ==
+                                                    mainLanguage.code &&
+                                                version.toLowerCase() ==
+                                                    mainVersion.toLowerCase();
+                                        return InputChip(
+                                          label: Text(label),
+                                          onDeleted: isMain
+                                              ? null
+                                              : () {
+                                                  setModalState(() {
+                                                    currentSelections
+                                                        .remove(version);
+                                                  });
+                                                },
+                                        );
+                                      }).toList(),
+                              ),
+                            ),
+                            const Icon(Icons.arrow_drop_down),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        final desired = <String>{};
+                        selectedByLanguage.forEach((code, versions) {
+                          final language = _supportedLanguages.firstWhere(
+                            (option) => option.code == code,
+                            orElse: () => mainLanguage,
+                          );
+                          for (final version in versions) {
+                            final key = _entryComparisonKey(language, version);
+                            if (language.code == mainLanguage.code &&
+                                version.toLowerCase() ==
+                                    mainVersion.toLowerCase()) {
+                              continue;
+                            }
+                            desired.add(key);
+                          }
+                        });
+
+                        setState(() {
+                          for (final reference in references) {
+                            final entryKey = _entryKey(reference);
+                            final existing =
+                                _entryComparisons[entryKey] ?? const [];
+                            final remaining = existing.where((entry) {
+                              final key = _entryComparisonKey(
+                                  entry.language, entry.version);
+                              return desired.contains(key);
+                            }).toList();
+                            if (remaining.isEmpty) {
+                              _entryComparisons.remove(entryKey);
+                            } else {
+                              _entryComparisons[entryKey] = remaining;
+                            }
+                          }
+                        });
+
+                        for (final reference in references) {
+                          final entryKey = _entryKey(reference);
+                          final existing =
+                              _entryComparisons[entryKey] ?? const [];
+                          for (final key in desired) {
+                            if (existing.any((entry) =>
+                                _entryComparisonKey(
+                                    entry.language, entry.version) ==
+                                key)) {
+                              continue;
+                            }
+                            final parts = key.split('|');
+                            if (parts.length != 2) {
+                              continue;
+                            }
+                            final language = _supportedLanguages.firstWhere(
+                              (option) => option.code == parts[0],
+                              orElse: () => mainLanguage,
+                            );
+                            _addEntryComparison(reference, language, parts[1]);
+                          }
+                        }
+                      },
+                      child: const Text('Add translation'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
