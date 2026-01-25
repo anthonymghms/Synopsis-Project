@@ -2870,55 +2870,42 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final mainLanguage = _languageOption;
     final mainVersion =
         _sanitizeVersionForLanguage(mainLanguage, _activeVersion);
-    final mainKey = _comparisonKey(mainLanguage, mainVersion);
-    final existingSelections = <String>{
-      for (final entry in _comparisons) _comparisonKey(entry.language, entry.version),
-    };
-    final selectedKeys = <String>{...existingSelections, mainKey};
-    final choicesByLanguage = <LanguageOption, List<_ComparisonChoice>>{};
-    final choiceLookup = <String, _ComparisonChoice>{};
+    LanguageOption selectedLanguage = mainLanguage;
+    final selectedByLanguage = <String, Set<String>>{};
 
-    for (final language in _supportedLanguages) {
-      final versions = _selectableVersions(language);
-      final versionChoices = <String, _ComparisonChoice>{};
-      for (final version in versions) {
+    void addSelection(LanguageOption language, String version) {
+      final sanitized = _sanitizeVersionForLanguage(language, version);
+      selectedByLanguage
+          .putIfAbsent(language.code, () => <String>{})
+          .add(sanitized);
+    }
+
+    for (final entry in _comparisons) {
+      addSelection(entry.language, entry.version);
+    }
+    addSelection(mainLanguage, mainVersion);
+
+    List<_VersionChoice> buildChoices(LanguageOption language) {
+      final choices = <String, _VersionChoice>{};
+      for (final version in _selectableVersions(language)) {
         final sanitized = _sanitizeVersionForLanguage(language, version.id);
-        final key = _comparisonKey(language, sanitized);
-        versionChoices[key] = _ComparisonChoice(
-          language: language,
+        choices[sanitized.toLowerCase()] = _VersionChoice(
           version: sanitized,
           label: version.label,
         );
       }
-      for (final entry in _comparisons.where((entry) => entry.language.code == language.code)) {
-        final key = _comparisonKey(entry.language, entry.version);
-        versionChoices.putIfAbsent(
-          key,
-          () => _ComparisonChoice(
-            language: entry.language,
-            version: entry.version,
-            label: _versionLabel(entry.language.code, entry.version),
+      for (final selected in selectedByLanguage[language.code] ?? {}) {
+        choices.putIfAbsent(
+          selected.toLowerCase(),
+          () => _VersionChoice(
+            version: selected,
+            label: _versionLabel(language.code, selected),
           ),
         );
       }
-      if (language.code == mainLanguage.code) {
-        versionChoices.putIfAbsent(
-          mainKey,
-          () => _ComparisonChoice(
-            language: mainLanguage,
-            version: mainVersion,
-            label: _versionLabel(mainLanguage.code, mainVersion),
-          ),
-        );
-      }
-      if (versionChoices.isNotEmpty) {
-        final ordered = versionChoices.values.toList()
-          ..sort((a, b) => a.label.compareTo(b.label));
-        choicesByLanguage[language] = ordered;
-        for (final choice in ordered) {
-          choiceLookup[_comparisonKey(choice.language, choice.version)] = choice;
-        }
-      }
+      final ordered = choices.values.toList()
+        ..sort((a, b) => a.label.compareTo(b.label));
+      return ordered;
     }
 
     showModalBottomSheet<void>(
@@ -2927,6 +2914,72 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         return SafeArea(
           child: StatefulBuilder(
             builder: (context, setModalState) {
+              final currentSelections = selectedByLanguage.putIfAbsent(
+                selectedLanguage.code,
+                () => <String>{},
+              );
+              final choices = buildChoices(selectedLanguage);
+
+              Future<void> openVersionSelector() async {
+                await showDialog<void>(
+                  context: context,
+                  builder: (context) {
+                    return StatefulBuilder(
+                      builder: (context, setDialogState) {
+                        return AlertDialog(
+                          title: Text(
+                            'Select versions (${selectedLanguage.label})',
+                          ),
+                          content: SizedBox(
+                            width: double.maxFinite,
+                            child: ListView(
+                              shrinkWrap: true,
+                              children: choices.map((choice) {
+                                final isMain = selectedLanguage.code ==
+                                        mainLanguage.code &&
+                                    choice.version.toLowerCase() ==
+                                        mainVersion.toLowerCase();
+                                final isSelected = currentSelections
+                                    .contains(choice.version);
+                                return CheckboxListTile(
+                                  value: isMain ? true : isSelected,
+                                  onChanged: isMain
+                                      ? null
+                                      : (value) {
+                                          setDialogState(() {
+                                            if (value == true) {
+                                              currentSelections
+                                                  .add(choice.version);
+                                            } else {
+                                              currentSelections
+                                                  .remove(choice.version);
+                                            }
+                                          });
+                                          setModalState(() {});
+                                        },
+                                  title: Text(choice.label),
+                                  subtitle: isMain
+                                      ? const Text('Main translation')
+                                      : null,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text('Done'),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                );
+              }
+
               return Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -2938,66 +2991,74 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      'Main translation',
-                      style: Theme.of(context).textTheme.labelLarge,
+                    DropdownButtonFormField<LanguageOption>(
+                      value: selectedLanguage,
+                      decoration: const InputDecoration(labelText: 'Language'),
+                      items: _supportedLanguages
+                          .map(
+                            (option) => DropdownMenuItem(
+                              value: option,
+                              child: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setModalState(() {
+                          selectedLanguage = value;
+                        });
+                      },
                     ),
-                    CheckboxListTile(
-                      value: true,
-                      onChanged: null,
-                      title: Text(
-                        '${mainLanguage.label} · ${_versionLabel(mainLanguage.code, mainVersion)}',
-                      ),
-                      subtitle: const Text('Required'),
-                      controlAffinity: ListTileControlAffinity.leading,
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 320,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: choicesByLanguage.entries.map((entry) {
-                            final language = entry.key;
-                            final choices = entry.value
-                                .where((choice) =>
-                                    _comparisonKey(choice.language, choice.version) != mainKey)
-                                .toList();
-                            if (choices.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    language.label,
-                                    style: Theme.of(context).textTheme.labelLarge,
-                                  ),
-                                  ...choices.map((choice) {
-                                    final key = _comparisonKey(
-                                        choice.language, choice.version);
-                                    return CheckboxListTile(
-                                      value: selectedKeys.contains(key),
-                                      onChanged: (value) {
-                                        setModalState(() {
-                                          if (value == true) {
-                                            selectedKeys.add(key);
-                                          } else {
-                                            selectedKeys.remove(key);
-                                          }
-                                        });
-                                      },
-                                      title: Text(choice.label),
-                                      controlAffinity:
-                                          ListTileControlAffinity.leading,
-                                    );
-                                  }),
-                                ],
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: openVersionSelector,
+                      child: InputDecorator(
+                        decoration:
+                            const InputDecoration(labelText: 'Versions'),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: currentSelections.isEmpty
+                                    ? [
+                                        Text(
+                                          'Select versions',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                        ),
+                                      ]
+                                    : currentSelections.map((version) {
+                                        final label = _versionLabel(
+                                            selectedLanguage.code, version);
+                                        final isMain =
+                                            selectedLanguage.code ==
+                                                    mainLanguage.code &&
+                                                version.toLowerCase() ==
+                                                    mainVersion.toLowerCase();
+                                        return InputChip(
+                                          label: Text(label),
+                                          onDeleted: isMain
+                                              ? null
+                                              : () {
+                                                  setModalState(() {
+                                                    currentSelections
+                                                        .remove(version);
+                                                  });
+                                                },
+                                        );
+                                      }).toList(),
                               ),
-                            );
-                          }).toList(),
+                            ),
+                            const Icon(Icons.arrow_drop_down),
+                          ],
                         ),
                       ),
                     ),
@@ -3005,34 +3066,47 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                     FilledButton(
                       onPressed: () {
                         Navigator.of(context).pop();
-                        final updatedSelections = Set<String>.from(selectedKeys)
-                          ..remove(mainKey);
+                        final desired = <String>{};
+                        selectedByLanguage.forEach((code, versions) {
+                          final language = _supportedLanguages.firstWhere(
+                            (option) => option.code == code,
+                            orElse: () => mainLanguage,
+                          );
+                          for (final version in versions) {
+                            final key = _comparisonKey(language, version);
+                            if (language.code == mainLanguage.code &&
+                                version.toLowerCase() ==
+                                    mainVersion.toLowerCase()) {
+                              continue;
+                            }
+                            desired.add(key);
+                          }
+                        });
+
                         final existing = List<_ComparisonPassage>.from(_comparisons);
-                        final toRemove = existing.where((entry) {
-                          final key =
-                              _comparisonKey(entry.language, entry.version);
-                          return !updatedSelections.contains(key);
-                        }).toList();
-                        if (toRemove.isNotEmpty) {
-                          setState(() {
-                            _comparisons.removeWhere((entry) {
-                              final key =
-                                  _comparisonKey(entry.language, entry.version);
-                              return !updatedSelections.contains(key);
-                            });
+                        setState(() {
+                          _comparisons.removeWhere((entry) {
+                            final key =
+                                _comparisonKey(entry.language, entry.version);
+                            return !desired.contains(key);
                           });
-                        }
-                        for (final key in updatedSelections) {
+                        });
+
+                        for (final key in desired) {
                           if (existing.any((entry) =>
                               _comparisonKey(entry.language, entry.version) ==
                               key)) {
                             continue;
                           }
-                          final choice = choiceLookup[key];
-                          if (choice == null) {
+                          final parts = key.split('|');
+                          if (parts.length != 2) {
                             continue;
                           }
-                          _addComparison(choice.language, choice.version);
+                          final language = _supportedLanguages.firstWhere(
+                            (option) => option.code == parts[0],
+                            orElse: () => mainLanguage,
+                          );
+                          _addComparison(language, parts[1]);
                         }
                       },
                       child: const Text('Add translation'),
@@ -3397,14 +3471,12 @@ class _ComparisonPassage {
   bool withDiacritics;
 }
 
-class _ComparisonChoice {
-  const _ComparisonChoice({
-    required this.language,
+class _VersionChoice {
+  const _VersionChoice({
     required this.version,
     required this.label,
   });
 
-  final LanguageOption language;
   final String version;
   final String label;
 }
