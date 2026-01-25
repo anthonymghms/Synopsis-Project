@@ -3584,14 +3584,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           _languageOption = language;
           _apiVersion = _sanitizeVersionForLanguage(language, version);
           _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
-          _entryComparisons.clear();
         });
         LanguageSelectionController.instance.update(language.code);
         await _loadTopicForLanguage(language, _activeVersion);
-        fetchTexts();
+        await fetchTexts(preserveComparisons: true);
+        _reloadEntryComparisons();
       },
-      title: 'Change translation',
-      confirmLabel: 'Change translation',
+      title: 'Change main translation',
+      confirmLabel: 'Change main translation',
     );
   }
 
@@ -3856,7 +3856,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       onPressed:
                           _loading ? null : _showTranslationChangePicker,
                       icon: const Icon(Icons.translate),
-                      label: const Text('Change translation'),
+                      label: const Text('Change main translation'),
                     ),
                   ],
                 ),
