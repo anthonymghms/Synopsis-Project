@@ -3543,7 +3543,7 @@ class _AuthorTextEntry {
 }
 
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
-  late final List<String> _allAuthors;
+  late List<String> _allAuthors;
   late Set<String> _selected;
   Map<String, List<_AuthorTextEntry>> _texts = {};
   final Map<String, List<_ComparisonPassage>> _entryComparisons = {};
@@ -3552,6 +3552,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   bool _withDiacritics = true;
   late LanguageOption _languageOption;
   late String _apiVersion;
+  late Topic _topic;
 
   String get _activeVersion {
     if (_languageOption.code == 'arabic') {
@@ -3616,13 +3617,68 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     _apiVersion = _sanitizeVersionForLanguage(_languageOption, widget.apiVersion);
     _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
     LanguageSelectionController.instance.update(_languageOption.code);
-    _allAuthors = widget.topic.references
+    _topic = widget.topic;
+    _allAuthors = _topic.references
         .map((e) => _normalizeGospelName(e.book))
         .toSet()
-        .toList();
-    _allAuthors.sort(_compareBooks);
+        .toList()
+      ..sort(_compareBooks);
     _selected = widget.initialAuthors.map(_normalizeGospelName).toSet();
     fetchTexts();
+  }
+
+  Future<void> _loadTopicForLanguage(
+      LanguageOption language, String version) async {
+    final topicKey =
+        _topic.id.trim().isNotEmpty ? _topic.id.trim() : _topic.name.trim();
+    if (topicKey.isEmpty) {
+      return;
+    }
+    final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
+      'language': language.apiLanguage,
+      'version': version,
+    });
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        return;
+      }
+      final List data = json.decode(response.body);
+      final topics = data.map((e) => Topic.fromJson(e)).toList();
+      final normalizedKey = topicKey.toLowerCase();
+      Topic? match;
+      for (final topic in topics) {
+        final id = topic.id.trim();
+        if (id.isNotEmpty && id.toLowerCase() == normalizedKey) {
+          match = topic;
+          break;
+        }
+        final name = topic.name.trim();
+        if (name.isNotEmpty && name.toLowerCase() == normalizedKey) {
+          match = topic;
+          break;
+        }
+      }
+      if (!mounted || match == null) {
+        return;
+      }
+      final authors = match.references
+          .map((e) => _normalizeGospelName(e.book))
+          .toSet()
+          .toList()
+        ..sort(_compareBooks);
+      final authorSet = authors.toSet();
+      final updatedSelected = _selected
+          .where((author) => authorSet.contains(author))
+          .toSet();
+      setState(() {
+        _topic = match!;
+        _allAuthors = authors;
+        _selected = updatedSelected.isNotEmpty ? updatedSelected : authorSet;
+      });
+    } catch (_) {
+      // Ignore topic refresh issues and keep the previous topic.
+    }
   }
 
   Future<void> _toggleArabicDiacritics() async {
@@ -3672,7 +3728,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       final option = _languageOption;
       final version = _activeVersion;
       final futures = _selected.map((author) async {
-        final refs = widget.topic.references
+        final refs = _topic.references
             .where((r) => _normalizeGospelName(r.book) == author);
         final displayAuthor = _displayAuthorName(author);
         final parts = <_AuthorTextEntry>[];
@@ -3854,18 +3910,19 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   void _showTranslationChangePicker() {
     _showComparisonPicker(
-      (language, version) {
+      (language, version) async {
         setState(() {
           _languageOption = language;
           _apiVersion = _sanitizeVersionForLanguage(language, version);
           _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
-          _entryComparisons.clear();
         });
         LanguageSelectionController.instance.update(language.code);
-        fetchTexts();
+        await _loadTopicForLanguage(language, _activeVersion);
+        await fetchTexts(preserveComparisons: true);
+        _reloadEntryComparisons();
       },
-      title: 'Change translation',
-      confirmLabel: 'Change translation',
+      title: 'Change main translation',
+      confirmLabel: 'Change main translation',
     );
   }
 
@@ -4066,7 +4123,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return Directionality(
       textDirection: option.direction,
       child: MainScaffold(
-        title: widget.topic.name,
+        title: _topic.name,
         body: Column(
           children: [
             Wrap(
@@ -4130,7 +4187,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       onPressed:
                           _loading ? null : _showTranslationChangePicker,
                       icon: const Icon(Icons.translate),
-                      label: const Text('Change translation'),
+                      label: const Text('Change main translation'),
                     ),
                   ],
                 ),
@@ -4210,9 +4267,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                                 option
                                                                     .direction,
                                                             topicName:
-                                                                widget
-                                                                    .topic
-                                                                    .name,
+                                                                _topic.name,
                                                             language: option
                                                                 .apiLanguage,
                                                             version:
