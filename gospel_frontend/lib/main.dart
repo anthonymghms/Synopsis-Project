@@ -735,6 +735,9 @@ String _combineBookAndReference(
   final formattedReference =
       _formatReferenceForLanguage(reference, direction, isArabic: isArabic);
   if (direction == TextDirection.rtl) {
+    if (isArabic) {
+      return '$trimmedBook $formattedReference';
+    }
     return '$formattedReference $trimmedBook';
   }
   return '$trimmedBook $formattedReference';
