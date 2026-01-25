@@ -2859,12 +2859,67 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  String _comparisonKey(LanguageOption option, String version) {
+    return '${option.code}|${version.toLowerCase()}';
+  }
+
   void _showComparisonPicker() {
     if (_supportedLanguages.isEmpty) {
       return;
     }
-    LanguageOption selectedLanguage = _languageOption;
-    String selectedVersion = _activeVersion;
+    final mainLanguage = _languageOption;
+    final mainVersion =
+        _sanitizeVersionForLanguage(mainLanguage, _activeVersion);
+    final mainKey = _comparisonKey(mainLanguage, mainVersion);
+    final existingSelections = <String>{
+      for (final entry in _comparisons) _comparisonKey(entry.language, entry.version),
+    };
+    final selectedKeys = <String>{...existingSelections, mainKey};
+    final choicesByLanguage = <LanguageOption, List<_ComparisonChoice>>{};
+    final choiceLookup = <String, _ComparisonChoice>{};
+
+    for (final language in _supportedLanguages) {
+      final versions = _selectableVersions(language);
+      final versionChoices = <String, _ComparisonChoice>{};
+      for (final version in versions) {
+        final sanitized = _sanitizeVersionForLanguage(language, version.id);
+        final key = _comparisonKey(language, sanitized);
+        versionChoices[key] = _ComparisonChoice(
+          language: language,
+          version: sanitized,
+          label: version.label,
+        );
+      }
+      for (final entry in _comparisons.where((entry) => entry.language.code == language.code)) {
+        final key = _comparisonKey(entry.language, entry.version);
+        versionChoices.putIfAbsent(
+          key,
+          () => _ComparisonChoice(
+            language: entry.language,
+            version: entry.version,
+            label: _versionLabel(entry.language.code, entry.version),
+          ),
+        );
+      }
+      if (language.code == mainLanguage.code) {
+        versionChoices.putIfAbsent(
+          mainKey,
+          () => _ComparisonChoice(
+            language: mainLanguage,
+            version: mainVersion,
+            label: _versionLabel(mainLanguage.code, mainVersion),
+          ),
+        );
+      }
+      if (versionChoices.isNotEmpty) {
+        final ordered = versionChoices.values.toList()
+          ..sort((a, b) => a.label.compareTo(b.label));
+        choicesByLanguage[language] = ordered;
+        for (final choice in ordered) {
+          choiceLookup[_comparisonKey(choice.language, choice.version)] = choice;
+        }
+      }
+    }
 
     showModalBottomSheet<void>(
       context: context,
@@ -2872,15 +2927,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         return SafeArea(
           child: StatefulBuilder(
             builder: (context, setModalState) {
-              final versions = _selectableVersions(selectedLanguage);
-              if (selectedVersion.isEmpty && versions.isNotEmpty) {
-                selectedVersion = versions.first.id;
-              }
-              selectedVersion =
-                  _selectionVersionValue(selectedLanguage, selectedVersion);
-              if (selectedVersion.isEmpty && versions.isNotEmpty) {
-                selectedVersion = versions.first.id;
-              }
               return Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -2892,52 +2938,102 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 12),
-                    DropdownButtonFormField<LanguageOption>(
-                      value: selectedLanguage,
-                      decoration: const InputDecoration(labelText: 'Language'),
-                      items: _supportedLanguages
-                          .map(
-                            (option) => DropdownMenuItem(
-                              value: option,
-                              child: Text(option.label),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setModalState(() {
-                          selectedLanguage = value;
-                          selectedVersion =
-                              _selectionVersionValue(value, value.apiVersion);
-                        });
-                      },
+                    Text(
+                      'Main translation',
+                      style: Theme.of(context).textTheme.labelLarge,
                     ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: selectedVersion,
-                      decoration: const InputDecoration(labelText: 'Version'),
-                      items: (versions.isEmpty
-                              ? [BibleVersion(id: selectedVersion, label: selectedVersion)]
-                              : versions)
-                          .map(
-                            (version) => DropdownMenuItem(
-                              value: version.id,
-                              child: Text(version.label),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setModalState(() {
-                          selectedVersion = value;
-                        });
-                      },
+                    CheckboxListTile(
+                      value: true,
+                      onChanged: null,
+                      title: Text(
+                        '${mainLanguage.label} · ${_versionLabel(mainLanguage.code, mainVersion)}',
+                      ),
+                      subtitle: const Text('Required'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 320,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: choicesByLanguage.entries.map((entry) {
+                            final language = entry.key;
+                            final choices = entry.value
+                                .where((choice) =>
+                                    _comparisonKey(choice.language, choice.version) != mainKey)
+                                .toList();
+                            if (choices.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    language.label,
+                                    style: Theme.of(context).textTheme.labelLarge,
+                                  ),
+                                  ...choices.map((choice) {
+                                    final key = _comparisonKey(
+                                        choice.language, choice.version);
+                                    return CheckboxListTile(
+                                      value: selectedKeys.contains(key),
+                                      onChanged: (value) {
+                                        setModalState(() {
+                                          if (value == true) {
+                                            selectedKeys.add(key);
+                                          } else {
+                                            selectedKeys.remove(key);
+                                          }
+                                        });
+                                      },
+                                      title: Text(choice.label),
+                                      controlAffinity:
+                                          ListTileControlAffinity.leading,
+                                    );
+                                  }),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     FilledButton(
                       onPressed: () {
                         Navigator.of(context).pop();
-                        _addComparison(selectedLanguage, selectedVersion);
+                        final updatedSelections = Set<String>.from(selectedKeys)
+                          ..remove(mainKey);
+                        final existing = List<_ComparisonPassage>.from(_comparisons);
+                        final toRemove = existing.where((entry) {
+                          final key =
+                              _comparisonKey(entry.language, entry.version);
+                          return !updatedSelections.contains(key);
+                        }).toList();
+                        if (toRemove.isNotEmpty) {
+                          setState(() {
+                            _comparisons.removeWhere((entry) {
+                              final key =
+                                  _comparisonKey(entry.language, entry.version);
+                              return !updatedSelections.contains(key);
+                            });
+                          });
+                        }
+                        for (final key in updatedSelections) {
+                          if (existing.any((entry) =>
+                              _comparisonKey(entry.language, entry.version) ==
+                              key)) {
+                            continue;
+                          }
+                          final choice = choiceLookup[key];
+                          if (choice == null) {
+                            continue;
+                          }
+                          _addComparison(choice.language, choice.version);
+                        }
                       },
                       child: const Text('Add translation'),
                     ),
@@ -3299,6 +3395,18 @@ class _ComparisonPassage {
   String? error;
   bool loading;
   bool withDiacritics;
+}
+
+class _ComparisonChoice {
+  const _ComparisonChoice({
+    required this.language,
+    required this.version,
+    required this.label,
+  });
+
+  final LanguageOption language;
+  final String version;
+  final String label;
 }
 
 class Topic {
