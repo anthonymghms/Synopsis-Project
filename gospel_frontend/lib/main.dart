@@ -2435,6 +2435,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   String? _chapterError;
   List<_VerseLine>? _chapterVerses;
   bool _withDiacritics = true;
+  bool _interlinearView = false;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
 
@@ -2859,6 +2860,20 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  void _toggleInterlinearView() {
+    setState(() {
+      _interlinearView = !_interlinearView;
+    });
+  }
+
+  Widget _buildInterlinearToggleButton() {
+    return OutlinedButton.icon(
+      onPressed: _toggleInterlinearView,
+      icon: Icon(_interlinearView ? Icons.view_agenda : Icons.view_agenda_outlined),
+      label: const Text('Interlinear View'),
+    );
+  }
+
   String _comparisonKey(LanguageOption option, String version) {
     return '${option.code}|${version.toLowerCase()}';
   }
@@ -3218,6 +3233,95 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  Widget _buildInterlinearReferenceSection(ThemeData theme) {
+    if (_referenceVerses.isEmpty) {
+      return Text(
+        'No passage text is available for this reference yet.',
+        style: theme.textTheme.bodyMedium,
+        textAlign: TextAlign.start,
+      );
+    }
+
+    final statusWidgets = <Widget>[];
+    final translations = <_InterlinearTranslation>[
+      _InterlinearTranslation(
+        label: _metaSummary.isNotEmpty ? _metaSummary : _currentVersionLabel(),
+        direction: _languageOption.direction,
+        verses: _mapVersesByNumber(_referenceVerses),
+      ),
+    ];
+    for (final entry in _comparisons) {
+      final resolvedVersion = entry.language.code == 'arabic'
+          ? _comparisonVersion(entry.language, entry.version,
+              withDiacritics: entry.withDiacritics)
+          : entry.version;
+      final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
+      final label = '${entry.language.label} · $versionLabel';
+      if (entry.loading) {
+        statusWidgets.addAll([
+          Text(label, style: theme.textTheme.labelSmall),
+          const SizedBox(height: 4),
+          const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      if (entry.error != null) {
+        statusWidgets.addAll([
+          Text(
+            '$label: ${entry.error}',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.error),
+          ),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      if (entry.verses.isEmpty) {
+        statusWidgets.addAll([
+          Text(
+            '$label: No passage text is available for this translation yet.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      translations.add(
+        _InterlinearTranslation(
+          label: label,
+          direction: entry.language.direction,
+          verses: _mapVersesByNumber(entry.verses),
+        ),
+      );
+    }
+
+    final verseKeys = _sortedVerseKeys(translations.map((t) => t.verses));
+    if (verseKeys.isEmpty) {
+      return Text(
+        'No passage text is available for this reference yet.',
+        style: theme.textTheme.bodyMedium,
+        textAlign: TextAlign.start,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...verseKeys.map(
+          (number) => _buildInterlinearVerseGroup(
+            verseNumber: number,
+            translations: translations,
+            theme: theme,
+          ),
+        ),
+        if (statusWidgets.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...statusWidgets,
+        ],
+      ],
+    );
+  }
+
   void _toggleComparisonDiacritics(_ComparisonPassage entry) {
     if (entry.language.code != 'arabic') {
       return;
@@ -3350,6 +3454,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _buildVersionSwitchButton(),
       _buildArabicReferenceToggleButton(),
       _buildAddComparisonButton(),
+      _buildInterlinearToggleButton(),
     ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
@@ -3398,18 +3503,23 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       ),
                     ],
                     const SizedBox(height: 24),
-                    if (_referenceVerses.isEmpty)
-                      Text(
-                        'No passage text is available for this reference yet.',
-                        style: theme.textTheme.bodyMedium,
-                        textAlign: TextAlign.start,
-                      )
-                    else
-                      ..._referenceVerses
-                          .map((verse) => _buildVerseParagraph(verse, theme))
-                          .toList(),
-                    const SizedBox(height: 24),
-                    _buildComparisonSection(theme),
+                    if (_interlinearView && _comparisons.isNotEmpty) ...[
+                      _buildInterlinearReferenceSection(theme),
+                      const SizedBox(height: 24),
+                    ] else ...[
+                      if (_referenceVerses.isEmpty)
+                        Text(
+                          'No passage text is available for this reference yet.',
+                          style: theme.textTheme.bodyMedium,
+                          textAlign: TextAlign.start,
+                        )
+                      else
+                        ..._referenceVerses
+                            .map((verse) => _buildVerseParagraph(verse, theme))
+                            .toList(),
+                      const SizedBox(height: 24),
+                      _buildComparisonSection(theme),
+                    ],
                     const SizedBox(height: 32),
                     _buildChapterSection(theme),
                   ],
@@ -3435,6 +3545,10 @@ List<_VerseLine> _parseVerseLines(String body) {
   if (decoded is! List) {
     return const <_VerseLine>[];
   }
+  return _parseVerseLinesFromJson(decoded);
+}
+
+List<_VerseLine> _parseVerseLinesFromJson(List<dynamic> decoded) {
   final verses = decoded
       .whereType<Map<String, dynamic>>()
       .map((item) {
@@ -3451,6 +3565,88 @@ List<_VerseLine> _parseVerseLines(String body) {
       .toList();
   verses.sort((a, b) => (a.number ?? 0).compareTo(b.number ?? 0));
   return verses;
+}
+
+Map<int, String> _mapVersesByNumber(List<_VerseLine> verses) {
+  final map = <int, String>{};
+  for (var i = 0; i < verses.length; i++) {
+    final verse = verses[i];
+    final number = verse.number != null && verse.number! > 0
+        ? verse.number!
+        : i + 1;
+    map[number] = verse.text;
+  }
+  return map;
+}
+
+List<int> _sortedVerseKeys(Iterable<Map<int, String>> maps) {
+  final keys = <int>{};
+  for (final map in maps) {
+    keys.addAll(map.keys);
+  }
+  final sorted = keys.toList()..sort();
+  return sorted;
+}
+
+class _InterlinearTranslation {
+  const _InterlinearTranslation({
+    required this.label,
+    required this.direction,
+    required this.verses,
+  });
+
+  final String label;
+  final TextDirection direction;
+  final Map<int, String> verses;
+}
+
+Widget _buildInterlinearVerseGroup({
+  required int verseNumber,
+  required List<_InterlinearTranslation> translations,
+  required ThemeData theme,
+  TextStyle? textStyle,
+  TextStyle? labelStyle,
+}) {
+  final resolvedTextStyle =
+      textStyle ?? theme.textTheme.bodyLarge?.copyWith(height: 1.6);
+  final resolvedLabelStyle = labelStyle ??
+      theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      );
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$verseNumber',
+          style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        ...translations.map((translation) {
+          final text = translation.verses[verseNumber] ?? '';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Directionality(
+              textDirection: translation.direction,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(translation.label, style: resolvedLabelStyle),
+                  const SizedBox(height: 4),
+                  Text(
+                    text.isNotEmpty ? text : '—',
+                    style: resolvedTextStyle,
+                    textAlign: TextAlign.start,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    ),
+  );
 }
 
 class _ComparisonPassage {
@@ -3713,12 +3909,14 @@ class _AuthorTextEntry {
     required this.reference,
     required this.title,
     required this.text,
+    required this.verses,
     required this.displayAuthor,
   });
 
   final GospelReference reference;
   final String title;
   final String text;
+  final List<_VerseLine> verses;
   final String displayAuthor;
 }
 
@@ -3730,6 +3928,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   String? _error;
   bool _loading = true;
   bool _withDiacritics = true;
+  bool _interlinearView = false;
   late LanguageOption _languageOption;
   late String _apiVersion;
   late Topic _topic;
@@ -3925,8 +4124,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             throw Exception("Error ${response.statusCode} for $author");
           }
           final List<dynamic> verses = json.decode(response.body);
-          final text =
-              verses.map((v) => "${v['verse']}. ${v['text']}").join("\n");
+          final verseLines = _parseVerseLinesFromJson(verses);
+          final text = verseLines
+              .map((v) =>
+                  "${v.number ?? ''}${v.number != null ? '. ' : ''}${v.text}")
+              .join("\n");
           final refLabel = ref.formattedReference;
           final direction = option.direction;
           final title = refLabel.isEmpty
@@ -3937,6 +4139,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             reference: ref,
             title: title,
             text: text,
+            verses: verseLines,
             displayAuthor: displayAuthor,
           ));
         }
@@ -4572,6 +4775,105 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 
+  void _toggleInterlinearView() {
+    setState(() {
+      _interlinearView = !_interlinearView;
+    });
+  }
+
+  Widget _buildInterlinearToggleButton() {
+    return OutlinedButton.icon(
+      onPressed: _toggleInterlinearView,
+      icon: Icon(_interlinearView ? Icons.view_agenda : Icons.view_agenda_outlined),
+      label: const Text('Interlinear View'),
+    );
+  }
+
+  Widget _buildEntryInterlinearSection(
+    _AuthorTextEntry entry,
+    List<_ComparisonPassage> comparisons,
+    ThemeData theme,
+  ) {
+    final statusWidgets = <Widget>[];
+    final translations = <_InterlinearTranslation>[
+      _InterlinearTranslation(
+        label: _languageVersionSummary,
+        direction: _languageOption.direction,
+        verses: _mapVersesByNumber(entry.verses),
+      ),
+    ];
+    for (final comparison in comparisons) {
+      final resolvedVersion = comparison.language.code == 'arabic'
+          ? _comparisonVersionFor(comparison.language, comparison.version,
+              withDiacritics: comparison.withDiacritics)
+          : comparison.version;
+      final versionLabel =
+          _versionLabel(comparison.language.code, resolvedVersion);
+      final label = '${comparison.language.label} · $versionLabel';
+      if (comparison.loading) {
+        statusWidgets.addAll([
+          Text(label, style: theme.textTheme.labelSmall),
+          const SizedBox(height: 4),
+          const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      if (comparison.error != null) {
+        statusWidgets.addAll([
+          Text(
+            '$label: ${comparison.error}',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.error),
+          ),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      if (comparison.verses.isEmpty) {
+        statusWidgets.addAll([
+          Text(
+            '$label: No passage text is available for this translation yet.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+        ]);
+        continue;
+      }
+      translations.add(
+        _InterlinearTranslation(
+          label: label,
+          direction: comparison.language.direction,
+          verses: _mapVersesByNumber(comparison.verses),
+        ),
+      );
+    }
+    final verseKeys = _sortedVerseKeys(translations.map((t) => t.verses));
+    if (verseKeys.isEmpty) {
+      return Text(
+        'No passage text is available for this translation yet.',
+        style: theme.textTheme.bodyMedium,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...verseKeys.map(
+          (number) => _buildInterlinearVerseGroup(
+            verseNumber: number,
+            translations: translations,
+            theme: theme,
+            textStyle: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+          ),
+        ),
+        if (statusWidgets.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...statusWidgets,
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final option = _languageOption;
@@ -4644,6 +4946,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       icon: const Icon(Icons.translate),
                       label: const Text('Change main translation'),
                     ),
+                    _buildInterlinearToggleButton(),
                   ],
                 ),
               ),
@@ -4743,19 +5046,27 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                   children: [
                                                     heading,
                                                     const SizedBox(height: 4),
-                                                    Text(entry.text),
-                                                    if (comparisons.isNotEmpty) ...[
-                                                      const SizedBox(height: 8),
-                                                      ...comparisons
-                                                          .map(
-                                                            (comparison) =>
-                                                                _buildEntryComparisonCard(
-                                                                    entry
-                                                                        .reference,
-                                                                  comparison,
-                                                                  theme),
-                                                          )
-                                                          .toList(),
+                                                    if (_interlinearView)
+                                                      _buildEntryInterlinearSection(
+                                                        entry,
+                                                        comparisons,
+                                                        theme,
+                                                      )
+                                                    else ...[
+                                                      Text(entry.text),
+                                                      if (comparisons.isNotEmpty) ...[
+                                                        const SizedBox(height: 8),
+                                                        ...comparisons
+                                                            .map(
+                                                              (comparison) =>
+                                                                  _buildEntryComparisonCard(
+                                                            entry.reference,
+                                                            comparison,
+                                                            theme,
+                                                          ),
+                                                            )
+                                                            .toList(),
+                                                      ],
                                                     ],
                                                     const SizedBox(height: 8),
                                                   ],
