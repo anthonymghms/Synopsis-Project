@@ -2518,7 +2518,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   String get _referenceHeading {
-    final book = widget.displayBook.trim();
+    final book = _displayBookLabel;
     final override = widget.referenceLabelOverride.trim();
     final direction =
         _languageOptionForApiLanguage(widget.language)?.direction ??
@@ -2543,6 +2543,18 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         : '${widget.chapter}:$verses';
     return _combineBookAndReference(book, reference, direction,
         isArabic: _isArabicLanguage(widget.language));
+  }
+
+  String get _displayBookLabel {
+    final book = widget.displayBook.trim();
+    if (book.isEmpty) {
+      return book;
+    }
+    final option = _languageOptionForApiLanguage(widget.language);
+    if (option == null) {
+      return book;
+    }
+    return _displayGospelName(book, option);
   }
 
   String get _metaSummary {
@@ -3434,8 +3446,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Widget build(BuildContext context) {
     final title = widget.topicName.trim().isNotEmpty
         ? widget.topicName
-        : (widget.displayBook.trim().isNotEmpty
-            ? widget.displayBook.trim()
+        : (_displayBookLabel.isNotEmpty
+            ? _displayBookLabel
             : 'Reference');
     return MainScaffold(
       title: title,
