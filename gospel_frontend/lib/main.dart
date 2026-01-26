@@ -2444,6 +2444,9 @@ class ReferenceViewerPage extends StatefulWidget {
 }
 
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
+  static const double _minTextScale = 0.85;
+  static const double _maxTextScale = 1.4;
+  static const double _textScaleStep = 0.1;
   bool _loadingReference = true;
   String? _error;
   List<_VerseLine> _referenceVerses = const <_VerseLine>[];
@@ -2452,6 +2455,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   List<_VerseLine>? _chapterVerses;
   bool _withDiacritics = true;
   bool _interlinearView = false;
+  double _textScale = 1.0;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
 
@@ -2892,6 +2896,42 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     setState(() {
       _interlinearView = !_interlinearView;
     });
+  }
+
+  void _adjustTextScale(double delta) {
+    setState(() {
+      _textScale =
+          (_textScale + delta).clamp(_minTextScale, _maxTextScale).toDouble();
+    });
+  }
+
+  bool get _canZoomIn => _textScale < _maxTextScale;
+  bool get _canZoomOut => _textScale > _minTextScale;
+
+  Widget _buildZoomInButton() {
+    return OutlinedButton.icon(
+      onPressed: _canZoomIn ? () => _adjustTextScale(_textScaleStep) : null,
+      icon: const Icon(Icons.zoom_in),
+      label: const Text('Zoom in'),
+    );
+  }
+
+  Widget _buildZoomOutButton() {
+    return OutlinedButton.icon(
+      onPressed: _canZoomOut ? () => _adjustTextScale(-_textScaleStep) : null,
+      icon: const Icon(Icons.zoom_out),
+      label: const Text('Zoom out'),
+    );
+  }
+
+  Widget _wrapWithTextScale(BuildContext context, Widget child) {
+    final mediaQuery = MediaQuery.of(context);
+    return MediaQuery(
+      data: mediaQuery.copyWith(
+        textScaler: TextScaler.linear(_textScale),
+      ),
+      child: child,
+    );
   }
 
   Widget _buildInterlinearToggleButton() {
@@ -3479,6 +3519,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final meta = _metaSummary;
     final direction = _languageOption.direction;
     final actionButtons = <Widget>[
+      _buildZoomOutButton(),
+      _buildZoomInButton(),
       _buildVersionSwitchButton(),
       _buildArabicReferenceToggleButton(),
       _buildAddComparisonButton(),
@@ -3531,25 +3573,34 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       ),
                     ],
                     const SizedBox(height: 24),
-                    if (_interlinearView && _comparisons.isNotEmpty) ...[
-                      _buildInterlinearReferenceSection(theme),
-                      const SizedBox(height: 24),
-                    ] else ...[
-                      if (_referenceVerses.isEmpty)
-                        Text(
-                          'No passage text is available for this reference yet.',
-                          style: theme.textTheme.bodyMedium,
-                          textAlign: TextAlign.start,
-                        )
-                      else
-                        ..._referenceVerses
-                            .map((verse) => _buildVerseParagraph(verse, theme))
-                            .toList(),
-                      const SizedBox(height: 24),
-                      _buildComparisonSection(theme),
-                    ],
-                    const SizedBox(height: 32),
-                    _buildChapterSection(theme),
+                    _wrapWithTextScale(
+                      context,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_interlinearView && _comparisons.isNotEmpty) ...[
+                            _buildInterlinearReferenceSection(theme),
+                            const SizedBox(height: 24),
+                          ] else ...[
+                            if (_referenceVerses.isEmpty)
+                              Text(
+                                'No passage text is available for this reference yet.',
+                                style: theme.textTheme.bodyMedium,
+                                textAlign: TextAlign.start,
+                              )
+                            else
+                              ..._referenceVerses
+                                  .map((verse) =>
+                                      _buildVerseParagraph(verse, theme))
+                                  .toList(),
+                            const SizedBox(height: 24),
+                            _buildComparisonSection(theme),
+                          ],
+                          const SizedBox(height: 32),
+                          _buildChapterSection(theme),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -3949,6 +4000,9 @@ class _AuthorTextEntry {
 }
 
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
+  static const double _minTextScale = 0.85;
+  static const double _maxTextScale = 1.4;
+  static const double _textScaleStep = 0.1;
   late List<String> _allAuthors;
   late Set<String> _selected;
   Map<String, List<_AuthorTextEntry>> _texts = {};
@@ -3957,6 +4011,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   bool _loading = true;
   bool _withDiacritics = true;
   bool _interlinearView = false;
+  double _textScale = 1.0;
   late LanguageOption _languageOption;
   late String _apiVersion;
   late Topic _topic;
@@ -4809,6 +4864,42 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
   }
 
+  void _adjustTextScale(double delta) {
+    setState(() {
+      _textScale =
+          (_textScale + delta).clamp(_minTextScale, _maxTextScale).toDouble();
+    });
+  }
+
+  bool get _canZoomIn => _textScale < _maxTextScale;
+  bool get _canZoomOut => _textScale > _minTextScale;
+
+  Widget _buildZoomOutButton() {
+    return OutlinedButton.icon(
+      onPressed: _canZoomOut ? () => _adjustTextScale(-_textScaleStep) : null,
+      icon: const Icon(Icons.zoom_out),
+      label: const Text('Zoom out'),
+    );
+  }
+
+  Widget _buildZoomInButton() {
+    return OutlinedButton.icon(
+      onPressed: _canZoomIn ? () => _adjustTextScale(_textScaleStep) : null,
+      icon: const Icon(Icons.zoom_in),
+      label: const Text('Zoom in'),
+    );
+  }
+
+  Widget _wrapWithTextScale(BuildContext context, Widget child) {
+    final mediaQuery = MediaQuery.of(context);
+    return MediaQuery(
+      data: mediaQuery.copyWith(
+        textScaler: TextScaler.linear(_textScale),
+      ),
+      child: child,
+    );
+  }
+
   Widget _buildInterlinearToggleButton() {
     return OutlinedButton.icon(
       onPressed: _toggleInterlinearView,
@@ -4974,6 +5065,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       icon: const Icon(Icons.translate),
                       label: const Text('Change main translation'),
                     ),
+                    _buildZoomOutButton(),
+                    _buildZoomInButton(),
                     _buildInterlinearToggleButton(),
                   ],
                 ),
@@ -4987,135 +5080,138 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       ? const Center(child: CircularProgressIndicator())
                       : _error != null
                           ? Center(child: Text(_error!))
-                          : SingleChildScrollView(
-                              child: Builder(
-                                builder: (context) {
-                                  final selectedSorted =
-                                      _selected.toList()..sort(_compareBooks);
-                                  final width = MediaQuery.of(context).size.width /
-                                      selectedSorted.length;
-                                  final columnWidths = <int, TableColumnWidth>{
-                                    for (int i = 0; i < selectedSorted.length; i++)
-                                      i: FixedColumnWidth(width),
-                                  };
-                                  final maxLen = selectedSorted
-                                      .map((a) => _texts[a]?.length ?? 0)
-                                      .fold<int>(
-                                          0, (prev, e) => e > prev ? e : prev);
-                                  if (maxLen == 0) {
-                                    return const SizedBox.shrink();
-                                  }
+                          : _wrapWithTextScale(
+                              context,
+                              SingleChildScrollView(
+                                child: Builder(
+                                  builder: (context) {
+                                    final selectedSorted =
+                                        _selected.toList()..sort(_compareBooks);
+                                    final width =
+                                        MediaQuery.of(context).size.width /
+                                            selectedSorted.length;
+                                    final columnWidths = <int, TableColumnWidth>{
+                                      for (int i = 0;
+                                          i < selectedSorted.length;
+                                          i++)
+                                        i: FixedColumnWidth(width),
+                                    };
+                                    final maxLen = selectedSorted
+                                        .map((a) => _texts[a]?.length ?? 0)
+                                        .fold<int>(
+                                            0, (prev, e) => e > prev ? e : prev);
+                                    if (maxLen == 0) {
+                                      return const SizedBox.shrink();
+                                    }
 
-                                  final rows = <TableRow>[];
-                                  for (int i = 0; i < maxLen; i++) {
-                                    rows.add(
-                                      TableRow(
-                                        children: [
-                                          for (final a in selectedSorted)
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.all(8.0),
-                                              child: () {
-                                                final entries =
-                                                    _texts[a] ?? [];
-                                                if (i >= entries.length) {
-                                                  return const SizedBox.shrink();
-                                                }
-                                                final entry = entries[i];
-                                                final theme =
-                                                    Theme.of(context);
-                                                final headingStyle = theme
-                                                    .textTheme
-                                                    .titleSmall
-                                                    ?.copyWith(
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    );
-                                                final referenceLabel =
-                                                    entry.reference
-                                                        .formattedReference
-                                                        .trim();
-                                                final heading =
-                                                    referenceLabel.isEmpty
-                                                        ? Text(
-                                                            entry.title,
-                                                            style:
-                                                                headingStyle,
-                                                          )
-                                                        : ReferenceHoverText(
-                                                            reference:
-                                                                entry.reference,
-                                                            textStyle:
-                                                                headingStyle,
-                                                            textAlign:
-                                                                TextAlign.start,
-                                                            textDirection:
-                                                                option
-                                                                    .direction,
-                                                            topicName:
-                                                                _topic.name,
-                                                            language: option
-                                                                .apiLanguage,
-                                                            version:
-                                                                _activeVersion,
-                                                            tooltipMessage: option
-                                                                .tooltipMessage,
-                                                            labelOverride:
-                                                                entry.title,
-                                                          );
-                                                final comparisons =
-                                                    _entryComparisons[
-                                                            _entryKey(
-                                                                entry.reference)] ??
-                                                        const <_ComparisonPassage>[];
-                                                return Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    heading,
-                                                    const SizedBox(height: 4),
-                                                    if (_interlinearView)
-                                                      _buildEntryInterlinearSection(
-                                                        entry,
-                                                        comparisons,
-                                                        theme,
-                                                      )
-                                                    else ...[
-                                                      Text(entry.text),
-                                                      if (comparisons.isNotEmpty) ...[
-                                                        const SizedBox(height: 8),
-                                                        ...comparisons
-                                                            .map(
-                                                              (comparison) =>
-                                                                  _buildEntryComparisonCard(
-                                                            entry.reference,
-                                                            comparison,
-                                                            theme,
-                                                          ),
+                                    final rows = <TableRow>[];
+                                    for (int i = 0; i < maxLen; i++) {
+                                      rows.add(
+                                        TableRow(
+                                          children: [
+                                            for (final a in selectedSorted)
+                                              Padding(
+                                                padding:
+                                                    const EdgeInsets.all(8.0),
+                                                child: () {
+                                                  final entries = _texts[a] ?? [];
+                                                  if (i >= entries.length) {
+                                                    return const SizedBox.shrink();
+                                                  }
+                                                  final entry = entries[i];
+                                                  final theme = Theme.of(context);
+                                                  final headingStyle = theme
+                                                      .textTheme
+                                                      .titleSmall
+                                                      ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      );
+                                                  final referenceLabel = entry
+                                                      .reference
+                                                      .formattedReference
+                                                      .trim();
+                                                  final heading =
+                                                      referenceLabel.isEmpty
+                                                          ? Text(
+                                                              entry.title,
+                                                              style: headingStyle,
                                                             )
-                                                            .toList(),
+                                                          : ReferenceHoverText(
+                                                              reference:
+                                                                  entry.reference,
+                                                              textStyle:
+                                                                  headingStyle,
+                                                              textAlign:
+                                                                  TextAlign.start,
+                                                              textDirection:
+                                                                  option.direction,
+                                                              topicName:
+                                                                  _topic.name,
+                                                              language:
+                                                                  option.apiLanguage,
+                                                              version:
+                                                                  _activeVersion,
+                                                              tooltipMessage:
+                                                                  option
+                                                                      .tooltipMessage,
+                                                              labelOverride:
+                                                                  entry.title,
+                                                            );
+                                                  final comparisons =
+                                                      _entryComparisons[_entryKey(
+                                                              entry.reference)] ??
+                                                          const <_ComparisonPassage>[];
+                                                  return Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment.start,
+                                                    children: [
+                                                      heading,
+                                                      const SizedBox(height: 4),
+                                                      if (_interlinearView)
+                                                        _buildEntryInterlinearSection(
+                                                          entry,
+                                                          comparisons,
+                                                          theme,
+                                                        )
+                                                      else ...[
+                                                        Text(entry.text),
+                                                        if (comparisons
+                                                            .isNotEmpty) ...[
+                                                          const SizedBox(height: 8),
+                                                          ...comparisons
+                                                              .map(
+                                                                (comparison) =>
+                                                                    _buildEntryComparisonCard(
+                                                                  entry.reference,
+                                                                  comparison,
+                                                                  theme,
+                                                                ),
+                                                              )
+                                                              .toList(),
+                                                        ],
                                                       ],
+                                                      const SizedBox(height: 8),
                                                     ],
-                                                    const SizedBox(height: 8),
-                                                  ],
-                                                );
-                                              }(),
-                                            ),
-                                        ],
-                                      ),
-                                    );
-                                  }
+                                                  );
+                                                }(),
+                                              ),
+                                          ],
+                                        ),
+                                      );
+                                    }
 
-                                  return Table(
-                                    columnWidths: columnWidths,
-                                    border: TableBorder.symmetric(
-                                      inside: BorderSide(
-                                        color: Colors.grey.shade300,
+                                    return Table(
+                                      columnWidths: columnWidths,
+                                      border: TableBorder.symmetric(
+                                        inside: BorderSide(
+                                          color: Colors.grey.shade300,
+                                        ),
                                       ),
-                                    ),
-                                    children: rows,
-                                  );
-                                },
+                                      children: rows,
+                                    );
+                                  },
+                                ),
                               ),
                             ),
             ),
