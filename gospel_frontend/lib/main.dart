@@ -2740,6 +2740,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: RichText(
+        textScaler: TextScaler.linear(_textScale),
         textAlign: TextAlign.start,
         text: TextSpan(
           style: baseStyle,
@@ -4832,6 +4833,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: RichText(
+        textScaler: TextScaler.linear(_textScale),
         text: TextSpan(
           style: baseStyle,
           children: [
