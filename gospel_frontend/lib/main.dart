@@ -548,6 +548,22 @@ String _arabicBaseVersion(String version) {
   return trimmed;
 }
 
+String _versionIdentityKey(LanguageOption option, String version) {
+  final normalized = version.trim();
+  if (option.code == 'arabic') {
+    return _arabicBaseVersion(normalized).toLowerCase();
+  }
+  return normalized.toLowerCase();
+}
+
+bool _isSameTranslation(LanguageOption a, String versionA, LanguageOption b,
+    String versionB) {
+  if (a.code != b.code) {
+    return false;
+  }
+  return _versionIdentityKey(a, versionA) == _versionIdentityKey(b, versionB);
+}
+
 List<BibleVersion> _selectableVersions(LanguageOption option) {
   if (option.code != 'arabic') {
     return option.versions;
@@ -2904,14 +2920,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       final choices = <String, _VersionChoice>{};
       for (final version in _selectableVersions(language)) {
         final sanitized = _sanitizeVersionForLanguage(language, version.id);
-        choices[sanitized.toLowerCase()] = _VersionChoice(
+        choices[_versionIdentityKey(language, sanitized)] = _VersionChoice(
           version: sanitized,
           label: version.label,
         );
       }
       for (final selected in selectedByLanguage[language.code] ?? {}) {
         choices.putIfAbsent(
-          selected.toLowerCase(),
+          _versionIdentityKey(language, selected),
           () => _VersionChoice(
             version: selected,
             label: _versionLabel(language.code, selected),
@@ -2950,10 +2966,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                             child: ListView(
                               shrinkWrap: true,
                               children: choices.map((choice) {
-                                final isMain = selectedLanguage.code ==
-                                        mainLanguage.code &&
-                                    choice.version.toLowerCase() ==
-                                        mainVersion.toLowerCase();
+                                final isMain = _isSameTranslation(
+                                    selectedLanguage,
+                                    choice.version,
+                                    mainLanguage,
+                                    mainVersion);
                                 final isSelected = currentSelections
                                     .contains(choice.version);
                                 return CheckboxListTile(
@@ -3053,11 +3070,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                                     : currentSelections.map((version) {
                                         final label = _versionLabel(
                                             selectedLanguage.code, version);
-                                        final isMain =
-                                            selectedLanguage.code ==
-                                                    mainLanguage.code &&
-                                                version.toLowerCase() ==
-                                                    mainVersion.toLowerCase();
+                                        final isMain = _isSameTranslation(
+                                            selectedLanguage,
+                                            version,
+                                            mainLanguage,
+                                            mainVersion);
                                         return InputChip(
                                           label: Text(label),
                                           onDeleted: isMain
@@ -3089,9 +3106,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                           );
                           for (final version in versions) {
                             final key = _comparisonKey(language, version);
-                            if (language.code == mainLanguage.code &&
-                                version.toLowerCase() ==
-                                    mainVersion.toLowerCase()) {
+                            if (_isSameTranslation(
+                                language, version, mainLanguage, mainVersion)) {
                               continue;
                             }
                             desired.add(key);
@@ -4337,14 +4353,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       final choices = <String, _VersionChoice>{};
       for (final version in _selectableVersions(language)) {
         final sanitized = _sanitizeVersionForLanguage(language, version.id);
-        choices[sanitized.toLowerCase()] = _VersionChoice(
+        choices[_versionIdentityKey(language, sanitized)] = _VersionChoice(
           version: sanitized,
           label: version.label,
         );
       }
       for (final selected in selectedByLanguage[language.code] ?? {}) {
         choices.putIfAbsent(
-          selected.toLowerCase(),
+          _versionIdentityKey(language, selected),
           () => _VersionChoice(
             version: selected,
             label: _versionLabel(language.code, selected),
@@ -4383,10 +4399,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                             child: ListView(
                               shrinkWrap: true,
                               children: choices.map((choice) {
-                                final isMain = selectedLanguage.code ==
-                                        mainLanguage.code &&
-                                    choice.version.toLowerCase() ==
-                                        mainVersion.toLowerCase();
+                                final isMain = _isSameTranslation(
+                                    selectedLanguage,
+                                    choice.version,
+                                    mainLanguage,
+                                    mainVersion);
                                 final isSelected = currentSelections
                                     .contains(choice.version);
                                 return CheckboxListTile(
@@ -4486,11 +4503,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                     : currentSelections.map((version) {
                                         final label = _versionLabel(
                                             selectedLanguage.code, version);
-                                        final isMain =
-                                            selectedLanguage.code ==
-                                                    mainLanguage.code &&
-                                                version.toLowerCase() ==
-                                                    mainVersion.toLowerCase();
+                                        final isMain = _isSameTranslation(
+                                            selectedLanguage,
+                                            version,
+                                            mainLanguage,
+                                            mainVersion);
                                         return InputChip(
                                           label: Text(label),
                                           onDeleted: isMain
@@ -4522,9 +4539,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                           );
                           for (final version in versions) {
                             final key = _entryComparisonKey(language, version);
-                            if (language.code == mainLanguage.code &&
-                                version.toLowerCase() ==
-                                    mainVersion.toLowerCase()) {
+                            if (_isSameTranslation(
+                                language, version, mainLanguage, mainVersion)) {
                               continue;
                             }
                             desired.add(key);
