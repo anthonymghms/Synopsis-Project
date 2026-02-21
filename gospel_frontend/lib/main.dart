@@ -8,6 +8,7 @@ import 'package:gospel_frontend/main_scaffold.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'reference_link_opener.dart';
@@ -664,7 +665,6 @@ String _displayGospelName(String book, LanguageOption option) {
 }
 
 final RegExp _referenceDigitsPattern = RegExp(r'\d');
-final RegExp _referencePattern = RegExp(r'^(\d+):(\d+)(?:-(\d+))?$');
 final RegExp _bidiControlPattern =
     RegExp(r'[\u2066\u2067\u2068\u2069\u200E\u200F]');
 const Map<String, String> _arabicIndicDigits = {
@@ -693,7 +693,7 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
 String _stripBidiControls(String input) =>
     input.replaceAll(_bidiControlPattern, '');
 
-String _toArabicIndicDigits(String input) => input.replaceAllMapped(
+String toArabicIndicDigits(String input) => input.replaceAllMapped(
     _referenceDigitsPattern, (match) => _arabicIndicDigits[match.group(0)]!);
 
 String _formatArabicReference(String reference) {
@@ -702,18 +702,11 @@ String _formatArabicReference(String reference) {
     return reference;
   }
   final normalized = _stripBidiControls(trimmed);
-  final match = _referencePattern.firstMatch(normalized);
-  if (match == null) {
+  final converted = toArabicIndicDigits(normalized);
+  if (converted.isEmpty) {
     return reference;
   }
-  final chapter = _toArabicIndicDigits(match.group(1)!);
-  final verse1 = _toArabicIndicDigits(match.group(2)!);
-  final verse2Raw = match.group(3);
-  if (verse2Raw != null) {
-    final verse2 = _toArabicIndicDigits(verse2Raw);
-    return '\u2067$chapter\u200F:\u200F$verse1\u200F-\u200F$verse2\u2069';
-  }
-  return '\u2067$chapter\u200F:\u200F$verse1\u2069';
+  return '\u2067$converted\u2069';
 }
 
 String _formatReferenceForLanguage(String reference, TextDirection direction,
@@ -1735,7 +1728,10 @@ class _HarmonyTableState extends State<HarmonyTable> {
     TextStyle? textStyle,
   }) {
     final alignment = isRtl ? Alignment.centerRight : Alignment.centerLeft;
-    final number = (index + 1).toString();
+    final isArabic = widget.languageOption.code == 'arabic';
+    final number = isArabic
+        ? toArabicIndicDigits((index + 1).toString())
+        : (index + 1).toString();
 
     return Align(
       alignment: alignment,
@@ -2027,6 +2023,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   List<_VerseLine> _previewVerses = const <_VerseLine>[];
   OverlayEntry? _previewEntry;
   bool _previewLoaded = false;
+  bool _isTriggerHovered = false;
+  bool _isPreviewHovered = false;
+  Timer? _hidePreviewTimer;
 
   static final Map<String, _ReferencePreviewCache> _previewCache = {};
 
@@ -2115,6 +2114,60 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       setState(() {
         _isHovered = isHovered;
       });
+    }
+  }
+
+  void _cancelHideTimer() {
+    _hidePreviewTimer?.cancel();
+    _hidePreviewTimer = null;
+  }
+
+  void _schedulePreviewHide() {
+    _cancelHideTimer();
+    _hidePreviewTimer = Timer(const Duration(milliseconds: 160), () {
+      if (!_isTriggerHovered && !_isPreviewHovered) {
+        _hidePreview();
+      }
+    });
+  }
+
+  Future<void> _openFullChapterFromPreview() async {
+    if (_isLaunching) {
+      return;
+    }
+    final uri = _buildReferenceUri(widget.reference);
+    if (uri == null) {
+      return;
+    }
+    final queryParameters = Map<String, String>.from(uri.queryParameters);
+    queryParameters.remove('verses');
+    final fullChapterUri =
+        Uri(path: uri.path, queryParameters: queryParameters);
+
+    setState(() {
+      _isLaunching = true;
+    });
+
+    try {
+      final opened = await openReferenceLink(fullChapterUri);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open reference.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open reference.')),
+        );
+      }
+    } finally {
+      _hidePreview();
+      if (mounted) {
+        setState(() {
+          _isLaunching = false;
+        });
+      }
     }
   }
 
@@ -2275,17 +2328,28 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         left: offset.dx,
         top: offset.dy,
         width: width,
-        child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(12),
-          color: theme.colorScheme.surface,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: height),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Directionality(
-                textDirection: widget.textDirection,
-                child: _buildPreviewContent(theme),
+        child: MouseRegion(
+          onEnter: (_) {
+            _cancelHideTimer();
+            _isPreviewHovered = true;
+          },
+          onExit: (_) {
+            _isPreviewHovered = false;
+            _schedulePreviewHide();
+          },
+          child: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            color: theme.colorScheme.surface,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: height),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Directionality(
+                  textDirection: widget.textDirection,
+                  child: _buildPreviewContent(theme),
+                ),
               ),
             ),
           ),
@@ -2306,6 +2370,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     );
     final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
     final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
+    final isArabic = _isArabicLanguage(widget.language);
+    final fullChapterLabel = isArabic ? 'قراءة الفصل كاملاً' : 'Read full chapter';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2336,7 +2402,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
                               children: [
                                 if (verse.number != null && verse.number! > 0)
                                   TextSpan(
-                                      text: '${verse.number}. ',
+                                      text: '${isArabic ? toArabicIndicDigits(verse.number!.toString()) : verse.number}. ',
                                       style: numberStyle),
                                 TextSpan(text: verse.text),
                               ],
@@ -2347,12 +2413,22 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
               ),
             ),
           ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: FilledButton.tonalIcon(
+            onPressed: _openFullChapterFromPreview,
+            icon: const Icon(Icons.menu_book_outlined),
+            label: Text(fullChapterLabel),
+          ),
+        ),
       ],
     );
   }
 
   @override
   void dispose() {
+    _cancelHideTimer();
     _hidePreview();
     super.dispose();
   }
@@ -2382,13 +2458,16 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         if (text.isEmpty) {
           return;
         }
+        _isTriggerHovered = true;
+        _cancelHideTimer();
         _updateHover(true);
         _showPreview();
         _loadPreview();
       },
       onExit: (_) {
+        _isTriggerHovered = false;
         _updateHover(false);
-        _hidePreview();
+        _schedulePreviewHide();
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
