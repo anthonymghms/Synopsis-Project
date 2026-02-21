@@ -2028,6 +2028,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isTriggerHovered = false;
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
+  final LayerLink _previewLayerLink = LayerLink();
 
   static final Map<String, _ReferencePreviewCache> _previewCache = {};
 
@@ -2213,24 +2214,40 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     return math.min(520, screenSize.height - 24).clamp(200, 520).toDouble();
   }
 
-  Offset _previewOffset(Rect target, Size screenSize, double width,
-      double height) {
+  _PreviewPlacement _previewPlacement(
+    Rect target,
+    Size screenSize,
+    double width,
+    double preferredHeight,
+  ) {
     const gutter = 8.0;
     const spacing = 12.0;
+    const minimumVisibleHeight = 120.0;
+
     final spaceRight = screenSize.width - target.right - spacing;
     final spaceLeft = target.left - spacing;
     final placeRight = spaceRight >= width || spaceRight >= spaceLeft;
 
-    final spaceBelow = screenSize.height - target.bottom - spacing;
-    final spaceAbove = target.top - spacing;
-    final placeBelow = spaceBelow >= height || spaceBelow >= spaceAbove;
+    final spaceBelow = screenSize.height - target.bottom - gutter;
+    final spaceAbove = target.top - gutter;
 
-    final dx = placeRight ? target.right + spacing : target.left - width - spacing;
-    final dy = placeBelow ? target.bottom + gutter : target.top - height - gutter;
+    // Keep the popup feeling attached to the hovered reference: prefer below
+    // whenever there is enough room for a usable hovercard.
+    final placeBelow = spaceBelow >= minimumVisibleHeight || spaceBelow > 0;
 
-    final clampedX = dx.clamp(gutter, screenSize.width - width - gutter);
-    final clampedY = dy.clamp(gutter, screenSize.height - height - gutter);
-    return Offset(clampedX.toDouble(), clampedY.toDouble());
+    final availableHeight = math.max(
+      placeBelow ? spaceBelow : spaceAbove,
+      minimumVisibleHeight,
+    );
+    final height = math.min(preferredHeight, availableHeight);
+
+    return _PreviewPlacement(
+      followerOffset: Offset(
+        placeRight ? target.width + spacing : -width - spacing,
+        placeBelow ? target.height + gutter : -height - gutter,
+      ),
+      maxHeight: height,
+    );
   }
 
   Future<void> _loadPreview() async {
@@ -2310,7 +2327,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     if (!widget.enableHoverPreview || _previewEntry != null) {
       return;
     }
-    final overlay = Overlay.of(context, rootOverlay: true);
+    final overlay = Overlay.of(context);
     if (overlay == null) {
       return;
     }
@@ -2322,35 +2339,45 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       final target = renderBox.localToGlobal(Offset.zero) & renderBox.size;
       final screenSize = MediaQuery.of(overlayContext).size;
       final width = _previewWidth(screenSize);
-      final height = _previewHeight(screenSize);
-      final offset = _previewOffset(target, screenSize, width, height);
+      final placement =
+          _previewPlacement(target, screenSize, width, _previewHeight(screenSize));
       final theme = Theme.of(overlayContext);
 
-      return Positioned(
-        left: offset.dx,
-        top: offset.dy,
-        width: width,
-        child: MouseRegion(
-          onEnter: (_) {
-            _cancelHideTimer();
-            _isPreviewHovered = true;
-          },
-          onExit: (_) {
-            _isPreviewHovered = false;
-            _schedulePreviewHide();
-          },
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(12),
-            clipBehavior: Clip.antiAlias,
-            color: theme.colorScheme.surface,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: height),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Directionality(
-                  textDirection: widget.textDirection,
-                  child: _buildPreviewContent(theme),
+      return Positioned.fill(
+        child: CompositedTransformFollower(
+          showWhenUnlinked: false,
+          link: _previewLayerLink,
+          targetAnchor: Alignment.topLeft,
+          followerAnchor: Alignment.topLeft,
+          offset: placement.followerOffset,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: width,
+              child: MouseRegion(
+                onEnter: (_) {
+                  _cancelHideTimer();
+                  _isPreviewHovered = true;
+                },
+                onExit: (_) {
+                  _isPreviewHovered = false;
+                  _schedulePreviewHide();
+                },
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  color: theme.colorScheme.surface,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Directionality(
+                        textDirection: widget.textDirection,
+                        child: _buildPreviewContent(theme),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -2475,24 +2502,38 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           _schedulePreviewHide();
         }
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: text.isEmpty ? null : _handleTap,
-        child: Align(
-          alignment: alignment,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Text(
-              formattedText,
-              style: _isHovered ? hoverStyle : baseStyle,
-              textAlign: widget.textAlign,
-              softWrap: true,
+      child: CompositedTransformTarget(
+        link: _previewLayerLink,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: text.isEmpty ? null : _handleTap,
+          child: Align(
+            alignment: alignment,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                formattedText,
+                style: _isHovered ? hoverStyle : baseStyle,
+                textAlign: widget.textAlign,
+                softWrap: true,
+              ),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+
+class _PreviewPlacement {
+  const _PreviewPlacement({
+    required this.followerOffset,
+    required this.maxHeight,
+  });
+
+  final Offset followerOffset;
+  final double maxHeight;
 }
 
 class _ReferencePreviewCache {
