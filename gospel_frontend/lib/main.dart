@@ -2213,24 +2213,34 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     return math.min(520, screenSize.height - 24).clamp(200, 520).toDouble();
   }
 
-  Offset _previewOffset(Rect target, Size screenSize, double width,
-      double height) {
+  _PreviewPlacement _previewPlacement(
+    Rect target,
+    Size screenSize,
+    double width,
+    double preferredHeight,
+  ) {
     const gutter = 8.0;
     const spacing = 12.0;
     final spaceRight = screenSize.width - target.right - spacing;
     final spaceLeft = target.left - spacing;
     final placeRight = spaceRight >= width || spaceRight >= spaceLeft;
 
-    final spaceBelow = screenSize.height - target.bottom - spacing;
-    final spaceAbove = target.top - spacing;
-    final placeBelow = spaceBelow >= height || spaceBelow >= spaceAbove;
+    final spaceBelow = screenSize.height - target.bottom - gutter;
+    final spaceAbove = target.top - gutter;
+    final placeBelow = spaceBelow >= spaceAbove;
+
+    final availableHeight = math.max(placeBelow ? spaceBelow : spaceAbove, 200.0);
+    final height = math.min(preferredHeight, availableHeight);
 
     final dx = placeRight ? target.right + spacing : target.left - width - spacing;
     final dy = placeBelow ? target.bottom + gutter : target.top - height - gutter;
 
     final clampedX = dx.clamp(gutter, screenSize.width - width - gutter);
     final clampedY = dy.clamp(gutter, screenSize.height - height - gutter);
-    return Offset(clampedX.toDouble(), clampedY.toDouble());
+    return _PreviewPlacement(
+      offset: Offset(clampedX.toDouble(), clampedY.toDouble()),
+      maxHeight: height,
+    );
   }
 
   Future<void> _loadPreview() async {
@@ -2322,13 +2332,13 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       final target = renderBox.localToGlobal(Offset.zero) & renderBox.size;
       final screenSize = MediaQuery.of(overlayContext).size;
       final width = _previewWidth(screenSize);
-      final height = _previewHeight(screenSize);
-      final offset = _previewOffset(target, screenSize, width, height);
+      final placement =
+          _previewPlacement(target, screenSize, width, _previewHeight(screenSize));
       final theme = Theme.of(overlayContext);
 
       return Positioned(
-        left: offset.dx,
-        top: offset.dy,
+        left: placement.offset.dx,
+        top: placement.offset.dy,
         width: width,
         child: MouseRegion(
           onEnter: (_) {
@@ -2345,7 +2355,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             clipBehavior: Clip.antiAlias,
             color: theme.colorScheme.surface,
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: height),
+              constraints: BoxConstraints(maxHeight: placement.maxHeight),
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Directionality(
@@ -2493,6 +2503,14 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       ),
     );
   }
+}
+
+
+class _PreviewPlacement {
+  const _PreviewPlacement({required this.offset, required this.maxHeight});
+
+  final Offset offset;
+  final double maxHeight;
 }
 
 class _ReferencePreviewCache {
