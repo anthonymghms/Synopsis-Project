@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'reference_link_opener.dart';
@@ -615,6 +616,13 @@ const Map<String, int> canonicalGospelsIndex = {
 
 const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
+const Map<String, int> gospelChapterCounts = {
+  'Matthew': 28,
+  'Mark': 16,
+  'Luke': 24,
+  'John': 21,
+};
+
 const Map<String, String> gospelNameSynonyms = {
   'mathew': 'Matthew',
   'matthew': 'Matthew',
@@ -752,6 +760,32 @@ String _combineBookAndReference(
   return '$trimmedBook $formattedReference';
 }
 
+class _VerseRange {
+  const _VerseRange(this.start, this.end);
+
+  final int start;
+  final int end;
+}
+
+_VerseRange? _parseVerseRange(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+  final firstSegment = trimmed.split(',').first.trim();
+  final match = RegExp(r'^(\d+)(?:\s*[-–]\s*(\d+))?$').firstMatch(firstSegment);
+  if (match == null) {
+    final single = int.tryParse(firstSegment);
+    return single == null ? null : _VerseRange(single, single);
+  }
+  final start = int.tryParse(match.group(1) ?? '');
+  final end = int.tryParse(match.group(2) ?? '') ?? start;
+  if (start == null || end == null) {
+    return null;
+  }
+  return start <= end ? _VerseRange(start, end) : _VerseRange(end, start);
+}
+
 int _compareBooks(String a, String b) {
   final indexA = _gospelIndex(a);
   final indexB = _gospelIndex(b);
@@ -830,6 +864,10 @@ class GospelApp extends StatelessWidget {
       final verses = uri.queryParameters['verses'] ?? '';
       final topicName = uri.queryParameters['topic'] ?? '';
       final label = uri.queryParameters['label'] ?? '';
+      final highlightStart =
+          int.tryParse(uri.queryParameters['highlightStart'] ?? '');
+      final highlightEnd = int.tryParse(uri.queryParameters['highlightEnd'] ?? '');
+      final openFullChapter = uri.queryParameters['fullChapter'] == '1';
 
       return MaterialPageRoute(
         settings: settings,
@@ -843,6 +881,9 @@ class GospelApp extends StatelessWidget {
             version: version,
             topicName: topicName,
             referenceLabelOverride: label,
+            highlightStart: highlightStart,
+            highlightEnd: highlightEnd,
+            openFullChapter: openFullChapter,
           ),
         ),
       );
@@ -1621,10 +1662,13 @@ class HarmonyTable extends StatefulWidget {
 }
 
 class _HarmonyTableState extends State<HarmonyTable> {
+  static const int _prefetchReferencesPerRow = 2;
   late final ScrollController _verticalController;
   late final ScrollController _headerHorizontalController;
   late final ScrollController _bodyHorizontalController;
   bool _isSyncingHorizontalScroll = false;
+  Timer? _prefetchTimer;
+  final Set<String> _scheduledPrefetchKeys = <String>{};
 
   @override
   void initState() {
@@ -1634,16 +1678,60 @@ class _HarmonyTableState extends State<HarmonyTable> {
     _bodyHorizontalController = ScrollController();
     _headerHorizontalController.addListener(_syncFromHeader);
     _bodyHorizontalController.addListener(_syncFromBody);
+    _schedulePrefetch();
+  }
+
+  @override
+  void didUpdateWidget(covariant HarmonyTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.topics != widget.topics ||
+        oldWidget.languageOption.apiLanguage != widget.languageOption.apiLanguage ||
+        oldWidget.apiVersion != widget.apiVersion) {
+      _schedulePrefetch();
+    }
   }
 
   @override
   void dispose() {
+    _prefetchTimer?.cancel();
     _verticalController.dispose();
     _headerHorizontalController.removeListener(_syncFromHeader);
     _bodyHorizontalController.removeListener(_syncFromBody);
     _headerHorizontalController.dispose();
     _bodyHorizontalController.dispose();
     super.dispose();
+  }
+
+  void _schedulePrefetch() {
+    _prefetchTimer?.cancel();
+    _prefetchTimer = Timer(const Duration(milliseconds: 200), _prefetchVisibleRows);
+  }
+
+  void _prefetchVisibleRows() {
+    final language = widget.languageOption.apiLanguage;
+    final version = widget.apiVersion;
+    for (final topic in widget.topics) {
+      final refs = topic.references
+          .where((ref) => ref.chapter > 0)
+          .take(_prefetchReferencesPerRow);
+      for (final ref in refs) {
+        final key = ReferenceHoverText.previewCacheKey(
+          reference: ref,
+          language: language,
+          version: version,
+        );
+        if (!_scheduledPrefetchKeys.add(key)) {
+          continue;
+        }
+        _ReferencePrefetchQueue.instance.add(() async {
+          await ReferenceHoverText.prefetchReference(
+            reference: ref,
+            language: language,
+            version: version,
+          );
+        });
+      }
+    }
   }
 
   void resetScroll() {
@@ -2015,6 +2103,91 @@ class ReferenceHoverText extends StatefulWidget {
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
 }
 
+class _ReferencePreviewResult {
+  const _ReferencePreviewResult({required this.verses, this.error});
+
+  final List<_VerseLine> verses;
+  final String? error;
+}
+
+class _ReferencePreviewStore {
+  _ReferencePreviewStore._();
+
+  static final _ReferencePreviewStore instance = _ReferencePreviewStore._();
+  static const int _maxEntries = 200;
+
+  final LinkedHashMap<String, _ReferencePreviewResult> _cache =
+      LinkedHashMap<String, _ReferencePreviewResult>();
+  final Map<String, Future<_ReferencePreviewResult>> _inFlight =
+      <String, Future<_ReferencePreviewResult>>{};
+
+  _ReferencePreviewResult? get(String key) {
+    final value = _cache.remove(key);
+    if (value != null) {
+      _cache[key] = value;
+    }
+    return value;
+  }
+
+  Future<_ReferencePreviewResult> fetch(
+    String key,
+    Future<_ReferencePreviewResult> Function() loader,
+  ) {
+    final cached = get(key);
+    if (cached != null) {
+      return Future<_ReferencePreviewResult>.value(cached);
+    }
+    final existing = _inFlight[key];
+    if (existing != null) {
+      return existing;
+    }
+    final future = loader().then((value) {
+      _save(key, value);
+      _inFlight.remove(key);
+      return value;
+    }).catchError((error) {
+      _inFlight.remove(key);
+      throw error;
+    });
+    _inFlight[key] = future;
+    return future;
+  }
+
+  void _save(String key, _ReferencePreviewResult value) {
+    _cache.remove(key);
+    _cache[key] = value;
+    while (_cache.length > _maxEntries) {
+      _cache.remove(_cache.keys.first);
+    }
+  }
+}
+
+class _ReferencePrefetchQueue {
+  _ReferencePrefetchQueue._();
+
+  static final _ReferencePrefetchQueue instance = _ReferencePrefetchQueue._();
+  static const int _concurrency = 5;
+
+  final Queue<Future<void> Function()> _queue = Queue<Future<void> Function()>();
+  int _active = 0;
+
+  void add(Future<void> Function() task) {
+    _queue.add(task);
+    _drain();
+  }
+
+  void _drain() {
+    while (_active < _concurrency && _queue.isNotEmpty) {
+      final task = _queue.removeFirst();
+      _active++;
+      task().catchError((_) {}).whenComplete(() {
+        _active--;
+        _drain();
+      });
+    }
+  }
+}
+
 class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isHovered = false;
   bool _isLaunching = false;
@@ -2027,7 +2200,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
 
-  static final Map<String, _ReferencePreviewCache> _previewCache = {};
+  static final _ReferencePreviewStore _previewStore =
+      _ReferencePreviewStore.instance;
 
   AlignmentGeometry _alignmentForTextAlign(TextAlign align) {
     switch (align) {
@@ -2057,6 +2231,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
 
     final queryParameters = <String, String>{
       'book': bookParam,
+      'bookId': reference.bookId.trim(),
       'bookDisplay': displayBook,
       'chapter': reference.chapter.toString(),
       'language': widget.language,
@@ -2140,6 +2315,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       return;
     }
     final queryParameters = Map<String, String>.from(uri.queryParameters);
+    final range = _parseVerseRange(widget.reference.verses);
+    if (range != null) {
+      queryParameters['highlightStart'] = range.start.toString();
+      queryParameters['highlightEnd'] = range.end.toString();
+    }
+    queryParameters['fullChapter'] = '1';
     queryParameters.remove('verses');
     final fullChapterUri =
         Uri(path: uri.path, queryParameters: queryParameters);
@@ -2176,6 +2357,56 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         ? reference.bookId.trim()
         : reference.book.trim();
     return '${widget.language}|${widget.version}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  static String previewCacheKey({
+    required GospelReference reference,
+    required String language,
+    required String version,
+  }) {
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    return '$language|$version|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  static Future<void> prefetchReference({
+    required GospelReference reference,
+    required String language,
+    required String version,
+  }) async {
+    final bookParam = reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+    if (bookParam.isEmpty || reference.chapter <= 0) {
+      return;
+    }
+    final verseParam = reference.verses.trim().isEmpty ? '1' : reference.verses.trim();
+    final key = previewCacheKey(
+      reference: reference,
+      language: language,
+      version: version,
+    );
+    await _ReferencePreviewStore.instance.fetch(key, () async {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+        'language': language,
+        'version': version,
+        'book': bookParam,
+        'chapter': reference.chapter.toString(),
+        'verse': verseParam,
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        return const _ReferencePreviewResult(
+          verses: <_VerseLine>[],
+          error: 'Failed to load preview.',
+        );
+      }
+      return _ReferencePreviewResult(
+        verses: _parseVerseLines(response.body),
+        error: null,
+      );
+    });
   }
 
   String _previewHeading() {
@@ -2244,7 +2475,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     }
 
     final cacheKey = _previewCacheKey(reference);
-    final cached = _previewCache[cacheKey];
+    final cached = _previewStore.get(cacheKey);
     if (cached != null) {
       setState(() {
         _previewLoaded = true;
@@ -2266,28 +2497,35 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         : reference.verses.trim();
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
-        'language': widget.language,
-        'version': widget.version,
-        'book': bookParam,
-        'chapter': reference.chapter.toString(),
-        'verse': verseParam,
+      final result = await _previewStore.fetch(cacheKey, () async {
+        final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+          'language': widget.language,
+          'version': widget.version,
+          'book': bookParam,
+          'chapter': reference.chapter.toString(),
+          'verse': verseParam,
+        });
+        final response = await http.get(uri);
+        if (response.statusCode != 200) {
+          return const _ReferencePreviewResult(
+            verses: <_VerseLine>[],
+            error: 'Failed to load preview.',
+          );
+        }
+        return _ReferencePreviewResult(
+          verses: _parseVerseLines(response.body),
+          error: null,
+        );
       });
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
-      final verses = _parseVerseLines(response.body);
       if (!mounted) {
         return;
       }
       setState(() {
         _previewLoaded = true;
         _loadingPreview = false;
-        _previewVerses = verses;
+        _previewVerses = result.verses;
+        _previewError = result.error;
       });
-      _previewCache[cacheKey] =
-          _ReferencePreviewCache(verses: verses, error: null);
       _previewEntry?.markNeedsBuild();
     } catch (e) {
       if (!mounted) {
@@ -2298,8 +2536,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _loadingPreview = false;
         _previewError = 'Failed to load preview.';
       });
-      _previewCache[cacheKey] =
-          _ReferencePreviewCache(verses: const <_VerseLine>[], error: _previewError);
       _previewEntry?.markNeedsBuild();
     }
   }
@@ -2489,13 +2725,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 }
 
-class _ReferencePreviewCache {
-  const _ReferencePreviewCache({required this.verses, this.error});
-
-  final List<_VerseLine> verses;
-  final String? error;
-}
-
 class ReferenceViewerPage extends StatefulWidget {
   const ReferenceViewerPage({
     super.key,
@@ -2507,6 +2736,9 @@ class ReferenceViewerPage extends StatefulWidget {
     required this.version,
     this.topicName = '',
     this.referenceLabelOverride = '',
+    this.highlightStart,
+    this.highlightEnd,
+    this.openFullChapter = false,
   });
 
   final String displayBook;
@@ -2517,6 +2749,9 @@ class ReferenceViewerPage extends StatefulWidget {
   final String version;
   final String topicName;
   final String referenceLabelOverride;
+  final int? highlightStart;
+  final int? highlightEnd;
+  final bool openFullChapter;
 
   @override
   State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
@@ -2536,6 +2771,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _interlinearView = false;
   double _textScale = 1.0;
   late String _selectedVersion;
+  late String _currentBookParam;
+  late String _currentDisplayBook;
+  late int _currentChapter;
+  late String _currentVerses;
+  int? _highlightStart;
+  int? _highlightEnd;
+  final ScrollController _chapterScrollController = ScrollController();
   final List<_ComparisonPassage> _comparisons = [];
 
   LanguageOption get _languageOption {
@@ -2552,8 +2794,28 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     LanguageSelectionController.instance.update(_languageOption.code);
     _selectedVersion =
         _sanitizeVersionForLanguage(_languageOption, widget.version);
+    _currentBookParam = _bookParamFrom(widget.bookId, widget.displayBook);
+    _currentDisplayBook = widget.displayBook;
+    _currentChapter = widget.chapter;
+    _currentVerses = widget.verses;
+    final parsedFromVerses = _parseVerseRange(widget.verses);
+    _highlightStart = widget.highlightStart ?? parsedFromVerses?.start;
+    _highlightEnd = widget.highlightEnd ?? parsedFromVerses?.end;
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _loadReference();
+    if (widget.openFullChapter) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadFullChapter();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _chapterScrollController.dispose();
+    super.dispose();
   }
 
   String get _baseVersion {
@@ -2593,11 +2855,15 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   String get _bookParameter {
-    final trimmedBookId = widget.bookId.trim();
+    return _currentBookParam;
+  }
+
+  String _bookParamFrom(String bookId, String displayBook) {
+    final trimmedBookId = bookId.trim();
     if (trimmedBookId.isNotEmpty) {
       return trimmedBookId;
     }
-    return widget.displayBook.trim();
+    return displayBook.trim();
   }
 
   String get _referenceHeading {
@@ -2617,19 +2883,19 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (book.isEmpty) {
       return 'Reference';
     }
-    if (widget.chapter <= 0) {
+    if (_currentChapter <= 0) {
       return book;
     }
-    final verses = widget.verses.trim();
+    final verses = _currentVerses.trim();
     final reference = verses.isEmpty
-        ? '${widget.chapter}'
-        : '${widget.chapter}:$verses';
+        ? '$_currentChapter'
+        : '$_currentChapter:$verses';
     return _combineBookAndReference(book, reference, direction,
         isArabic: _isArabicLanguage(widget.language));
   }
 
   String get _displayBookLabel {
-    final book = widget.displayBook.trim();
+    final book = _currentDisplayBook.trim();
     if (book.isEmpty) {
       return book;
     }
@@ -2664,7 +2930,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   Future<void> _loadReference() async {
     final bookParam = _bookParameter;
-    if (widget.chapter <= 0 || bookParam.isEmpty) {
+    if (_currentChapter <= 0 || bookParam.isEmpty) {
       setState(() {
         _error = 'This reference is missing details needed to load the text.';
         _loadingReference = false;
@@ -2672,7 +2938,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return;
     }
 
-    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
+    final verseParam = _currentVerses.trim().isEmpty ? '1' : _currentVerses.trim();
 
     setState(() {
       _loadingReference = true;
@@ -2684,7 +2950,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         'language': widget.language,
         'version': _activeVersion,
         'book': bookParam,
-        'chapter': widget.chapter.toString(),
+        'chapter': _currentChapter.toString(),
         'verse': verseParam,
       });
       final response = await http.get(uri);
@@ -2715,7 +2981,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return;
     }
     final bookParam = _bookParameter;
-    if (widget.chapter <= 0 || bookParam.isEmpty) {
+    if (_currentChapter <= 0 || bookParam.isEmpty) {
       setState(() {
         _chapterError = 'Unable to determine which chapter to load.';
       });
@@ -2732,7 +2998,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         'language': widget.language,
         'version': _activeVersion,
         'book': bookParam,
-        'chapter': widget.chapter.toString(),
+        'chapter': _currentChapter.toString(),
       });
       final response = await http.get(uri);
       if (response.statusCode != 200) {
@@ -2746,6 +3012,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _chapterVerses = verses;
         _loadingChapter = false;
       });
+      _scrollToHighlightedVerse();
     } catch (e) {
       if (!mounted) {
         return;
@@ -2755,6 +3022,79 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _loadingChapter = false;
       });
     }
+  }
+
+  Uri _buildReferenceRouteUri({
+    required String bookParam,
+    required String displayBook,
+    required int chapter,
+    String verses = '',
+    bool openFullChapter = false,
+    int? highlightStart,
+    int? highlightEnd,
+  }) {
+    final query = <String, String>{
+      'book': bookParam,
+      'bookId': bookParam,
+      'bookDisplay': displayBook,
+      'chapter': chapter.toString(),
+      'language': widget.language,
+      'version': _activeVersion,
+      if (widget.topicName.trim().isNotEmpty) 'topic': widget.topicName.trim(),
+      if (widget.referenceLabelOverride.trim().isNotEmpty)
+        'label': widget.referenceLabelOverride.trim(),
+      if (verses.trim().isNotEmpty) 'verses': verses.trim(),
+      if (openFullChapter) 'fullChapter': '1',
+      if (highlightStart != null) 'highlightStart': highlightStart.toString(),
+      if (highlightEnd != null) 'highlightEnd': highlightEnd.toString(),
+    };
+    return Uri(path: '/reference', queryParameters: query);
+  }
+
+  Future<void> _navigateToUri(Uri uri) async {
+    if (!mounted) return;
+    await Navigator.of(context).pushReplacementNamed(uri.toString());
+  }
+
+  Future<void> _openFullChapterViewFromPage() async {
+    final range = _parseVerseRange(_currentVerses);
+    final uri = _buildReferenceRouteUri(
+      bookParam: _currentBookParam,
+      displayBook: _currentDisplayBook,
+      chapter: _currentChapter,
+      openFullChapter: true,
+      highlightStart: range?.start,
+      highlightEnd: range?.end,
+    );
+    await _navigateToUri(uri);
+  }
+
+  void _scrollToHighlightedVerse() {
+    final start = _highlightStart;
+    if (start == null || _chapterVerses == null || _chapterVerses!.isEmpty) {
+      return;
+    }
+    final index = _chapterVerses!.indexWhere((verse) => verse.number == start);
+    if (index < 0) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_chapterScrollController.hasClients) {
+        return;
+      }
+      const estimatedVerseHeight = 64.0;
+      final target = (index * estimatedVerseHeight)
+          .clamp(
+            _chapterScrollController.position.minScrollExtent,
+            _chapterScrollController.position.maxScrollExtent,
+          )
+          .toDouble();
+      _chapterScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _toggleReferenceDiacritics() {
@@ -2811,13 +3151,30 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme) {
+    final verseNumber = verse.number;
+    final isHighlighted = verseNumber != null &&
+        _highlightStart != null &&
+        _highlightEnd != null &&
+        verseNumber >= _highlightStart! &&
+        verseNumber <= _highlightEnd!;
     final TextStyle baseStyle =
         theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
             const TextStyle(fontSize: 16, height: 1.6);
     final TextStyle numberStyle =
         baseStyle.copyWith(fontWeight: FontWeight.w600);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    return Container(
+      key: verseNumber != null ? ValueKey<String>('verse-$verseNumber') : null,
+      decoration: isHighlighted
+          ? BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: BorderDirectional(
+                start: BorderSide(color: theme.colorScheme.primary, width: 3),
+              ),
+            )
+          : null,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: RichText(
         textScaler: TextScaler.linear(_textScale),
         textAlign: TextAlign.start,
@@ -2833,8 +3190,133 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  bool get _canGoPreviousBook => _bookOrderIndex > 0;
+  bool get _canGoNextBook =>
+      _bookOrderIndex >= 0 && _bookOrderIndex < orderedGospels.length - 1;
+  bool get _canGoPreviousChapter => _currentChapter > 1;
+  bool get _canGoNextChapter {
+    final count = gospelChapterCounts[_normalizedCurrentBook] ?? 0;
+    return count > 0 && _currentChapter < count;
+  }
+
+  String get _normalizedCurrentBook => _normalizeGospelName(_currentBookParam);
+  int get _bookOrderIndex => orderedGospels.indexOf(_normalizedCurrentBook);
+
+  String _chapterLabel() {
+    final chapterNumber = _languageOption.code == 'arabic'
+        ? toArabicIndicDigits(_currentChapter.toString())
+        : _currentChapter.toString();
+    final chapterWord = _languageOption.code == 'arabic' ? 'الفصل' : 'Chapter';
+    return '$_displayBookLabel — $chapterWord $chapterNumber';
+  }
+
+  void _navigateWithinReference({
+    required String bookParam,
+    required String displayBook,
+    required int chapter,
+  }) {
+    if (chapter <= 0 || bookParam.trim().isEmpty) {
+      return;
+    }
+    final uri = _buildReferenceRouteUri(
+      bookParam: bookParam,
+      displayBook: displayBook,
+      chapter: chapter,
+      openFullChapter: true,
+    );
+    _navigateToUri(uri);
+  }
+
+  void _goPreviousBook() {
+    if (!_canGoPreviousBook) return;
+    final targetBook = orderedGospels[_bookOrderIndex - 1];
+    final maxChapter = gospelChapterCounts[targetBook] ?? 1;
+    final targetChapter = _currentChapter.clamp(1, maxChapter);
+    _navigateWithinReference(
+        bookParam: targetBook,
+        displayBook: targetBook,
+        chapter: targetChapter);
+  }
+
+  void _goNextBook() {
+    if (!_canGoNextBook) return;
+    final targetBook = orderedGospels[_bookOrderIndex + 1];
+    final maxChapter = gospelChapterCounts[targetBook] ?? 1;
+    final targetChapter = _currentChapter.clamp(1, maxChapter);
+    _navigateWithinReference(
+        bookParam: targetBook,
+        displayBook: targetBook,
+        chapter: targetChapter);
+  }
+
+  void _goPreviousChapter() {
+    if (!_canGoPreviousChapter) return;
+    _navigateWithinReference(
+      bookParam: _currentBookParam,
+      displayBook: _currentDisplayBook,
+      chapter: _currentChapter - 1,
+    );
+  }
+
+  void _goNextChapter() {
+    if (!_canGoNextChapter) return;
+    _navigateWithinReference(
+      bookParam: _currentBookParam,
+      displayBook: _currentDisplayBook,
+      chapter: _currentChapter + 1,
+    );
+  }
+
+  Widget _buildChapterNavigationBar(ThemeData theme) {
+    final textColor = theme.colorScheme.onSurface;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _canGoPreviousBook ? _goPreviousBook : null,
+            tooltip: 'Previous book',
+            icon: const Icon(Icons.keyboard_double_arrow_left),
+          ),
+          IconButton(
+            onPressed: _canGoPreviousChapter ? _goPreviousChapter : null,
+            tooltip: 'Previous chapter',
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Expanded(
+            child: Semantics(
+              header: true,
+              child: Text(
+                _chapterLabel(),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: textColor,
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _canGoNextChapter ? _goNextChapter : null,
+            tooltip: 'Next chapter',
+            icon: const Icon(Icons.chevron_right),
+          ),
+          IconButton(
+            onPressed: _canGoNextBook ? _goNextBook : null,
+            tooltip: 'Next book',
+            icon: const Icon(Icons.keyboard_double_arrow_right),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChapterSection(ThemeData theme) {
-    if (widget.chapter <= 0) {
+    if (_currentChapter <= 0) {
       return const SizedBox.shrink();
     }
 
@@ -2843,6 +3325,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildChapterNavigationBar(theme),
+          const SizedBox(height: 12),
           Text(
             'Full Chapter',
             style: theme.textTheme.titleMedium
@@ -2857,9 +3341,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               textAlign: TextAlign.start,
             )
           else
-            ...verses
-                .map((verse) => _buildVerseParagraph(verse, theme))
-                .toList(),
+            SizedBox(
+              height: 420,
+              child: ListView.builder(
+                controller: _chapterScrollController,
+                itemCount: verses.length,
+                itemBuilder: (context, index) => _buildVerseParagraph(verses[index], theme),
+              ),
+            ),
         ],
       );
     }
@@ -2874,8 +3363,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _buildChapterNavigationBar(theme),
+        const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: _loadFullChapter,
+          onPressed: _openFullChapterViewFromPage,
           icon: const Icon(Icons.menu_book_outlined),
           label: const Text('Read full chapter'),
         ),
@@ -3309,13 +3800,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   Future<void> _loadComparisonPassage(_ComparisonPassage entry) async {
     final bookParam = _bookParameter;
-    if (widget.chapter <= 0 || bookParam.isEmpty) {
+    if (_currentChapter <= 0 || bookParam.isEmpty) {
       setState(() {
         entry.error = 'This reference is missing details needed to load the text.';
       });
       return;
     }
-    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
+    final verseParam = _currentVerses.trim().isEmpty ? '1' : _currentVerses.trim();
 
     setState(() {
       entry.loading = true;
@@ -3329,7 +3820,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         'version': _comparisonVersion(entry.language, entry.version,
             withDiacritics: entry.withDiacritics),
         'book': bookParam,
-        'chapter': widget.chapter.toString(),
+        'chapter': _currentChapter.toString(),
         'verse': verseParam,
       });
       final response = await http.get(uri);
