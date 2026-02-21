@@ -2028,6 +2028,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isTriggerHovered = false;
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
+  final LayerLink _previewLayerLink = LayerLink();
 
   static final Map<String, _ReferencePreviewCache> _previewCache = {};
 
@@ -2221,24 +2222,28 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   ) {
     const gutter = 8.0;
     const spacing = 12.0;
+    const minimumVisibleHeight = 120.0;
+
     final spaceRight = screenSize.width - target.right - spacing;
     final spaceLeft = target.left - spacing;
     final placeRight = spaceRight >= width || spaceRight >= spaceLeft;
 
     final spaceBelow = screenSize.height - target.bottom - gutter;
     final spaceAbove = target.top - gutter;
-    final placeBelow = spaceBelow >= spaceAbove;
+    final placeBelow =
+        spaceBelow >= minimumVisibleHeight || spaceBelow >= spaceAbove;
 
-    final availableHeight = math.max(placeBelow ? spaceBelow : spaceAbove, 200.0);
+    final availableHeight = math.max(
+      placeBelow ? spaceBelow : spaceAbove,
+      minimumVisibleHeight,
+    );
     final height = math.min(preferredHeight, availableHeight);
 
-    final dx = placeRight ? target.right + spacing : target.left - width - spacing;
-    final dy = placeBelow ? target.bottom + gutter : target.top - height - gutter;
-
-    final clampedX = dx.clamp(gutter, screenSize.width - width - gutter);
-    final clampedY = dy.clamp(gutter, screenSize.height - height - gutter);
     return _PreviewPlacement(
-      offset: Offset(clampedX.toDouble(), clampedY.toDouble()),
+      followerOffset: Offset(
+        placeRight ? target.width + spacing : -width - spacing,
+        placeBelow ? target.height + gutter : -height - gutter,
+      ),
       maxHeight: height,
     );
   }
@@ -2336,31 +2341,41 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           _previewPlacement(target, screenSize, width, _previewHeight(screenSize));
       final theme = Theme.of(overlayContext);
 
-      return Positioned(
-        left: placement.offset.dx,
-        top: placement.offset.dy,
-        width: width,
-        child: MouseRegion(
-          onEnter: (_) {
-            _cancelHideTimer();
-            _isPreviewHovered = true;
-          },
-          onExit: (_) {
-            _isPreviewHovered = false;
-            _schedulePreviewHide();
-          },
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(12),
-            clipBehavior: Clip.antiAlias,
-            color: theme.colorScheme.surface,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: placement.maxHeight),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Directionality(
-                  textDirection: widget.textDirection,
-                  child: _buildPreviewContent(theme),
+      return Positioned.fill(
+        child: CompositedTransformFollower(
+          showWhenUnlinked: false,
+          link: _previewLayerLink,
+          targetAnchor: Alignment.topLeft,
+          followerAnchor: Alignment.topLeft,
+          offset: placement.followerOffset,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: width,
+              child: MouseRegion(
+                onEnter: (_) {
+                  _cancelHideTimer();
+                  _isPreviewHovered = true;
+                },
+                onExit: (_) {
+                  _isPreviewHovered = false;
+                  _schedulePreviewHide();
+                },
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  color: theme.colorScheme.surface,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Directionality(
+                        textDirection: widget.textDirection,
+                        child: _buildPreviewContent(theme),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -2485,18 +2500,21 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           _schedulePreviewHide();
         }
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: text.isEmpty ? null : _handleTap,
-        child: Align(
-          alignment: alignment,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Text(
-              formattedText,
-              style: _isHovered ? hoverStyle : baseStyle,
-              textAlign: widget.textAlign,
-              softWrap: true,
+      child: CompositedTransformTarget(
+        link: _previewLayerLink,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: text.isEmpty ? null : _handleTap,
+          child: Align(
+            alignment: alignment,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                formattedText,
+                style: _isHovered ? hoverStyle : baseStyle,
+                textAlign: widget.textAlign,
+                softWrap: true,
+              ),
             ),
           ),
         ),
@@ -2507,9 +2525,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
 
 
 class _PreviewPlacement {
-  const _PreviewPlacement({required this.offset, required this.maxHeight});
+  const _PreviewPlacement({
+    required this.followerOffset,
+    required this.maxHeight,
+  });
 
-  final Offset offset;
+  final Offset followerOffset;
   final double maxHeight;
 }
 
