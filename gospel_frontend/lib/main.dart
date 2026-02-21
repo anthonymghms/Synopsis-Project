@@ -1715,7 +1715,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
           .where((ref) => ref.chapter > 0)
           .take(_prefetchReferencesPerRow);
       for (final ref in refs) {
-        final key = ReferenceHoverText.previewCacheKey(
+        final key = _ReferenceHoverTextState.previewCacheKey(
           reference: ref,
           language: language,
           version: version,
@@ -1724,7 +1724,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
           continue;
         }
         _ReferencePrefetchQueue.instance.add(() async {
-          await ReferenceHoverText.prefetchReference(
+          await _ReferenceHoverTextState.prefetchReference(
             reference: ref,
             language: language,
             version: version,
