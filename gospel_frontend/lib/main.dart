@@ -1999,6 +1999,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.version = defaultVersion,
     this.tooltipMessage = 'Click to view more',
     this.labelOverride = '',
+    this.enableHoverPreview = true,
   });
 
   final GospelReference reference;
@@ -2010,6 +2011,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String version;
   final String tooltipMessage;
   final String labelOverride;
+  final bool enableHoverPreview;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -2232,7 +2234,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   Future<void> _loadPreview() async {
-    if (_loadingPreview || _previewLoaded) {
+    if (!widget.enableHoverPreview || _loadingPreview || _previewLoaded) {
       return;
     }
     final reference = widget.reference;
@@ -2305,7 +2307,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   }
 
   void _showPreview() {
-    if (_previewEntry != null) {
+    if (!widget.enableHoverPreview || _previewEntry != null) {
       return;
     }
     final overlay = Overlay.of(context, rootOverlay: true);
@@ -2461,13 +2463,17 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
         _isTriggerHovered = true;
         _cancelHideTimer();
         _updateHover(true);
-        _showPreview();
-        _loadPreview();
+        if (widget.enableHoverPreview) {
+          _showPreview();
+          _loadPreview();
+        }
       },
       onExit: (_) {
         _isTriggerHovered = false;
         _updateHover(false);
-        _schedulePreviewHide();
+        if (widget.enableHoverPreview) {
+          _schedulePreviewHide();
+        }
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -3046,12 +3052,15 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     for (final entry in _comparisons) {
       addSelection(entry.language, entry.version);
     }
-    addSelection(mainLanguage, mainVersion);
 
     List<_VersionChoice> buildChoices(LanguageOption language) {
       final choices = <String, _VersionChoice>{};
       for (final version in _selectableVersions(language)) {
         final sanitized = _sanitizeVersionForLanguage(language, version.id);
+        if (_isSameTranslation(
+            language, sanitized, mainLanguage, mainVersion)) {
+          continue;
+        }
         choices[_versionIdentityKey(language, sanitized)] = _VersionChoice(
           version: sanitized,
           label: version.label,
@@ -3071,11 +3080,18 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return ordered;
     }
 
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
       builder: (context) {
-        return SafeArea(
-          child: StatefulBuilder(
+        return Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: math.min(720, MediaQuery.of(context).size.width * 0.92),
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: StatefulBuilder(
             builder: (context, setModalState) {
               final currentSelections = selectedByLanguage.putIfAbsent(
                 selectedLanguage.code,
@@ -3098,18 +3114,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                             child: ListView(
                               shrinkWrap: true,
                               children: choices.map((choice) {
-                                final isMain = _isSameTranslation(
-                                    selectedLanguage,
-                                    choice.version,
-                                    mainLanguage,
-                                    mainVersion);
-                                final isSelected = currentSelections
-                                    .contains(choice.version);
+                                final isSelected =
+                                    currentSelections.contains(choice.version);
                                 return CheckboxListTile(
-                                  value: isMain ? true : isSelected,
-                                  onChanged: isMain
-                                      ? null
-                                      : (value) {
+                                  value: isSelected,
+                                  onChanged: (value) {
                                           setDialogState(() {
                                             if (value == true) {
                                               currentSelections
@@ -3122,9 +3131,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                                           setModalState(() {});
                                         },
                                   title: Text(choice.label),
-                                  subtitle: isMain
-                                      ? const Text('Main translation')
-                                      : null,
                                   controlAffinity:
                                       ListTileControlAffinity.leading,
                                 );
@@ -3145,16 +3151,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               }
 
               return Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
                       'Add comparison translation',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     DropdownButtonFormField<LanguageOption>(
                       value: selectedLanguage,
                       decoration: const InputDecoration(labelText: 'Language'),
@@ -3174,64 +3180,64 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    InkWell(
-                      onTap: openVersionSelector,
-                      child: InputDecorator(
-                        decoration:
-                            const InputDecoration(labelText: 'Versions'),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: currentSelections.isEmpty
-                                    ? [
-                                        Text(
-                                          'Select versions',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
-                                        ),
-                                      ]
-                                    : currentSelections.map((version) {
-                                        final label = _versionLabel(
-                                            selectedLanguage.code, version);
-                                        final isMain = _isSameTranslation(
-                                            selectedLanguage,
-                                            version,
-                                            mainLanguage,
-                                            mainVersion);
-                                        return InputChip(
-                                          label: Text(label),
-                                          onDeleted: isMain
-                                              ? null
-                                              : () {
-                                                  setModalState(() {
-                                                    currentSelections
-                                                        .remove(version);
-                                                  });
-                                                },
-                                        );
-                                      }).toList(),
-                              ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: InkWell(
+                          onTap: openVersionSelector,
+                          child: InputDecorator(
+                            decoration:
+                                const InputDecoration(labelText: 'Versions'),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    children: currentSelections.isEmpty
+                                        ? [
+                                            Text(
+                                              'Select versions',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                            ),
+                                          ]
+                                        : currentSelections.map((version) {
+                                            final label = _versionLabel(
+                                                selectedLanguage.code, version);
+                                            return InputChip(
+                                              label: Text(label),
+                                              onDeleted: () {
+                                                setModalState(() {
+                                                  currentSelections
+                                                      .remove(version);
+                                                });
+                                              },
+                                            );
+                                          }).toList(),
+                                  ),
+                                ),
+                                const Icon(Icons.arrow_drop_down),
+                              ],
                             ),
-                            const Icon(Icons.arrow_drop_down),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: () {
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        FilledButton(
+                          onPressed: () {
                         Navigator.of(context).pop();
                         final desired = <String>{};
-                        selectedByLanguage.forEach((code, versions) {
+                            selectedByLanguage.forEach((code, versions) {
                           final language = _supportedLanguages.firstWhere(
                             (option) => option.code == code,
                             orElse: () => mainLanguage,
@@ -3247,7 +3253,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         });
 
                         final existing = List<_ComparisonPassage>.from(_comparisons);
-                        setState(() {
+                            setState(() {
                           _comparisons.removeWhere((entry) {
                             final key =
                                 _comparisonKey(entry.language, entry.version);
@@ -3271,8 +3277,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                           );
                           _addComparison(language, parts[1]);
                         }
-                      },
-                      child: const Text('Add translation'),
+                          },
+                          child: const Text('Done'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -4357,11 +4365,17 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     LanguageOption selectedLanguage = _languageOption;
     String selectedVersion = _activeVersion;
 
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
       builder: (context) {
-        return SafeArea(
-          child: StatefulBuilder(
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: math.min(720, MediaQuery.of(context).size.width * 0.92),
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: StatefulBuilder(
             builder: (context, setModalState) {
               final versions = _selectableVersions(selectedLanguage);
               if (selectedVersion.isEmpty && versions.isNotEmpty) {
@@ -4494,12 +4508,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         addSelection(entry.language, entry.version);
       }
     }
-    addSelection(mainLanguage, mainVersion);
 
     List<_VersionChoice> buildChoices(LanguageOption language) {
       final choices = <String, _VersionChoice>{};
       for (final version in _selectableVersions(language)) {
         final sanitized = _sanitizeVersionForLanguage(language, version.id);
+        if (_isSameTranslation(
+            language, sanitized, mainLanguage, mainVersion)) {
+          continue;
+        }
         choices[_versionIdentityKey(language, sanitized)] = _VersionChoice(
           version: sanitized,
           label: version.label,
@@ -4519,11 +4536,17 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       return ordered;
     }
 
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
       builder: (context) {
-        return SafeArea(
-          child: StatefulBuilder(
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: math.min(720, MediaQuery.of(context).size.width * 0.92),
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: StatefulBuilder(
             builder: (context, setModalState) {
               final currentSelections = selectedByLanguage.putIfAbsent(
                 selectedLanguage.code,
@@ -4546,18 +4569,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                             child: ListView(
                               shrinkWrap: true,
                               children: choices.map((choice) {
-                                final isMain = _isSameTranslation(
-                                    selectedLanguage,
-                                    choice.version,
-                                    mainLanguage,
-                                    mainVersion);
-                                final isSelected = currentSelections
-                                    .contains(choice.version);
+                                final isSelected =
+                                    currentSelections.contains(choice.version);
                                 return CheckboxListTile(
-                                  value: isMain ? true : isSelected,
-                                  onChanged: isMain
-                                      ? null
-                                      : (value) {
+                                  value: isSelected,
+                                  onChanged: (value) {
                                           setDialogState(() {
                                             if (value == true) {
                                               currentSelections
@@ -4570,9 +4586,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                           setModalState(() {});
                                         },
                                   title: Text(choice.label),
-                                  subtitle: isMain
-                                      ? const Text('Main translation')
-                                      : null,
                                   controlAffinity:
                                       ListTileControlAffinity.leading,
                                 );
@@ -4593,16 +4606,16 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               }
 
               return Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
                       'Add comparison translation',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     DropdownButtonFormField<LanguageOption>(
                       value: selectedLanguage,
                       decoration: const InputDecoration(labelText: 'Language'),
@@ -4622,120 +4635,122 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    InkWell(
-                      onTap: openVersionSelector,
-                      child: InputDecorator(
-                        decoration:
-                            const InputDecoration(labelText: 'Versions'),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: currentSelections.isEmpty
-                                    ? [
-                                        Text(
-                                          'Select versions',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
-                                        ),
-                                      ]
-                                    : currentSelections.map((version) {
-                                        final label = _versionLabel(
-                                            selectedLanguage.code, version);
-                                        final isMain = _isSameTranslation(
-                                            selectedLanguage,
-                                            version,
-                                            mainLanguage,
-                                            mainVersion);
-                                        return InputChip(
-                                          label: Text(label),
-                                          onDeleted: isMain
-                                              ? null
-                                              : () {
-                                                  setModalState(() {
-                                                    currentSelections
-                                                        .remove(version);
-                                                  });
-                                                },
-                                        );
-                                      }).toList(),
-                              ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: InkWell(
+                          onTap: openVersionSelector,
+                          child: InputDecorator(
+                            decoration:
+                                const InputDecoration(labelText: 'Versions'),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    children: currentSelections.isEmpty
+                                        ? [
+                                            Text(
+                                              'Select versions',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                            ),
+                                          ]
+                                        : currentSelections.map((version) {
+                                            final label = _versionLabel(
+                                                selectedLanguage.code, version);
+                                            return InputChip(
+                                              label: Text(label),
+                                              onDeleted: () {
+                                                setModalState(() {
+                                                  currentSelections
+                                                      .remove(version);
+                                                });
+                                              },
+                                            );
+                                          }).toList(),
+                                  ),
+                                ),
+                                const Icon(Icons.arrow_drop_down),
+                              ],
                             ),
-                            const Icon(Icons.arrow_drop_down),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        final desired = <String>{};
-                        selectedByLanguage.forEach((code, versions) {
-                          final language = _supportedLanguages.firstWhere(
-                            (option) => option.code == code,
-                            orElse: () => mainLanguage,
-                          );
-                          for (final version in versions) {
-                            final key = _entryComparisonKey(language, version);
-                            if (_isSameTranslation(
-                                language, version, mainLanguage, mainVersion)) {
-                              continue;
-                            }
-                            desired.add(key);
-                          }
-                        });
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        FilledButton(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            final desired = <String>{};
+                            selectedByLanguage.forEach((code, versions) {
+                              final language = _supportedLanguages.firstWhere(
+                                (option) => option.code == code,
+                                orElse: () => mainLanguage,
+                              );
+                              for (final version in versions) {
+                                final key = _entryComparisonKey(language, version);
+                                if (_isSameTranslation(language, version,
+                                    mainLanguage, mainVersion)) {
+                                  continue;
+                                }
+                                desired.add(key);
+                              }
+                            });
 
-                        setState(() {
-                          for (final reference in references) {
-                            final entryKey = _entryKey(reference);
-                            final existing =
-                                _entryComparisons[entryKey] ?? const [];
-                            final remaining = existing.where((entry) {
-                              final key = _entryComparisonKey(
-                                  entry.language, entry.version);
-                              return desired.contains(key);
-                            }).toList();
-                            if (remaining.isEmpty) {
-                              _entryComparisons.remove(entryKey);
-                            } else {
-                              _entryComparisons[entryKey] = remaining;
-                            }
-                          }
-                        });
+                            setState(() {
+                              for (final reference in references) {
+                                final entryKey = _entryKey(reference);
+                                final existing =
+                                    _entryComparisons[entryKey] ?? const [];
+                                final remaining = existing.where((entry) {
+                                  final key = _entryComparisonKey(
+                                      entry.language, entry.version);
+                                  return desired.contains(key);
+                                }).toList();
+                                if (remaining.isEmpty) {
+                                  _entryComparisons.remove(entryKey);
+                                } else {
+                                  _entryComparisons[entryKey] = remaining;
+                                }
+                              }
+                            });
 
-                        for (final reference in references) {
-                          final entryKey = _entryKey(reference);
-                          final existing =
-                              _entryComparisons[entryKey] ?? const [];
-                          for (final key in desired) {
-                            if (existing.any((entry) =>
-                                _entryComparisonKey(
-                                    entry.language, entry.version) ==
-                                key)) {
-                              continue;
+                            for (final reference in references) {
+                              final entryKey = _entryKey(reference);
+                              final existing =
+                                  _entryComparisons[entryKey] ?? const [];
+                              for (final key in desired) {
+                                if (existing.any((entry) =>
+                                    _entryComparisonKey(
+                                        entry.language, entry.version) ==
+                                    key)) {
+                                  continue;
+                                }
+                                final parts = key.split('|');
+                                if (parts.length != 2) {
+                                  continue;
+                                }
+                                final language = _supportedLanguages.firstWhere(
+                                  (option) => option.code == parts[0],
+                                  orElse: () => mainLanguage,
+                                );
+                                _addEntryComparison(reference, language, parts[1]);
+                              }
                             }
-                            final parts = key.split('|');
-                            if (parts.length != 2) {
-                              continue;
-                            }
-                            final language = _supportedLanguages.firstWhere(
-                              (option) => option.code == parts[0],
-                              orElse: () => mainLanguage,
-                            );
-                            _addEntryComparison(reference, language, parts[1]);
-                          }
-                        }
-                      },
-                      child: const Text('Add translation'),
+                          },
+                          child: const Text('Done'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -5238,6 +5253,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                                       .tooltipMessage,
                                                               labelOverride:
                                                                   entry.title,
+                                                              enableHoverPreview:
+                                                                  false,
                                                             );
                                                   final comparisons =
                                                       _entryComparisons[_entryKey(
