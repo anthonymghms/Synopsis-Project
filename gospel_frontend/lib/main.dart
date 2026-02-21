@@ -2801,6 +2801,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final parsedFromVerses = _parseVerseRange(widget.verses);
     _highlightStart = widget.highlightStart ?? parsedFromVerses?.start;
     _highlightEnd = widget.highlightEnd ?? parsedFromVerses?.end;
+    if (_currentVerses.trim().isEmpty && _highlightStart != null) {
+      final end = _highlightEnd ?? _highlightStart!;
+      _currentVerses = end > _highlightStart!
+          ? '${_highlightStart!}-$end'
+          : _highlightStart!.toString();
+    }
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _loadReference();
     if (widget.openFullChapter) {
