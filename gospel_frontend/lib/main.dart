@@ -2231,13 +2231,17 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
 
     final queryParameters = <String, String>{
       'book': bookParam,
-      'bookId': reference.bookId.trim(),
       'bookDisplay': displayBook,
       'chapter': reference.chapter.toString(),
       'language': widget.language,
       'version': widget.version,
       'label': reference.formattedReference,
     };
+
+    final bookId = reference.bookId.trim();
+    if (bookId.isNotEmpty) {
+      queryParameters['bookId'] = bookId;
+    }
 
     final verses = reference.verses.trim();
     if (verses.isNotEmpty) {
@@ -2321,7 +2325,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       queryParameters['highlightEnd'] = range.end.toString();
     }
     queryParameters['fullChapter'] = '1';
-    queryParameters.remove('verses');
+    queryParameters.remove('topic');
     final fullChapterUri =
         Uri(path: uri.path, queryParameters: queryParameters);
 
@@ -2607,7 +2611,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
     final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
     final isArabic = _isArabicLanguage(widget.language);
-    final fullChapterLabel = isArabic ? 'قراءة الفصل كاملاً' : 'Read full chapter';
+    final readInBibleLabel = isArabic ? 'اقرأ في الكتاب المقدس' : 'Read in Bible';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2655,7 +2659,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           child: FilledButton.tonalIcon(
             onPressed: _openFullChapterFromPreview,
             icon: const Icon(Icons.menu_book_outlined),
-            label: Text(fullChapterLabel),
+            label: Text(readInBibleLabel),
           ),
         ),
       ],
@@ -3038,6 +3042,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     bool openFullChapter = false,
     int? highlightStart,
     int? highlightEnd,
+    bool includeTopic = true,
   }) {
     final query = <String, String>{
       'book': bookParam,
@@ -3046,7 +3051,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       'chapter': chapter.toString(),
       'language': widget.language,
       'version': _activeVersion,
-      if (widget.topicName.trim().isNotEmpty) 'topic': widget.topicName.trim(),
+      if (includeTopic && widget.topicName.trim().isNotEmpty) 'topic': widget.topicName.trim(),
       if (widget.referenceLabelOverride.trim().isNotEmpty)
         'label': widget.referenceLabelOverride.trim(),
       if (verses.trim().isNotEmpty) 'verses': verses.trim(),
@@ -3068,11 +3073,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       bookParam: _currentBookParam,
       displayBook: _currentDisplayBook,
       chapter: _currentChapter,
+      verses: _currentVerses,
       openFullChapter: true,
       highlightStart: range?.start,
       highlightEnd: range?.end,
+      includeTopic: false,
     );
-    await _navigateToUri(uri);
+    final opened = await openReferenceLink(uri);
+    if (!opened && mounted) {
+      await _navigateToUri(uri);
+    }
   }
 
   void _scrollToHighlightedVerse() {
@@ -3374,7 +3384,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         FilledButton.icon(
           onPressed: _openFullChapterViewFromPage,
           icon: const Icon(Icons.menu_book_outlined),
-          label: const Text('Read full chapter'),
+          label: const Text('Read in Bible'),
         ),
         if (_chapterError != null) ...[
           const SizedBox(height: 12),
