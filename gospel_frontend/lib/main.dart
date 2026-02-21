@@ -3287,6 +3287,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               );
             },
           ),
+          ),
         );
       },
     );
@@ -4451,6 +4452,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               );
             },
           ),
+          ),
         );
       },
     );
@@ -4756,6 +4758,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                 ),
               );
             },
+          ),
           ),
         );
       },
