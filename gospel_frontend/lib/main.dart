@@ -2230,8 +2230,10 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
 
     final spaceBelow = screenSize.height - target.bottom - gutter;
     final spaceAbove = target.top - gutter;
-    final placeBelow =
-        spaceBelow >= minimumVisibleHeight || spaceBelow >= spaceAbove;
+
+    // Keep the popup feeling attached to the hovered reference: prefer below
+    // whenever there is enough room for a usable hovercard.
+    final placeBelow = spaceBelow >= minimumVisibleHeight || spaceBelow > 0;
 
     final availableHeight = math.max(
       placeBelow ? spaceBelow : spaceAbove,
@@ -2325,7 +2327,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     if (!widget.enableHoverPreview || _previewEntry != null) {
       return;
     }
-    final overlay = Overlay.of(context, rootOverlay: true);
+    final overlay = Overlay.of(context);
     if (overlay == null) {
       return;
     }
