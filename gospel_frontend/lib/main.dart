@@ -5079,22 +5079,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                 _buildDiacriticsToggle(option),
               ],
             ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  _languageVersionSummary,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant,
-                      ),
-                  textAlign: TextAlign.start,
-                ),
-              ),
-            ),
             const SizedBox(height: 12),
             Align(
               alignment: AlignmentDirectional.centerStart,
