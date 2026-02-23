@@ -34,6 +34,8 @@ class FormattedVerseRef {
   final TextDirection? dir;
 }
 
+const String _rlm = '\u200F';
+
 ParsedVerseRef? parseVerseRef(String input) {
   final trimmed = input.trim();
   if (trimmed.isEmpty) {
@@ -74,8 +76,12 @@ FormattedVerseRef formatVerseRef(String input, String lang) {
   final chapter = toArabicIndicDigits(parsed.chapter);
   final start = toArabicIndicDigits(parsed.start);
   final end = parsed.end == null ? null : toArabicIndicDigits(parsed.end!);
-  final formatted = end == null ? '$chapter:$start' : '$chapter:$start-$end';
 
-  // Use LRI/PDI so verse references keep logical C:V-V order in RTL UI.
-  return FormattedVerseRef(text: '\u2066$formatted\u2069', dir: TextDirection.ltr);
+  // RTL hardening: keep RTL wrapper and lock separators with RLM marks.
+  final formatted = end == null
+      ? '$chapter$_rlm:$_rlm$start'
+      : '$chapter$_rlm:$_rlm$start$_rlm-$_rlm$end';
+
+  // Flutter has no CSS unicode-bidi isolate-override; use RLI/PDI + RTL direction.
+  return FormattedVerseRef(text: '\u2067$formatted\u2069', dir: TextDirection.rtl);
 }
