@@ -810,6 +810,9 @@ class GospelApp extends StatelessWidget {
       final verses = uri.queryParameters['verses'] ?? '';
       final topicName = uri.queryParameters['topic'] ?? '';
       final label = uri.queryParameters['label'] ?? '';
+      final source = uri.queryParameters['source'] ?? '';
+      final topicId = uri.queryParameters['topicId'] ?? '';
+      final gospel = uri.queryParameters['gospel'] ?? '';
 
       return MaterialPageRoute(
         settings: settings,
@@ -823,6 +826,9 @@ class GospelApp extends StatelessWidget {
             version: version,
             topicName: topicName,
             referenceLabelOverride: label,
+            source: source,
+            topicId: topicId,
+            gospel: gospel,
           ),
         ),
       );
@@ -1720,8 +1726,13 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
   }
 
-  Widget _buildReferenceCell(Topic topic, List<GospelReference> refs,
-      TextStyle? style, TextAlign align) {
+  Widget _buildReferenceCell(
+    Topic topic,
+    String gospel,
+    List<GospelReference> refs,
+    TextStyle? style,
+    TextAlign align,
+  ) {
     final filteredRefs = refs
         .where((ref) => ref.formattedReference.trim().isNotEmpty)
         .toList();
@@ -1759,6 +1770,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 textAlign: align,
                 textDirection: widget.languageOption.direction,
                 topicName: topic.name,
+                topicId: topic.id.isNotEmpty ? topic.id : topic.name,
+                sourceContext: 'harmony',
+                gospel: gospel,
                 language: widget.languageOption.apiLanguage,
                 version: widget.apiVersion,
                 tooltipMessage: widget.languageOption.tooltipMessage,
@@ -1852,6 +1866,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 verticalAlignment: TableCellVerticalAlignment.top,
                 child: _buildReferenceCell(
                   topic,
+                  gospel,
                   grouped[gospel] ?? const <GospelReference>[],
                   referenceStyle,
                   referenceAlign,
@@ -1953,6 +1968,9 @@ class ReferenceHoverText extends StatefulWidget {
     this.tooltipMessage = 'Click to view more',
     this.labelOverride = '',
     this.enableHoverPreview = true,
+    this.topicId = '',
+    this.sourceContext = '',
+    this.gospel = '',
   });
 
   final GospelReference reference;
@@ -1965,6 +1983,9 @@ class ReferenceHoverText extends StatefulWidget {
   final String tooltipMessage;
   final String labelOverride;
   final bool enableHoverPreview;
+  final String topicId;
+  final String sourceContext;
+  final String gospel;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -2035,6 +2056,15 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
 
     if (widget.topicName.trim().isNotEmpty) {
       queryParameters['topic'] = widget.topicName.trim();
+    }
+    if (widget.topicId.trim().isNotEmpty) {
+      queryParameters['topicId'] = widget.topicId.trim();
+    }
+    if (widget.sourceContext.trim().isNotEmpty) {
+      queryParameters['source'] = widget.sourceContext.trim();
+    }
+    if (widget.gospel.trim().isNotEmpty) {
+      queryParameters['gospel'] = widget.gospel.trim();
     }
 
     return Uri(path: '/reference', queryParameters: queryParameters);
@@ -2486,6 +2516,9 @@ class ReferenceViewerPage extends StatefulWidget {
     required this.version,
     this.topicName = '',
     this.referenceLabelOverride = '',
+    this.source = '',
+    this.topicId = '',
+    this.gospel = '',
   });
 
   final String displayBook;
@@ -2496,6 +2529,9 @@ class ReferenceViewerPage extends StatefulWidget {
   final String version;
   final String topicName;
   final String referenceLabelOverride;
+  final String source;
+  final String topicId;
+  final String gospel;
 
   @override
   State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
@@ -2572,6 +2608,23 @@ class ChapterNav extends StatelessWidget {
   }
 }
 
+
+class _HarmonySection {
+  const _HarmonySection({
+    required this.topicId,
+    required this.topicTitle,
+    required this.startVerse,
+    required this.endVerse,
+    required this.verses,
+  });
+
+  final String topicId;
+  final String topicTitle;
+  final int startVerse;
+  final int endVerse;
+  final List<_VerseLine> verses;
+}
+
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   static const double _minTextScale = 0.85;
   static const double _maxTextScale = 1.4;
@@ -2581,6 +2634,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   List<_VerseLine> _chapterVerses = const <_VerseLine>[];
   Set<int> _highlightVerses = const <int>{};
   int? _highlightStart;
+  bool _loadingHarmonyTopics = false;
+  String? _harmonyTopicsError;
+  List<Topic> _harmonyTopics = const <Topic>[];
   bool _withDiacritics = true;
   bool _interlinearView = false;
   double _textScale = 1.0;
@@ -2603,6 +2659,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _sanitizeVersionForLanguage(_languageOption, widget.version);
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _loadChapter();
+    if (_isHarmonySource) {
+      _loadHarmonyTopics();
+    }
   }
 
   String get _baseVersion {
@@ -2639,6 +2698,17 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return normalized;
     }
     return option.apiVersion;
+  }
+
+
+  bool get _isHarmonySource => widget.source.trim().toLowerCase() == 'harmony';
+
+  String get _currentCanonicalBook {
+    final gospelParam = widget.gospel.trim();
+    if (gospelParam.isNotEmpty) {
+      return _normalizeGospelName(gospelParam);
+    }
+    return _normalizeGospelName(_bookParameter);
   }
 
   String get _bookParameter {
@@ -2796,7 +2866,200 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (widget.topicName.trim().isNotEmpty) {
       queryParameters['topic'] = widget.topicName.trim();
     }
+    if (_isHarmonySource) {
+      queryParameters['source'] = 'harmony';
+      if (widget.topicId.trim().isNotEmpty) {
+        queryParameters['topicId'] = widget.topicId.trim();
+      }
+      queryParameters['gospel'] = _normalizeGospelName(book);
+    }
     return Uri(path: '/reference', queryParameters: queryParameters);
+  }
+
+
+  Future<void> _loadHarmonyTopics() async {
+    setState(() {
+      _loadingHarmonyTopics = true;
+      _harmonyTopicsError = null;
+    });
+    final uri = Uri.parse('$apiBaseUrl/topics').replace(queryParameters: {
+      'language': widget.language,
+      'version': _activeVersion,
+    });
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final raw = json.decode(response.body);
+      final list = raw is List
+          ? raw.whereType<Map<String, dynamic>>().map(Topic.fromJson).toList()
+          : <Topic>[];
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _harmonyTopics = list;
+        _loadingHarmonyTopics = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _harmonyTopicsError = 'Failed to load harmony topics: $e';
+        _loadingHarmonyTopics = false;
+      });
+    }
+  }
+
+  Set<int> _topicVerseNumbersForCurrentChapter(GospelReference reference) {
+    final verses = <int>{};
+    final maxVerse = _chapterVerses.length;
+    if (reference.chapter <= 0 || maxVerse <= 0) {
+      return verses;
+    }
+
+    final currentChapter = widget.chapter;
+    final sourceChapter = reference.chapter;
+    final rawVerses = reference.verses.trim();
+    if (rawVerses.isEmpty) {
+      if (sourceChapter == currentChapter) {
+        for (var i = 1; i <= maxVerse; i++) {
+          verses.add(i);
+        }
+      }
+      return verses;
+    }
+
+    for (final rawPart in rawVerses.split(',')) {
+      final part = rawPart.trim();
+      if (part.isEmpty) {
+        continue;
+      }
+
+      final single = RegExp(r'^(\d+)$').firstMatch(part);
+      if (single != null) {
+        if (sourceChapter == currentChapter) {
+          final number = int.tryParse(single.group(1)!);
+          if (number != null) {
+            verses.add(number);
+          }
+        }
+        continue;
+      }
+
+      final sameChapterRange = RegExp(r'^(\d+)\s*-\s*(\d+)$').firstMatch(part);
+      if (sameChapterRange != null) {
+        if (sourceChapter == currentChapter) {
+          final a = int.tryParse(sameChapterRange.group(1)!);
+          final b = int.tryParse(sameChapterRange.group(2)!);
+          if (a != null && b != null) {
+            final start = a <= b ? a : b;
+            final end = a <= b ? b : a;
+            for (var v = start; v <= end; v++) {
+              verses.add(v);
+            }
+          }
+        }
+        continue;
+      }
+
+      final explicitRange = RegExp(r'^(\d+):(\d+)\s*-\s*(\d+):(\d+)$').firstMatch(part);
+      if (explicitRange != null) {
+        final startChapter = int.tryParse(explicitRange.group(1)!);
+        final startVerse = int.tryParse(explicitRange.group(2)!);
+        final endChapter = int.tryParse(explicitRange.group(3)!);
+        final endVerse = int.tryParse(explicitRange.group(4)!);
+        if (startChapter == null || startVerse == null || endChapter == null || endVerse == null) {
+          continue;
+        }
+        if (currentChapter < startChapter || currentChapter > endChapter) {
+          continue;
+        }
+        if (currentChapter == startChapter && currentChapter == endChapter) {
+          for (var v = startVerse; v <= endVerse; v++) {
+            verses.add(v);
+          }
+        } else if (currentChapter == startChapter) {
+          for (var v = startVerse; v <= maxVerse; v++) {
+            verses.add(v);
+          }
+        } else if (currentChapter == endChapter) {
+          for (var v = 1; v <= endVerse; v++) {
+            verses.add(v);
+          }
+        } else {
+          for (var v = 1; v <= maxVerse; v++) {
+            verses.add(v);
+          }
+        }
+        continue;
+      }
+
+      final openCross = RegExp(r'^(\d+)\s*-\s*(\d+):(\d+)$').firstMatch(part);
+      if (openCross != null) {
+        final startVerse = int.tryParse(openCross.group(1)!);
+        final endChapter = int.tryParse(openCross.group(2)!);
+        final endVerse = int.tryParse(openCross.group(3)!);
+        if (startVerse == null || endChapter == null || endVerse == null) {
+          continue;
+        }
+        if (currentChapter == sourceChapter) {
+          for (var v = startVerse; v <= maxVerse; v++) {
+            verses.add(v);
+          }
+        } else if (currentChapter == endChapter) {
+          for (var v = 1; v <= endVerse; v++) {
+            verses.add(v);
+          }
+        }
+      }
+    }
+
+    verses.removeWhere((value) => value <= 0 || value > maxVerse);
+    return verses;
+  }
+
+  List<_HarmonySection> _buildHarmonySections() {
+    if (!_isHarmonySource || _harmonyTopics.isEmpty || _chapterVerses.isEmpty) {
+      return const <_HarmonySection>[];
+    }
+
+    final canonicalBook = _currentCanonicalBook;
+    final sections = <_HarmonySection>[];
+
+    for (final topic in _harmonyTopics) {
+      final topicVerses = <int>{};
+      for (final reference in topic.references) {
+        if (_normalizeGospelName(reference.book) != canonicalBook) {
+          continue;
+        }
+        topicVerses.addAll(_topicVerseNumbersForCurrentChapter(reference));
+      }
+      if (topicVerses.isEmpty) {
+        continue;
+      }
+      final ordered = topicVerses.toList()..sort();
+      final verses = _chapterVerses.where((verse) {
+        final number = verse.number;
+        return number != null && topicVerses.contains(number);
+      }).toList();
+      if (verses.isEmpty) {
+        continue;
+      }
+      sections.add(
+        _HarmonySection(
+          topicId: topic.id,
+          topicTitle: topic.name,
+          startVerse: ordered.first,
+          endVerse: ordered.last,
+          verses: verses,
+        ),
+      );
+    }
+
+    return sections;
   }
 
   String get _metaSummary {
@@ -2886,6 +3149,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       }
     });
     _loadChapter();
+    if (_isHarmonySource) {
+      _loadHarmonyTopics();
+    }
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
@@ -2917,6 +3183,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     _loadChapter();
+    if (_isHarmonySource) {
+      _loadHarmonyTopics();
+    }
   }
 
   Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme, {bool highlighted = false, String? verseId}) {
@@ -3017,18 +3286,93 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         maxChapter == null ? true : widget.chapter < maxChapter;
 
     final bookSlug = _slugBookForId(_bookParameter);
-    final verseWidgets = _chapterVerses.map((verse) {
-      final number = verse.number;
-      final highlighted = number != null && _highlightVerses.contains(number);
-      final verseId = number != null && number > 0
-          ? 'verse-$bookSlug-${widget.chapter}-$number'
-          : null;
-      return _buildVerseParagraph(verse, theme, highlighted: highlighted, verseId: verseId);
-    }).toList();
+    final harmonySections = _buildHarmonySections();
+    final useHarmonySections = _isHarmonySource && harmonySections.isNotEmpty;
+
+    final verseWidgets = useHarmonySections
+        ? harmonySections
+            .expand<Widget>((section) {
+              final sectionHighlighted = section.verses.any(
+                (verse) => verse.number != null && _highlightVerses.contains(verse.number),
+              );
+              final sectionId = section.topicId.trim().isNotEmpty
+                  ? section.topicId.trim()
+                  : section.topicTitle.trim();
+              return <Widget>[
+                Container(
+                  key: sectionId == widget.topicId.trim() ? const ValueKey<String>('selected-topic-header') : null,
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: sectionHighlighted
+                        ? theme.colorScheme.primary.withOpacity(0.08)
+                        : theme.colorScheme.surfaceVariant.withOpacity(0.35),
+                    borderRadius: BorderRadius.circular(10),
+                    border: BorderDirectional(
+                      start: BorderSide(
+                        color: sectionHighlighted
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.outlineVariant,
+                        width: sectionHighlighted ? 3 : 2,
+                      ),
+                    ),
+                  ),
+                  child: Text(
+                    section.topicTitle,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.start,
+                  ),
+                ),
+                ...section.verses.map((verse) {
+                  final number = verse.number;
+                  final highlighted =
+                      number != null && _highlightVerses.contains(number);
+                  final verseId = number != null && number > 0
+                      ? 'verse-$bookSlug-${widget.chapter}-$number'
+                      : null;
+                  return _buildVerseParagraph(
+                    verse,
+                    theme,
+                    highlighted: highlighted,
+                    verseId: verseId,
+                  );
+                }),
+              ];
+            })
+            .toList()
+        : _chapterVerses.map((verse) {
+            final number = verse.number;
+            final highlighted = number != null && _highlightVerses.contains(number);
+            final verseId = number != null && number > 0
+                ? 'verse-$bookSlug-${widget.chapter}-$number'
+                : null;
+            return _buildVerseParagraph(
+              verse,
+              theme,
+              highlighted: highlighted,
+              verseId: verseId,
+            );
+          }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_isHarmonySource && _loadingHarmonyTopics)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        if (_isHarmonySource && _harmonyTopicsError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _harmonyTopicsError!,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
         ChapterNav(
           chapter: widget.chapter,
           isArabic: _isArabicLanguage(widget.language),
@@ -3818,13 +4162,21 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  String get _chapterTitle {
+    final book = _displayBookLabel.isNotEmpty ? _displayBookLabel : _currentCanonicalBook;
+    if (widget.chapter > 0) {
+      return '$book ${widget.chapter}';
+    }
+    return book.isNotEmpty ? book : 'Reference';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final title = widget.topicName.trim().isNotEmpty
-        ? widget.topicName
-        : (_displayBookLabel.isNotEmpty
-            ? _displayBookLabel
-            : 'Reference');
+    final title = _isHarmonySource
+        ? _chapterTitle
+        : (widget.topicName.trim().isNotEmpty
+            ? widget.topicName
+            : (_displayBookLabel.isNotEmpty ? _displayBookLabel : 'Reference'));
     return MainScaffold(
       title: title,
       body: _buildBody(context),
@@ -3856,11 +4208,21 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _referenceHeading,
+                      _isHarmonySource ? _chapterTitle : _referenceHeading,
                       style: theme.textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w600),
                       textAlign: TextAlign.start,
                     ),
+                    if (_isHarmonySource && widget.topicName.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.topicName,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.start,
+                      ),
+                    ],
                     if (actionButtons.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Wrap(
