@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:gospel_frontend/utils/format_verse_ref.dart';
+import 'package:gospel_frontend/widgets/verse_ref_text.dart';
 import 'reference_link_opener.dart';
 
 // ---- CONFIGURATION ----
@@ -665,20 +667,6 @@ String _displayGospelName(String book, LanguageOption option) {
 }
 
 final RegExp _referenceDigitsPattern = RegExp(r'\d');
-final RegExp _bidiControlPattern =
-    RegExp(r'[\u2066\u2067\u2068\u2069\u200E\u200F]');
-const Map<String, String> _arabicIndicDigits = {
-  '0': '٠',
-  '1': '١',
-  '2': '٢',
-  '3': '٣',
-  '4': '٤',
-  '5': '٥',
-  '6': '٦',
-  '7': '٧',
-  '8': '٨',
-  '9': '٩',
-};
 
 String _formatReferenceForDirection(String reference, TextDirection direction) {
   if (direction != TextDirection.rtl) {
@@ -690,23 +678,8 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
   return '\u2066$reference\u2069';
 }
 
-String _stripBidiControls(String input) =>
-    input.replaceAll(_bidiControlPattern, '');
-
-String toArabicIndicDigits(String input) => input.replaceAllMapped(
-    _referenceDigitsPattern, (match) => _arabicIndicDigits[match.group(0)]!);
-
 String _formatArabicReference(String reference) {
-  final trimmed = reference.trim();
-  if (trimmed.isEmpty) {
-    return reference;
-  }
-  final normalized = _stripBidiControls(trimmed);
-  final converted = toArabicIndicDigits(normalized);
-  if (converted.isEmpty) {
-    return reference;
-  }
-  return '\u2067$converted\u2069';
+  return formatVerseRef(reference, 'arabic').text;
 }
 
 String _formatReferenceForLanguage(String reference, TextDirection direction,
@@ -2448,9 +2421,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final text = override.isNotEmpty
         ? override
         : widget.reference.formattedReference;
-    final formattedText =
-        _formatReferenceForLanguage(text, widget.textDirection,
-            isArabic: _isArabicLanguage(widget.language));
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
     return MouseRegion(
@@ -2482,11 +2452,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           alignment: alignment,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Text(
-              formattedText,
+            child: VerseRefText(
+              value: text,
+              lang: widget.language,
               style: _isHovered ? hoverStyle : baseStyle,
               textAlign: widget.textAlign,
-              softWrap: true,
             ),
           ),
         ),
