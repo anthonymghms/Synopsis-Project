@@ -1963,7 +1963,11 @@ class ReferenceHoverText extends StatefulWidget {
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
 }
 
-class _ReferenceHoverTextState extends State<ReferenceHoverText> {
+class _ReferenceHoverTextState extends State<ReferenceHoverText>
+    with WidgetsBindingObserver {
+  static const double _previewGap = 8;
+  static const double _previewViewportPadding = 8;
+
   bool _isHovered = false;
   bool _isLaunching = false;
   bool _loadingPreview = false;
@@ -1974,6 +1978,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   bool _isTriggerHovered = false;
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
+  Timer? _repositionPreviewTimer;
+  final GlobalKey _anchorKey = GlobalKey();
+  final GlobalKey _previewKey = GlobalKey();
+  Size _previewSize = const Size(280, 220);
+  bool _pendingPreviewMeasurement = false;
 
   static final Map<String, _ReferencePreviewCache> _previewCache = {};
 
@@ -2151,32 +2160,69 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     );
   }
 
-  double _previewWidth(Size screenSize) {
-    return math.min(360, screenSize.width - 24).clamp(220, 360).toDouble();
+  Offset _previewOffset(Rect target, Size viewportSize, Size previewSize) {
+    final maxLeft =
+        math.max(_previewViewportPadding, viewportSize.width - previewSize.width - _previewViewportPadding);
+    final maxTop =
+        math.max(_previewViewportPadding, viewportSize.height - previewSize.height - _previewViewportPadding);
+
+    final topBottom = target.bottom + _previewGap;
+    final fitsBottom =
+        topBottom + previewSize.height + _previewViewportPadding <= viewportSize.height;
+    final topTop = target.top - _previewGap - previewSize.height;
+    final fitsTop = topTop >= _previewViewportPadding;
+
+    final top = fitsBottom
+        ? topBottom
+        : fitsTop
+            ? topTop
+            : topBottom.clamp(_previewViewportPadding, maxTop).toDouble();
+
+    final anchorCenterX = target.left + target.width / 2;
+    final left = (anchorCenterX - previewSize.width / 2)
+        .clamp(_previewViewportPadding, maxLeft)
+        .toDouble();
+
+    return Offset(left, top);
   }
 
-  double _previewHeight(Size screenSize) {
-    return math.min(520, screenSize.height - 24).clamp(200, 520).toDouble();
+  void _markPreviewNeedsBuild() {
+    if (_previewEntry != null) {
+      _previewEntry!.markNeedsBuild();
+    }
   }
 
-  Offset _previewOffset(Rect target, Size screenSize, double width,
-      double height) {
-    const gutter = 8.0;
-    const spacing = 12.0;
-    final spaceRight = screenSize.width - target.right - spacing;
-    final spaceLeft = target.left - spacing;
-    final placeRight = spaceRight >= width || spaceRight >= spaceLeft;
+  void _schedulePreviewMeasurement() {
+    if (_pendingPreviewMeasurement) {
+      return;
+    }
+    _pendingPreviewMeasurement = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingPreviewMeasurement = false;
+      final context = _previewKey.currentContext;
+      final renderBox = context?.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.hasSize) {
+        return;
+      }
+      final measured = renderBox.size;
+      if ((_previewSize - measured).distance <= 1) {
+        return;
+      }
+      _previewSize = measured;
+      _markPreviewNeedsBuild();
+    });
+  }
 
-    final spaceBelow = screenSize.height - target.bottom - spacing;
-    final spaceAbove = target.top - spacing;
-    final placeBelow = spaceBelow >= height || spaceBelow >= spaceAbove;
+  void _startRepositionListener() {
+    _repositionPreviewTimer?.cancel();
+    _repositionPreviewTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      _markPreviewNeedsBuild();
+    });
+  }
 
-    final dx = placeRight ? target.right + spacing : target.left - width - spacing;
-    final dy = placeBelow ? target.bottom + gutter : target.top - height - gutter;
-
-    final clampedX = dx.clamp(gutter, screenSize.width - width - gutter);
-    final clampedY = dy.clamp(gutter, screenSize.height - height - gutter);
-    return Offset(clampedX.toDouble(), clampedY.toDouble());
+  void _stopRepositionListener() {
+    _repositionPreviewTimer?.cancel();
+    _repositionPreviewTimer = null;
   }
 
   Future<void> _loadPreview() async {
@@ -2261,21 +2307,23 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       return;
     }
     _previewEntry = OverlayEntry(builder: (overlayContext) {
-      final renderBox = context.findRenderObject() as RenderBox?;
+      final renderBox = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
       if (renderBox == null || !renderBox.hasSize) {
         return const SizedBox.shrink();
       }
       final target = renderBox.localToGlobal(Offset.zero) & renderBox.size;
-      final screenSize = MediaQuery.of(overlayContext).size;
-      final width = _previewWidth(screenSize);
-      final height = _previewHeight(screenSize);
-      final offset = _previewOffset(target, screenSize, width, height);
+      final viewportSize = MediaQuery.of(overlayContext).size;
+      final maxWidth = math.min(360.0, viewportSize.width - (_previewViewportPadding * 2));
+      final maxHeight = math.min(520.0, viewportSize.height - (_previewViewportPadding * 2));
+      final estimatedWidth = _previewSize.width.clamp(220.0, maxWidth).toDouble();
+      final estimatedHeight = _previewSize.height.clamp(200.0, maxHeight).toDouble();
+      final offset = _previewOffset(target, viewportSize, Size(estimatedWidth, estimatedHeight));
       final theme = Theme.of(overlayContext);
+      _schedulePreviewMeasurement();
 
       return Positioned(
         left: offset.dx,
         top: offset.dy,
-        width: width,
         child: MouseRegion(
           onEnter: (_) {
             _cancelHideTimer();
@@ -2286,12 +2334,18 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
             _schedulePreviewHide();
           },
           child: Material(
+            key: _previewKey,
             elevation: 8,
             borderRadius: BorderRadius.circular(12),
             clipBehavior: Clip.antiAlias,
             color: theme.colorScheme.surface,
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: height),
+              constraints: BoxConstraints(
+                minWidth: 220,
+                maxWidth: maxWidth,
+                minHeight: 200,
+                maxHeight: maxHeight,
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Directionality(
@@ -2305,11 +2359,24 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
       );
     });
     overlay.insert(_previewEntry!);
+    _startRepositionListener();
   }
 
   void _hidePreview() {
+    _stopRepositionListener();
     _previewEntry?.remove();
     _previewEntry = null;
+  }
+
+  @override
+  void didChangeMetrics() {
+    _markPreviewNeedsBuild();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
   }
 
   Widget _buildPreviewContent(ThemeData theme) {
@@ -2377,6 +2444,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
   @override
   void dispose() {
     _cancelHideTimer();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopRepositionListener();
     _hidePreview();
     super.dispose();
   }
@@ -2418,18 +2487,21 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
           _schedulePreviewHide();
         }
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: text.isEmpty ? null : _handleTap,
-        child: Align(
-          alignment: alignment,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: VerseRefText(
-              value: text,
-              lang: widget.language,
-              style: _isHovered ? hoverStyle : baseStyle,
-              textAlign: widget.textAlign,
+      child: KeyedSubtree(
+        key: _anchorKey,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: text.isEmpty ? null : _handleTap,
+          child: Align(
+            alignment: alignment,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: VerseRefText(
+                value: text,
+                lang: widget.language,
+                style: _isHovered ? hoverStyle : baseStyle,
+                textAlign: widget.textAlign,
+              ),
             ),
           ),
         ),
