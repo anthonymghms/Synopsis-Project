@@ -2571,37 +2571,42 @@ class ChapterNav extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: 'Previous book',
-              onPressed: hasPreviousBook ? onPreviousBook : null,
-              icon: const Icon(Icons.keyboard_double_arrow_left, textDirection: TextDirection.ltr),
-            ),
-            IconButton(
-              tooltip: 'Previous chapter',
-              onPressed: hasPreviousChapter ? onPreviousChapter : null,
-              icon: const Icon(Icons.chevron_left, textDirection: TextDirection.ltr),
-            ),
-            Expanded(
-              child: Text(
-                isArabic ? 'فصل ${toArabicIndicDigits(chapter.toString())}' : 'Chapter $chapter',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w600),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Previous book',
+                onPressed: hasPreviousBook ? onPreviousBook : null,
+                icon: const Icon(Icons.keyboard_double_arrow_left),
               ),
-            ),
-            IconButton(
-              tooltip: 'Next chapter',
-              onPressed: hasNextChapter ? onNextChapter : null,
-              icon: const Icon(Icons.chevron_right, textDirection: TextDirection.ltr),
-            ),
-            IconButton(
-              tooltip: 'Next book',
-              onPressed: hasNextBook ? onNextBook : null,
-              icon: const Icon(Icons.keyboard_double_arrow_right, textDirection: TextDirection.ltr),
-            ),
-          ],
+              IconButton(
+                tooltip: 'Previous chapter',
+                onPressed: hasPreviousChapter ? onPreviousChapter : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Text(
+                  isArabic
+                      ? 'فصل ${toArabicIndicDigits(chapter.toString())}'
+                      : 'Chapter $chapter',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Next chapter',
+                onPressed: hasNextChapter ? onNextChapter : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+              IconButton(
+                tooltip: 'Next book',
+                onPressed: hasNextBook ? onNextBook : null,
+                icon: const Icon(Icons.keyboard_double_arrow_right),
+              ),
+            ],
+          ),
         ),
       ),
     );
