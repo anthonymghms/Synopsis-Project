@@ -3319,8 +3319,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   ),
                   child: Text(
                     section.topicTitle,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
+                    style: (theme.textTheme.titleMedium ??
+                            const TextStyle(fontSize: 19))
+                        .copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.15,
                     ),
                     textAlign: TextAlign.start,
                   ),
@@ -4170,10 +4173,21 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return book.isNotEmpty ? book : 'Reference';
   }
 
+  String get _harmonyAppBarTitle {
+    final book = _displayBookLabel.isNotEmpty ? _displayBookLabel : _currentCanonicalBook;
+    if (book.isEmpty) {
+      return 'Reference';
+    }
+    if (_languageOption.code == 'arabic') {
+      return 'سفر $book';
+    }
+    return 'Book of $book';
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = _isHarmonySource
-        ? _chapterTitle
+        ? _harmonyAppBarTitle
         : (widget.topicName.trim().isNotEmpty
             ? widget.topicName
             : (_displayBookLabel.isNotEmpty ? _displayBookLabel : 'Reference'));
@@ -4207,24 +4221,15 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _isHarmonySource ? _chapterTitle : _referenceHeading,
-                      style: theme.textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w600),
-                      textAlign: TextAlign.start,
-                    ),
-                    if (_isHarmonySource && widget.topicName.trim().isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                    if (!_isHarmonySource)
                       Text(
-                        widget.topicName,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                        _referenceHeading,
+                        style: theme.textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w600),
                         textAlign: TextAlign.start,
                       ),
-                    ],
                     if (actionButtons.isNotEmpty) ...[
-                      const SizedBox(height: 12),
+                      SizedBox(height: _isHarmonySource ? 0 : 12),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
