@@ -1456,7 +1456,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
