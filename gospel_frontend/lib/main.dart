@@ -3624,7 +3624,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     final theme = Theme.of(context);
-    final meta = _metaSummary;
     final direction = _languageOption.direction;
     final actionButtons = <Widget>[
       _buildZoomOutButton(),
@@ -3653,31 +3652,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                           ?.copyWith(fontWeight: FontWeight.w600),
                       textAlign: TextAlign.start,
                     ),
-                    if (meta.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        meta,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                        textAlign: TextAlign.start,
-                      ),
-                    ],
                     if (actionButtons.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: actionButtons,
-                      ),
-                    ],
-                    if (widget.topicName.trim().isNotEmpty &&
-                        widget.topicName.trim() != _referenceHeading) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Topic: ${widget.topicName}',
-                        style: theme.textTheme.bodyMedium,
-                        textAlign: TextAlign.start,
                       ),
                     ],
                     const SizedBox(height: 24),
