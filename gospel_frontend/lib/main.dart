@@ -2205,7 +2205,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         return;
       }
       final measured = renderBox.size;
-      if ((_previewSize - measured).distance <= 1) {
+      final widthDelta = (_previewSize.width - measured.width).abs();
+      final heightDelta = (_previewSize.height - measured.height).abs();
+      if (widthDelta <= 1 && heightDelta <= 1) {
         return;
       }
       _previewSize = measured;
