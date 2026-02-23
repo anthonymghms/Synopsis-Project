@@ -55,6 +55,39 @@ ParsedVerseRef? parseVerseRef(String input) {
 String toArabicIndicDigits(String input) => input.replaceAllMapped(
     _digitPattern, (match) => _arabicIndicDigits[match.group(0)]!);
 
+
+bool shouldUseArabicIndicDigits({
+  required String language,
+  String? version,
+}) {
+  final normalizedLanguage = language.trim().toLowerCase();
+  if (normalizedLanguage == 'arabic' ||
+      normalizedLanguage == 'arabic2' ||
+      normalizedLanguage == 'ar') {
+    return true;
+  }
+
+  final normalizedVersion = (version ?? '').trim().toLowerCase();
+  if (normalizedVersion.isEmpty) {
+    return false;
+  }
+
+  return normalizedVersion.contains('van dyke') ||
+      normalizedVersion.contains('arabic');
+}
+
+String formatVerseMarker(
+  int verseNumber, {
+  required String language,
+  String? version,
+}) {
+  final value = verseNumber.toString();
+  if (!shouldUseArabicIndicDigits(language: language, version: version)) {
+    return value;
+  }
+  return toArabicIndicDigits(value);
+}
+
 FormattedVerseRef formatVerseRef(String input, String lang) {
   final trimmed = input.trim();
   if (trimmed.isEmpty || trimmed == '—' || trimmed == '-') {

@@ -1360,28 +1360,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
       ),
     );
 
-    if (_languageLoadError != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.warning_amber_outlined, color: Colors.orange),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  _languageLoadError!,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          dropdown,
-        ],
-      );
-    }
 
     return dropdown;
   }
@@ -1469,7 +1447,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     return Directionality(
       textDirection: languageOption.direction,
       child: MainScaffold(
-        title: languageOption.title,
+        title: '',
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -1478,10 +1456,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Padding(
-                        padding:
-                            const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Text(
                               languageOption.title,
@@ -1489,16 +1466,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                                   .textTheme
                                   .headlineSmall
                                   ?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              languageOption.description,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    color: Colors.grey.shade700,
-                                  ),
+                              textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 12),
                             Wrap(
@@ -2346,7 +2314,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
     final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
     final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
     final isArabic = _isArabicLanguage(widget.language);
-    final fullChapterLabel = isArabic ? 'قراءة الفصل كاملاً' : 'Read full chapter';
+    final fullChapterLabel = isArabic ? 'اقرأ الإصحاح كاملًا' : 'Read full chapter';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2377,7 +2345,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText> {
                               children: [
                                 if (verse.number != null && verse.number! > 0)
                                   TextSpan(
-                                      text: '${isArabic ? toArabicIndicDigits(verse.number!.toString()) : verse.number}. ',
+                                      text: '${formatVerseMarker(verse.number!, language: widget.language, version: widget.version)}. ',
                                       style: numberStyle),
                                 TextSpan(text: verse.text),
                               ],
@@ -2801,7 +2769,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           style: baseStyle,
           children: [
             if (verse.number != null && verse.number! > 0)
-              TextSpan(text: '${verse.number}. ', style: numberStyle),
+              TextSpan(text: '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ', style: numberStyle),
             TextSpan(text: verse.text),
           ],
         ),
@@ -2853,7 +2821,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         FilledButton.icon(
           onPressed: _loadFullChapter,
           icon: const Icon(Icons.menu_book_outlined),
-          label: const Text('Read full chapter'),
+          label: Text(_isArabicLanguage(widget.language) ? 'اقرأ الإصحاح كاملًا' : 'Read full chapter'),
         ),
         if (_chapterError != null) ...[
           const SizedBox(height: 12),
@@ -3439,6 +3407,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             verseNumber: number,
             translations: translations,
             theme: theme,
+            language: widget.language,
+            version: _activeVersion,
           ),
         ),
         if (statusWidgets.isNotEmpty) ...[
@@ -3742,6 +3712,8 @@ Widget _buildInterlinearVerseGroup({
   required int verseNumber,
   required List<_InterlinearTranslation> translations,
   required ThemeData theme,
+  required String language,
+  String? version,
   TextStyle? textStyle,
   TextStyle? labelStyle,
 }) {
@@ -3757,7 +3729,7 @@ Widget _buildInterlinearVerseGroup({
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '$verseNumber',
+          formatVerseMarker(verseNumber, language: language, version: version),
           style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 6),
@@ -4268,8 +4240,17 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           final List<dynamic> verses = json.decode(response.body);
           final verseLines = _parseVerseLinesFromJson(verses);
           final text = verseLines
-              .map((v) =>
-                  "${v.number ?? ''}${v.number != null ? '. ' : ''}${v.text}")
+              .map((v) {
+                if (v.number == null) {
+                  return v.text;
+                }
+                final marker = formatVerseMarker(
+                  v.number!,
+                  language: option.apiLanguage,
+                  version: _activeVersion,
+                );
+                return '$marker. ${v.text}';
+              })
               .join("\n");
           final refLabel = ref.formattedReference;
           final direction = option.direction;
@@ -4905,7 +4886,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           style: baseStyle,
           children: [
             if (verse.number != null && verse.number! > 0)
-              TextSpan(text: '${verse.number}. ', style: numberStyle),
+              TextSpan(text: '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ', style: numberStyle),
             TextSpan(text: verse.text),
           ],
         ),
@@ -5051,6 +5032,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             verseNumber: number,
             translations: translations,
             theme: theme,
+            language: _languageOption.apiLanguage,
+            version: _activeVersion,
             textStyle: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
           ),
         ),
@@ -5132,7 +5115,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       onPressed:
                           _loading ? null : _showTranslationChangePicker,
                       icon: const Icon(Icons.translate),
-                      label: const Text('Change main translation'),
+                      label: Text(_versionLabel(_languageOption.code, _activeVersion)),
                     ),
                     _buildZoomOutButton(),
                     _buildZoomInButton(),

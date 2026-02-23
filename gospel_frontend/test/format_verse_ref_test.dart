@@ -34,6 +34,21 @@ void main() {
     });
   });
 
+
+  group('formatVerseMarker', () {
+    test('uses arabic-indic digits for arabic language', () {
+      expect(formatVerseMarker(12, language: 'arabic', version: 'KJV'), '١٢');
+    });
+
+    test('uses arabic-indic digits for Arabic version', () {
+      expect(formatVerseMarker(7, language: 'english', version: 'Van Dyke-'), '٧');
+    });
+
+    test('keeps western digits for non-arabic language/version', () {
+      expect(formatVerseMarker(7, language: 'english', version: 'KJV'), '7');
+    });
+  });
+
   group('formatVerseRef', () {
     test('formats range 1:1-4 in Arabic with RTL isolation and RLM separators', () {
       final formatted = formatVerseRef('1:1-4', 'arabic');
