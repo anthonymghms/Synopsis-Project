@@ -1460,13 +1460,18 @@ class _TopicListScreenState extends State<TopicListScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            Text(
-                              languageOption.title,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .headlineSmall
-                                  ?.copyWith(fontWeight: FontWeight.w600),
-                              textAlign: TextAlign.center,
+                            SizedBox(
+                              width: double.infinity,
+                              child: Center(
+                                child: Text(
+                                  languageOption.title,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 12),
                             Wrap(
