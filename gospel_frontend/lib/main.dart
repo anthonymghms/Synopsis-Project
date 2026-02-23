@@ -3289,6 +3289,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final harmonySections = _buildHarmonySections();
     final useHarmonySections = _isHarmonySource && harmonySections.isNotEmpty;
 
+    final registeredScrollVerseIds = <String>{};
     final verseWidgets = useHarmonySections
         ? harmonySections
             .expand<Widget>((section) {
@@ -3332,8 +3333,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   final number = verse.number;
                   final highlighted =
                       number != null && _highlightVerses.contains(number);
-                  final verseId = number != null && number > 0
+                  final rawVerseId = number != null && number > 0
                       ? 'verse-$bookSlug-${widget.chapter}-$number'
+                      : null;
+                  final verseId = rawVerseId != null &&
+                          registeredScrollVerseIds.add(rawVerseId)
+                      ? rawVerseId
                       : null;
                   return _buildVerseParagraph(
                     verse,
@@ -3348,8 +3353,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         : _chapterVerses.map((verse) {
             final number = verse.number;
             final highlighted = number != null && _highlightVerses.contains(number);
-            final verseId = number != null && number > 0
+            final rawVerseId = number != null && number > 0
                 ? 'verse-$bookSlug-${widget.chapter}-$number'
+                : null;
+            final verseId = rawVerseId != null &&
+                    registeredScrollVerseIds.add(rawVerseId)
+                ? rawVerseId
                 : null;
             return _buildVerseParagraph(
               verse,
