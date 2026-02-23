@@ -2788,7 +2788,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Uri _referenceUri({required String book, required int chapter}) {
     final queryParameters = <String, String>{
       'book': book,
-      'bookDisplay': widget.displayBook,
+      'bookDisplay': book,
       'chapter': chapter.toString(),
       'language': widget.language,
       'version': _activeVersion,
@@ -2969,6 +2969,20 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
+  int _clampChapterForBook(String book, int chapter) {
+    final maxChapter = gospelChapterCounts[_normalizeGospelName(book)];
+    if (maxChapter == null) {
+      return chapter <= 0 ? 1 : chapter;
+    }
+    if (chapter <= 0) {
+      return 1;
+    }
+    if (chapter > maxChapter) {
+      return maxChapter;
+    }
+    return chapter;
+  }
+
   Widget _buildChapterSection(ThemeData theme) {
 
     if (_loadingChapter) {
@@ -3024,7 +3038,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           hasNextBook: hasNextBook,
           onPreviousBook: hasPrevBook
               ? () => _openReferenceUri(
-                  _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1),
+                  _referenceUri(
+                      book: orderedGospels[bookIndex - 1],
+                      chapter: _clampChapterForBook(
+                        orderedGospels[bookIndex - 1],
+                        widget.chapter,
+                      ),
+                    ),
                 )
               : null,
           onPreviousChapter: hasPrevChapter
@@ -3052,7 +3072,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               : null,
           onNextBook: hasNextBook
               ? () => _openReferenceUri(
-                  _referenceUri(book: orderedGospels[bookIndex + 1], chapter: 1),
+                  _referenceUri(
+                      book: orderedGospels[bookIndex + 1],
+                      chapter: _clampChapterForBook(
+                        orderedGospels[bookIndex + 1],
+                        widget.chapter,
+                      ),
+                    ),
                 )
               : null,
         ),
@@ -3068,7 +3094,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           hasNextBook: hasNextBook,
           onPreviousBook: hasPrevBook
               ? () => _openReferenceUri(
-                  _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1),
+                  _referenceUri(
+                      book: orderedGospels[bookIndex - 1],
+                      chapter: _clampChapterForBook(
+                        orderedGospels[bookIndex - 1],
+                        widget.chapter,
+                      ),
+                    ),
                 )
               : null,
           onPreviousChapter: hasPrevChapter
@@ -3096,7 +3128,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               : null,
           onNextBook: hasNextBook
               ? () => _openReferenceUri(
-                  _referenceUri(book: orderedGospels[bookIndex + 1], chapter: 1),
+                  _referenceUri(
+                      book: orderedGospels[bookIndex + 1],
+                      chapter: _clampChapterForBook(
+                        orderedGospels[bookIndex + 1],
+                        widget.chapter,
+                      ),
+                    ),
                 )
               : null,
         ),
