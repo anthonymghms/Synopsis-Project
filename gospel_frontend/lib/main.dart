@@ -2585,7 +2585,7 @@ class ChapterNav extends StatelessWidget {
             ),
             Expanded(
               child: Text(
-                isArabic ? 'الإصحاح $chapter' : 'Chapter $chapter',
+                isArabic ? 'فصل ${toArabicIndicDigits(chapter.toString())}' : 'Chapter $chapter',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleMedium
                     ?.copyWith(fontWeight: FontWeight.w600),
@@ -4188,7 +4188,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return 'Reference';
     }
     if (_languageOption.code == 'arabic') {
-      return 'سفر $book';
+      return 'إنجيل $book';
     }
     return 'Book of $book';
   }
