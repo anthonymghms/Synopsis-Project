@@ -617,6 +617,13 @@ const Map<String, int> canonicalGospelsIndex = {
 
 const List<String> orderedGospels = ['Matthew', 'Mark', 'Luke', 'John'];
 
+const Map<String, int> gospelChapterCounts = {
+  'Matthew': 28,
+  'Mark': 16,
+  'Luke': 24,
+  'John': 21,
+};
+
 const Map<String, String> gospelNameSynonyms = {
   'mathew': 'Matthew',
   'matthew': 'Matthew',
@@ -2088,46 +2095,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     });
   }
 
-  Future<void> _openFullChapterFromPreview() async {
-    if (_isLaunching) {
-      return;
-    }
-    final uri = _buildReferenceUri(widget.reference);
-    if (uri == null) {
-      return;
-    }
-    final queryParameters = Map<String, String>.from(uri.queryParameters);
-    queryParameters.remove('verses');
-    final fullChapterUri =
-        Uri(path: uri.path, queryParameters: queryParameters);
-
-    setState(() {
-      _isLaunching = true;
-    });
-
-    try {
-      final opened = await openReferenceLink(fullChapterUri);
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to open reference.')),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to open reference.')),
-        );
-      }
-    } finally {
-      _hidePreview();
-      if (mounted) {
-        setState(() {
-          _isLaunching = false;
-        });
-      }
-    }
-  }
-
   String _previewCacheKey(GospelReference reference) {
     final bookParam = reference.bookId.trim().isNotEmpty
         ? reference.bookId.trim()
@@ -2387,9 +2354,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     );
     final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
     final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
-    final isArabic = _isArabicLanguage(widget.language);
-    final fullChapterLabel = isArabic ? 'اقرأ الإصحاح كاملًا' : 'Read full chapter';
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2430,15 +2394,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
               ),
             ),
           ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: FilledButton.tonalIcon(
-            onPressed: _openFullChapterFromPreview,
-            icon: const Icon(Icons.menu_book_outlined),
-            label: Text(fullChapterLabel),
-          ),
-        ),
+
       ],
     );
   }
@@ -2545,16 +2501,86 @@ class ReferenceViewerPage extends StatefulWidget {
   State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
 }
 
+
+class ChapterNav extends StatelessWidget {
+  const ChapterNav({
+    super.key,
+    required this.chapter,
+    required this.onPreviousBook,
+    required this.onPreviousChapter,
+    required this.onNextChapter,
+    required this.onNextBook,
+    required this.hasPreviousBook,
+    required this.hasPreviousChapter,
+    required this.hasNextChapter,
+    required this.hasNextBook,
+    required this.isArabic,
+  });
+
+  final int chapter;
+  final VoidCallback? onPreviousBook;
+  final VoidCallback? onPreviousChapter;
+  final VoidCallback? onNextChapter;
+  final VoidCallback? onNextBook;
+  final bool hasPreviousBook;
+  final bool hasPreviousChapter;
+  final bool hasNextChapter;
+  final bool hasNextBook;
+  final bool isArabic;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Previous book',
+              onPressed: hasPreviousBook ? onPreviousBook : null,
+              icon: const Icon(Icons.keyboard_double_arrow_left),
+            ),
+            IconButton(
+              tooltip: 'Previous chapter',
+              onPressed: hasPreviousChapter ? onPreviousChapter : null,
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Expanded(
+              child: Text(
+                isArabic ? 'الإصحاح $chapter' : 'Chapter $chapter',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Next chapter',
+              onPressed: hasNextChapter ? onNextChapter : null,
+              icon: const Icon(Icons.chevron_right),
+            ),
+            IconButton(
+              tooltip: 'Next book',
+              onPressed: hasNextBook ? onNextBook : null,
+              icon: const Icon(Icons.keyboard_double_arrow_right),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   static const double _minTextScale = 0.85;
   static const double _maxTextScale = 1.4;
   static const double _textScaleStep = 0.1;
-  bool _loadingReference = true;
+  bool _loadingChapter = true;
   String? _error;
-  List<_VerseLine> _referenceVerses = const <_VerseLine>[];
-  bool _loadingChapter = false;
-  String? _chapterError;
-  List<_VerseLine>? _chapterVerses;
+  List<_VerseLine> _chapterVerses = const <_VerseLine>[];
+  Set<int> _highlightVerses = const <int>{};
+  int? _highlightStart;
   bool _withDiacritics = true;
   bool _interlinearView = false;
   double _textScale = 1.0;
@@ -2576,7 +2602,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     _selectedVersion =
         _sanitizeVersionForLanguage(_languageOption, widget.version);
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
-    _loadReference();
+    _loadChapter();
   }
 
   String get _baseVersion {
@@ -2663,6 +2689,116 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return _displayGospelName(book, option);
   }
 
+  String _slugBookForId(String book) {
+    final canonical = _normalizeGospelName(book);
+    return canonical.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '-');
+  }
+
+  Set<int> _parseHighlightVerses() {
+    String source = widget.verses.trim();
+    if (source.isEmpty) {
+      final label = widget.referenceLabelOverride.trim();
+      final match = RegExp(r'(?:\d+)\s*:\s*(\d+)(?:\s*-\s*(\d+))?').firstMatch(label);
+      if (match != null) {
+        source = match.group(2) != null
+            ? '${match.group(1)}-${match.group(2)}'
+            : (match.group(1) ?? '');
+      }
+    }
+    if (source.isEmpty) {
+      return const <int>{};
+    }
+
+    final verses = <int>{};
+    for (final rawPart in source.split(',')) {
+      final part = rawPart.trim();
+      if (part.isEmpty) {
+        continue;
+      }
+      final range = RegExp(r'^(\d+)\s*-\s*(\d+)$').firstMatch(part);
+      if (range != null) {
+        final a = int.tryParse(range.group(1)!);
+        final b = int.tryParse(range.group(2)!);
+        if (a == null || b == null) {
+          continue;
+        }
+        final start = a <= b ? a : b;
+        final end = a <= b ? b : a;
+        for (var v = start; v <= end; v++) {
+          verses.add(v);
+        }
+        continue;
+      }
+      final single = int.tryParse(part);
+      if (single != null) {
+        verses.add(single);
+      }
+    }
+    return verses;
+  }
+
+  Future<bool> _canLoadChapter(String book, int chapter) async {
+    if (chapter <= 0) {
+      return false;
+    }
+    final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
+      'language': widget.language,
+      'version': _activeVersion,
+      'book': book,
+      'chapter': chapter.toString(),
+    });
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        return false;
+      }
+      final verses = _parseVerseLines(response.body);
+      return verses.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _scrollToHighlightedVerse() {
+    if (_highlightStart == null) {
+      return;
+    }
+    final targetId =
+        'verse-${_slugBookForId(_bookParameter)}-${widget.chapter}-${_highlightStart!}';
+    void tryScroll() {
+      final context = _verseKeys[targetId]?.currentContext;
+      if (context != null) {
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.5,
+          duration: Duration.zero,
+          curve: Curves.linear,
+        );
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      tryScroll();
+      WidgetsBinding.instance.addPostFrameCallback((_) => tryScroll());
+    });
+  }
+
+  final Map<String, GlobalKey> _verseKeys = <String, GlobalKey>{};
+
+  Uri _referenceUri({required String book, required int chapter}) {
+    final queryParameters = <String, String>{
+      'book': book,
+      'bookDisplay': widget.displayBook,
+      'chapter': chapter.toString(),
+      'language': widget.language,
+      'version': _activeVersion,
+    };
+    if (widget.topicName.trim().isNotEmpty) {
+      queryParameters['topic'] = widget.topicName.trim();
+    }
+    return Uri(path: '/reference', queryParameters: queryParameters);
+  }
+
   String get _metaSummary {
     final segments = <String>[];
     final version = _activeVersion.trim();
@@ -2685,69 +2821,19 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return segments.join(' · ');
   }
 
-  Future<void> _loadReference() async {
+  Future<void> _loadChapter() async {
     final bookParam = _bookParameter;
     if (widget.chapter <= 0 || bookParam.isEmpty) {
       setState(() {
         _error = 'This reference is missing details needed to load the text.';
-        _loadingReference = false;
-      });
-      return;
-    }
-
-    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
-
-    setState(() {
-      _loadingReference = true;
-      _error = null;
-    });
-
-    try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
-        'language': widget.language,
-        'version': _activeVersion,
-        'book': bookParam,
-        'chapter': widget.chapter.toString(),
-        'verse': verseParam,
-      });
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
-      final verses = _parseVerseLines(response.body);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _referenceVerses = verses;
-        _loadingReference = false;
-      });
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _error = 'Failed to load reference: $e';
-        _loadingReference = false;
-      });
-    }
-  }
-
-  Future<void> _loadFullChapter() async {
-    if (_loadingChapter) {
-      return;
-    }
-    final bookParam = _bookParameter;
-    if (widget.chapter <= 0 || bookParam.isEmpty) {
-      setState(() {
-        _chapterError = 'Unable to determine which chapter to load.';
+        _loadingChapter = false;
       });
       return;
     }
 
     setState(() {
       _loadingChapter = true;
-      _chapterError = null;
+      _error = null;
     });
 
     try {
@@ -2762,41 +2848,44 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         throw Exception('Error ${response.statusCode}');
       }
       final verses = _parseVerseLines(response.body);
+      final highlights = _parseHighlightVerses();
+      final start = highlights.isEmpty ? null : (highlights.toList()..sort()).first;
       if (!mounted) {
         return;
       }
       setState(() {
         _chapterVerses = verses;
+        _highlightVerses = highlights;
+        _highlightStart = start;
         _loadingChapter = false;
       });
+      _scrollToHighlightedVerse();
     } catch (e) {
       if (!mounted) {
         return;
       }
       setState(() {
-        _chapterError = 'Failed to load full chapter: $e';
+        _error = 'Failed to load chapter: $e';
         _loadingChapter = false;
       });
     }
   }
 
   void _toggleReferenceDiacritics() {
+
     if (_languageOption.code != 'arabic') {
       return;
     }
-    final shouldReloadChapter = _chapterVerses != null || _chapterError != null;
+    final shouldReloadChapter = _chapterVerses.isNotEmpty || _error != null;
     setState(() {
       _withDiacritics = !_withDiacritics;
       if (shouldReloadChapter) {
-        _chapterVerses = null;
-        _chapterError = null;
+        _chapterVerses = const <_VerseLine>[];
+        _error = null;
         _loadingChapter = false;
       }
     });
-    _loadReference();
-    if (shouldReloadChapter) {
-      _loadFullChapter();
-    }
+    _loadChapter();
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
@@ -2806,7 +2895,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             _withDiacritics == !_isArabicWithoutDiacritics(sanitized))) {
       return;
     }
-    final shouldReloadChapter = _chapterVerses != null || _chapterError != null;
+    final shouldReloadChapter = _chapterVerses.isNotEmpty || _error != null;
 
     setState(() {
       _selectedVersion = sanitized;
@@ -2814,8 +2903,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _withDiacritics = false;
       }
       if (shouldReloadChapter) {
-        _chapterVerses = null;
-        _chapterError = null;
+        _chapterVerses = const <_VerseLine>[];
+        _error = null;
         _loadingChapter = false;
       }
     });
@@ -2827,65 +2916,60 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       // Ignore persistence errors and continue.
     }
 
-    _loadReference();
-    if (shouldReloadChapter) {
-      _loadFullChapter();
-    }
+    _loadChapter();
   }
 
-  Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme) {
+  Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme, {bool highlighted = false, String? verseId}) {
     final TextStyle baseStyle =
         theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
             const TextStyle(fontSize: 16, height: 1.6);
     final TextStyle numberStyle =
         baseStyle.copyWith(fontWeight: FontWeight.w600);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: RichText(
-        textScaler: TextScaler.linear(_textScale),
-        textAlign: TextAlign.start,
-        text: TextSpan(
-          style: baseStyle,
-          children: [
-            if (verse.number != null && verse.number! > 0)
-              TextSpan(text: '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ', style: numberStyle),
-            TextSpan(text: verse.text),
-          ],
-        ),
+    final content = RichText(
+      textScaler: TextScaler.linear(_textScale),
+      textAlign: TextAlign.start,
+      text: TextSpan(
+        style: baseStyle,
+        children: [
+          if (verse.number != null && verse.number! > 0)
+            TextSpan(text: '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ', style: numberStyle),
+          TextSpan(text: verse.text),
+        ],
       ),
+    );
+
+    final widgetChild = highlighted
+        ? Container(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(10),
+              border: BorderDirectional(
+                start: BorderSide(color: theme.colorScheme.primary, width: 3),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: content,
+          )
+        : content;
+
+    return Padding(
+      key: verseId != null
+          ? (_verseKeys.putIfAbsent(verseId, () => GlobalKey()))
+          : null,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: widgetChild,
     );
   }
 
-  Widget _buildChapterSection(ThemeData theme) {
-    if (widget.chapter <= 0) {
-      return const SizedBox.shrink();
-    }
 
-    if (_chapterVerses != null) {
-      final verses = _chapterVerses!;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Full Chapter',
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w600),
-            textAlign: TextAlign.start,
-          ),
-          const SizedBox(height: 12),
-          if (verses.isEmpty)
-            Text(
-              'No chapter text is available for this passage yet.',
-              style: theme.textTheme.bodyMedium,
-              textAlign: TextAlign.start,
-            )
-          else
-            ...verses
-                .map((verse) => _buildVerseParagraph(verse, theme))
-                .toList(),
-        ],
-      );
+  Future<void> _openReferenceUri(Uri uri) async {
+    final opened = await openReferenceLink(uri);
+    if (!opened && mounted) {
+      Navigator.of(context).pushReplacementNamed(uri.toString());
     }
+  }
+
+  Widget _buildChapterSection(ThemeData theme) {
 
     if (_loadingChapter) {
       return const Padding(
@@ -2894,28 +2978,134 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       );
     }
 
+    if (_error != null) {
+      return Text(
+        _error!,
+        style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
+      );
+    }
+
+    if (_chapterVerses.isEmpty) {
+      return Text(
+        'No chapter text is available for this passage yet.',
+        style: theme.textTheme.bodyMedium,
+      );
+    }
+
+    final canonical = _normalizeGospelName(_bookParameter);
+    final bookIndex = orderedGospels.indexOf(canonical);
+    final hasPrevBook = bookIndex > 0;
+    final hasNextBook =
+        bookIndex >= 0 && bookIndex < orderedGospels.length - 1;
+    final hasPrevChapter = widget.chapter > 1;
+    final maxChapter = gospelChapterCounts[canonical];
+    final hasNextChapter =
+        maxChapter == null ? true : widget.chapter < maxChapter;
+
+    final bookSlug = _slugBookForId(_bookParameter);
+    final verseWidgets = _chapterVerses.map((verse) {
+      final number = verse.number;
+      final highlighted = number != null && _highlightVerses.contains(number);
+      final verseId = number != null && number > 0
+          ? 'verse-$bookSlug-${widget.chapter}-$number'
+          : null;
+      return _buildVerseParagraph(verse, theme, highlighted: highlighted, verseId: verseId);
+    }).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        FilledButton.icon(
-          onPressed: _loadFullChapter,
-          icon: const Icon(Icons.menu_book_outlined),
-          label: Text(_isArabicLanguage(widget.language) ? 'اقرأ الإصحاح كاملًا' : 'Read full chapter'),
+        ChapterNav(
+          chapter: widget.chapter,
+          isArabic: _isArabicLanguage(widget.language),
+          hasPreviousBook: hasPrevBook,
+          hasPreviousChapter: hasPrevChapter,
+          hasNextChapter: hasNextChapter,
+          hasNextBook: hasNextBook,
+          onPreviousBook: hasPrevBook
+              ? () => _openReferenceUri(
+                  _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1),
+                )
+              : null,
+          onPreviousChapter: hasPrevChapter
+              ? () => _openReferenceUri(
+                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
+                )
+              : null,
+          onNextChapter: hasNextChapter
+              ? () async {
+                  if (maxChapter == null) {
+                    final next = widget.chapter + 1;
+                    final ok = await _canLoadChapter(canonical, next);
+                    if (!ok) {
+                      return;
+                    }
+                    await _openReferenceUri(
+                      _referenceUri(book: canonical, chapter: next),
+                    );
+                    return;
+                  }
+                  await _openReferenceUri(
+                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
+                  );
+                }
+              : null,
+          onNextBook: hasNextBook
+              ? () => _openReferenceUri(
+                  _referenceUri(book: orderedGospels[bookIndex + 1], chapter: 1),
+                )
+              : null,
         ),
-        if (_chapterError != null) ...[
-          const SizedBox(height: 12),
-          Text(
-            _chapterError!,
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.error),
-            textAlign: TextAlign.start,
-          ),
-        ],
+        const SizedBox(height: 8),
+        ...verseWidgets,
+        const SizedBox(height: 12),
+        ChapterNav(
+          chapter: widget.chapter,
+          isArabic: _isArabicLanguage(widget.language),
+          hasPreviousBook: hasPrevBook,
+          hasPreviousChapter: hasPrevChapter,
+          hasNextChapter: hasNextChapter,
+          hasNextBook: hasNextBook,
+          onPreviousBook: hasPrevBook
+              ? () => _openReferenceUri(
+                  _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1),
+                )
+              : null,
+          onPreviousChapter: hasPrevChapter
+              ? () => _openReferenceUri(
+                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
+                )
+              : null,
+          onNextChapter: hasNextChapter
+              ? () async {
+                  if (maxChapter == null) {
+                    final next = widget.chapter + 1;
+                    final ok = await _canLoadChapter(canonical, next);
+                    if (!ok) {
+                      return;
+                    }
+                    await _openReferenceUri(
+                      _referenceUri(book: canonical, chapter: next),
+                    );
+                    return;
+                  }
+                  await _openReferenceUri(
+                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
+                  );
+                }
+              : null,
+          onNextBook: hasNextBook
+              ? () => _openReferenceUri(
+                  _referenceUri(book: orderedGospels[bookIndex + 1], chapter: 1),
+                )
+              : null,
+        ),
       ],
     );
   }
 
   Widget _buildArabicReferenceToggleButton() {
+
     if (_languageOption.code != 'arabic') {
       return const SizedBox.shrink();
     }
@@ -3408,7 +3598,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Widget _buildInterlinearReferenceSection(ThemeData theme) {
-    if (_referenceVerses.isEmpty) {
+    if (_chapterVerses.isEmpty) {
       return Text(
         'No passage text is available for this reference yet.',
         style: theme.textTheme.bodyMedium,
@@ -3421,7 +3611,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _InterlinearTranslation(
         label: _metaSummary.isNotEmpty ? _metaSummary : _currentVersionLabel(),
         direction: _languageOption.direction,
-        verses: _mapVersesByNumber(_referenceVerses),
+        verses: _mapVersesByNumber(_chapterVerses),
       ),
     ];
     for (final entry in _comparisons) {
@@ -3604,25 +3794,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Widget _buildBody(BuildContext context) {
-    if (_loadingReference) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            _error!,
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .bodyLarge
-                ?.copyWith(color: Theme.of(context).colorScheme.error),
-          ),
-        ),
-      );
-    }
-
     final theme = Theme.of(context);
     final direction = _languageOption.direction;
     final actionButtons = <Widget>[
@@ -3669,23 +3840,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                           if (_interlinearView && _comparisons.isNotEmpty) ...[
                             _buildInterlinearReferenceSection(theme),
                             const SizedBox(height: 24),
+                            _buildChapterSection(theme),
                           ] else ...[
-                            if (_referenceVerses.isEmpty)
-                              Text(
-                                'No passage text is available for this reference yet.',
-                                style: theme.textTheme.bodyMedium,
-                                textAlign: TextAlign.start,
-                              )
-                            else
-                              ..._referenceVerses
-                                  .map((verse) =>
-                                      _buildVerseParagraph(verse, theme))
-                                  .toList(),
+                            _buildChapterSection(theme),
                             const SizedBox(height: 24),
                             _buildComparisonSection(theme),
                           ],
-                          const SizedBox(height: 32),
-                          _buildChapterSection(theme),
                         ],
                       ),
                     ),
