@@ -76,6 +76,6 @@ FormattedVerseRef formatVerseRef(String input, String lang) {
   final end = parsed.end == null ? null : toArabicIndicDigits(parsed.end!);
   final formatted = end == null ? '$chapter:$start' : '$chapter:$start-$end';
 
-  // Use RLI/PDI to isolate this run in RTL contexts and prevent flipping ranges.
-  return FormattedVerseRef(text: '\u2067$formatted\u2069', dir: TextDirection.rtl);
+  // Use LRI/PDI so verse references keep logical C:V-V order in RTL UI.
+  return FormattedVerseRef(text: '\u2066$formatted\u2069', dir: TextDirection.ltr);
 }

@@ -35,28 +35,28 @@ void main() {
   });
 
   group('formatVerseRef', () {
-    test('formats range 1:1-4 in Arabic with bidi isolation', () {
+    test('formats range 1:1-4 in Arabic with stable bidi isolation', () {
       final formatted = formatVerseRef('1:1-4', 'arabic');
-      expect(formatted.text, '\u2067١:١-٤\u2069');
-      expect(formatted.dir, TextDirection.rtl);
+      expect(formatted.text, '\u2066١:١-٤\u2069');
+      expect(formatted.dir, TextDirection.ltr);
     });
 
     test('formats range 1:2-24 in Arabic with correct order', () {
       final formatted = formatVerseRef('1:2-24', 'ar');
-      expect(formatted.text, '\u2067١:٢-٢٤\u2069');
-      expect(formatted.dir, TextDirection.rtl);
+      expect(formatted.text, '\u2066١:٢-٢٤\u2069');
+      expect(formatted.dir, TextDirection.ltr);
     });
 
     test('formats 12:3-45 in Arabic', () {
       final formatted = formatVerseRef('12:3-45', 'arabic2');
-      expect(formatted.text, '\u2067١٢:٣-٤٥\u2069');
-      expect(formatted.dir, TextDirection.rtl);
+      expect(formatted.text, '\u2066١٢:٣-٤٥\u2069');
+      expect(formatted.dir, TextDirection.ltr);
     });
 
     test('formats single verse in Arabic', () {
       final formatted = formatVerseRef('1:1', 'arabic');
-      expect(formatted.text, '\u2067١:١\u2069');
-      expect(formatted.dir, TextDirection.rtl);
+      expect(formatted.text, '\u2066١:١\u2069');
+      expect(formatted.dir, TextDirection.ltr);
     });
 
     test('returns unchanged placeholders', () {
@@ -72,7 +72,7 @@ void main() {
     });
   });
 
-  testWidgets('VerseRefText applies RTL direction for Arabic references',
+  testWidgets('VerseRefText applies isolated LTR direction for Arabic references',
       (WidgetTester tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -88,9 +88,9 @@ void main() {
         matching: find.byType(Directionality),
       ).first,
     );
-    expect(directionality.textDirection, TextDirection.rtl);
+    expect(directionality.textDirection, TextDirection.ltr);
 
     final textWidget = tester.widget<Text>(find.byType(Text));
-    expect(textWidget.data, '\u2067١:٢-٢٤\u2069');
+    expect(textWidget.data, '\u2066١:٢-٢٤\u2069');
   });
 }
