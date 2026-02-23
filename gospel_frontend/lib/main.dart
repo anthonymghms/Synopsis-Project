@@ -2576,12 +2576,12 @@ class ChapterNav extends StatelessWidget {
             IconButton(
               tooltip: 'Previous book',
               onPressed: hasPreviousBook ? onPreviousBook : null,
-              icon: const Icon(Icons.keyboard_double_arrow_left),
+              icon: const Icon(Icons.keyboard_double_arrow_left, textDirection: TextDirection.ltr),
             ),
             IconButton(
               tooltip: 'Previous chapter',
               onPressed: hasPreviousChapter ? onPreviousChapter : null,
-              icon: const Icon(Icons.chevron_left),
+              icon: const Icon(Icons.chevron_left, textDirection: TextDirection.ltr),
             ),
             Expanded(
               child: Text(
@@ -2594,12 +2594,12 @@ class ChapterNav extends StatelessWidget {
             IconButton(
               tooltip: 'Next chapter',
               onPressed: hasNextChapter ? onNextChapter : null,
-              icon: const Icon(Icons.chevron_right),
+              icon: const Icon(Icons.chevron_right, textDirection: TextDirection.ltr),
             ),
             IconButton(
               tooltip: 'Next book',
               onPressed: hasNextBook ? onNextBook : null,
-              icon: const Icon(Icons.keyboard_double_arrow_right),
+              icon: const Icon(Icons.keyboard_double_arrow_right, textDirection: TextDirection.ltr),
             ),
           ],
         ),
