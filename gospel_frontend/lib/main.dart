@@ -2630,6 +2630,8 @@ class _HarmonySection {
   final List<_VerseLine> verses;
 }
 
+enum _ComparisonScopeMode { highlight, custom, chapter }
+
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   static const double _minTextScale = 0.85;
   static const double _maxTextScale = 1.4;
@@ -2647,6 +2649,59 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   double _textScale = 1.0;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
+
+  int get _chapterMaxVerse {
+    var maxVerse = 0;
+    for (final verse in _chapterVerses) {
+      final number = verse.number;
+      if (number != null && number > maxVerse) {
+        maxVerse = number;
+      }
+    }
+    return maxVerse > 0 ? maxVerse : _chapterVerses.length;
+  }
+
+  Set<int> get _availableChapterVerses {
+    final verses = <int>{};
+    for (final verse in _chapterVerses) {
+      final number = verse.number;
+      if (number != null && number > 0) {
+        verses.add(number);
+      }
+    }
+    if (verses.isEmpty) {
+      for (var i = 1; i <= _chapterVerses.length; i++) {
+        verses.add(i);
+      }
+    }
+    return verses;
+  }
+
+  int get _defaultScopeEndVerse {
+    final maxVerse = _chapterMaxVerse;
+    if (maxVerse <= 0) {
+      return 1;
+    }
+    return math.min(10, maxVerse);
+  }
+
+  int get _highlightStartVerseForScope {
+    if (_highlightVerses.isEmpty) {
+      return 1;
+    }
+    final ordered = _highlightVerses.toList()..sort();
+    return ordered.first;
+  }
+
+  int get _highlightEndVerseForScope {
+    if (_highlightVerses.isEmpty) {
+      return _defaultScopeEndVerse;
+    }
+    final ordered = _highlightVerses.toList()..sort();
+    return ordered.last;
+  }
+
+  bool get _hasHighlightScope => _highlightVerses.isNotEmpty;
 
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
@@ -3634,57 +3689,68 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
-  String _comparisonKey(LanguageOption option, String version) {
-    return '${option.code}|${version.toLowerCase()}';
+  String _comparisonKey(
+    LanguageOption option,
+    String version,
+    _ComparisonScopeMode scopeMode,
+    int scopeStartVerse,
+    int scopeEndVerse,
+  ) {
+    return '${option.code}|${version.toLowerCase()}|${scopeMode.name}|$scopeStartVerse|$scopeEndVerse';
+  }
+
+  String _scopePreviewLabel(int startVerse, int endVerse) {
+    final reference = startVerse == endVerse
+        ? '${widget.chapter}:$startVerse'
+        : '${widget.chapter}:$startVerse–$endVerse';
+    final direction =
+        _languageOptionForApiLanguage(widget.language)?.direction ??
+            TextDirection.ltr;
+    final book = _displayBookLabel.isNotEmpty
+        ? _displayBookLabel
+        : _currentCanonicalBook;
+    return _combineBookAndReference(
+      book,
+      reference,
+      direction,
+      isArabic: _isArabicLanguage(widget.language),
+    );
+  }
+
+  bool _isValidScopeRange(int startVerse, int endVerse, int maxVerse) {
+    if (!(startVerse >= 1 && endVerse >= 1 && startVerse <= endVerse && endVerse <= maxVerse)) {
+      return false;
+    }
+    final available = _availableChapterVerses;
+    return available.contains(startVerse) && available.contains(endVerse);
   }
 
   void _showComparisonPicker() {
-    if (_supportedLanguages.isEmpty) {
+    final maxVerse = _chapterMaxVerse;
+    if (_supportedLanguages.isEmpty || maxVerse <= 0) {
       return;
     }
+
     final mainLanguage = _languageOption;
     final mainVersion =
         _sanitizeVersionForLanguage(mainLanguage, _activeVersion);
+    final initialMode =
+        _hasHighlightScope ? _ComparisonScopeMode.highlight : _ComparisonScopeMode.custom;
+    var scopeMode = initialMode;
+    var customStartVerse = 1;
+    var customEndVerse = _defaultScopeEndVerse;
+    var selectedStartVerse =
+        initialMode == _ComparisonScopeMode.highlight ? _highlightStartVerseForScope : customStartVerse;
+    var selectedEndVerse =
+        initialMode == _ComparisonScopeMode.highlight ? _highlightEndVerseForScope : customEndVerse;
+
     LanguageOption selectedLanguage = mainLanguage;
-    final selectedByLanguage = <String, Set<String>>{};
+    var selectedVersion = _sanitizeVersionForLanguage(
+      selectedLanguage,
+      selectedLanguage.apiVersion,
+    );
 
-    void addSelection(LanguageOption language, String version) {
-      final sanitized = _sanitizeVersionForLanguage(language, version);
-      selectedByLanguage
-          .putIfAbsent(language.code, () => <String>{})
-          .add(sanitized);
-    }
-
-    for (final entry in _comparisons) {
-      addSelection(entry.language, entry.version);
-    }
-
-    List<_VersionChoice> buildChoices(LanguageOption language) {
-      final choices = <String, _VersionChoice>{};
-      for (final version in _selectableVersions(language)) {
-        final sanitized = _sanitizeVersionForLanguage(language, version.id);
-        if (_isSameTranslation(
-            language, sanitized, mainLanguage, mainVersion)) {
-          continue;
-        }
-        choices[_versionIdentityKey(language, sanitized)] = _VersionChoice(
-          version: sanitized,
-          label: version.label,
-        );
-      }
-      for (final selected in selectedByLanguage[language.code] ?? {}) {
-        choices.putIfAbsent(
-          _versionIdentityKey(language, selected),
-          () => _VersionChoice(
-            version: selected,
-            label: _versionLabel(language.code, selected),
-          ),
-        );
-      }
-      final ordered = choices.values.toList()
-        ..sort((a, b) => a.label.compareTo(b.label));
-      return ordered;
-    }
+    int modalStep = 0;
 
     showDialog<void>(
       context: context,
@@ -3699,58 +3765,73 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             ),
             child: StatefulBuilder(
             builder: (context, setModalState) {
-              final currentSelections = selectedByLanguage.putIfAbsent(
-                selectedLanguage.code,
-                () => <String>{},
+              final selectedPreview = _scopePreviewLabel(
+                selectedStartVerse,
+                selectedEndVerse,
               );
-              final choices = buildChoices(selectedLanguage);
+              final scopeError = _isValidScopeRange(
+                selectedStartVerse,
+                selectedEndVerse,
+                maxVerse,
+              )
+                  ? null
+                  : 'Please select a verse range within 1–$maxVerse.';
+              final choices = _selectableVersions(selectedLanguage)
+                  .map((choice) {
+                    final sanitized =
+                        _sanitizeVersionForLanguage(selectedLanguage, choice.id);
+                    return _VersionChoice(
+                      version: sanitized,
+                      label: choice.label,
+                    );
+                  })
+                  .where((choice) => !_isSameTranslation(
+                        selectedLanguage,
+                        choice.version,
+                        mainLanguage,
+                        mainVersion,
+                      ))
+                  .toList();
+
+              if (!choices.any((choice) => choice.version == selectedVersion) &&
+                  choices.isNotEmpty) {
+                selectedVersion = choices.first.version;
+              }
 
               Future<void> openVersionSelector() async {
                 await showDialog<void>(
                   context: context,
-                  builder: (context) {
-                    return StatefulBuilder(
-                      builder: (context, setDialogState) {
-                        return AlertDialog(
-                          title: Text(
-                            'Select versions (${selectedLanguage.label})',
-                          ),
-                          content: SizedBox(
-                            width: double.maxFinite,
-                            child: ListView(
-                              shrinkWrap: true,
-                              children: choices.map((choice) {
-                                final isSelected =
-                                    currentSelections.contains(choice.version);
-                                return CheckboxListTile(
-                                  value: isSelected,
-                                  onChanged: (value) {
-                                          setDialogState(() {
-                                            if (value == true) {
-                                              currentSelections
-                                                  .add(choice.version);
-                                            } else {
-                                              currentSelections
-                                                  .remove(choice.version);
-                                            }
-                                          });
-                                          setModalState(() {});
-                                        },
-                                  title: Text(choice.label),
-                                  controlAffinity:
-                                      ListTileControlAffinity.leading,
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              child: const Text('Done'),
-                            ),
-                          ],
-                        );
-                      },
+                  builder: (dialogContext) {
+                    return AlertDialog(
+                      title: Text('Select version (${selectedLanguage.label})'),
+                      content: SizedBox(
+                        width: double.maxFinite,
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: choices.map((choice) {
+                            return RadioListTile<String>(
+                              value: choice.version,
+                              groupValue: selectedVersion,
+                              onChanged: (value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                setModalState(() {
+                                  selectedVersion = value;
+                                });
+                                Navigator.of(dialogContext).pop();
+                              },
+                              title: Text(choice.label),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                      ],
                     );
                   },
                 );
@@ -3762,132 +3843,232 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   mainAxisSize: MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Add comparison translation',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<LanguageOption>(
-                      value: selectedLanguage,
-                      decoration: const InputDecoration(labelText: 'Language'),
-                      items: _supportedLanguages
-                          .map(
-                            (option) => DropdownMenuItem(
-                              value: option,
-                              child: Text(option.label),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setModalState(() {
-                          selectedLanguage = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: InkWell(
-                          onTap: openVersionSelector,
-                          child: InputDecorator(
-                            decoration:
-                                const InputDecoration(labelText: 'Versions'),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 4,
-                                    children: currentSelections.isEmpty
-                                        ? [
-                                            Text(
-                                              'Select versions',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyMedium
-                                                  ?.copyWith(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                  ),
-                                            ),
-                                          ]
-                                        : currentSelections.map((version) {
-                                            final label = _versionLabel(
-                                                selectedLanguage.code, version);
-                                            return InputChip(
-                                              label: Text(label),
-                                              onDeleted: () {
-                                                setModalState(() {
-                                                  currentSelections
-                                                      .remove(version);
-                                                });
-                                              },
-                                            );
-                                          }).toList(),
+                    if (modalStep == 0) ...[
+                      Text(
+                        'Select verses to compare',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      if (_hasHighlightScope)
+                        RadioListTile<_ComparisonScopeMode>(
+                          value: _ComparisonScopeMode.highlight,
+                          groupValue: scopeMode,
+                          onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
+                            setModalState(() {
+                              scopeMode = value;
+                              selectedStartVerse = _highlightStartVerseForScope;
+                              selectedEndVerse = _highlightEndVerseForScope;
+                            });
+                          },
+                          title: const Text('Highlighted reference (recommended)'),
+                        ),
+                      RadioListTile<_ComparisonScopeMode>(
+                        value: _ComparisonScopeMode.custom,
+                        groupValue: scopeMode,
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          setModalState(() {
+                            scopeMode = value;
+                            selectedStartVerse = customStartVerse;
+                            selectedEndVerse = customEndVerse;
+                          });
+                        },
+                        title: const Text('Custom range'),
+                      ),
+                      if (scopeMode == _ComparisonScopeMode.custom)
+                        Padding(
+                          padding: const EdgeInsetsDirectional.only(start: 16, end: 16, bottom: 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: customStartVerse.toString(),
+                                  keyboardType: TextInputType.number,
+                                  decoration: InputDecoration(
+                                    labelText: 'Start verse (1-$maxVerse)',
                                   ),
+                                  onChanged: (value) {
+                                    final parsed = int.tryParse(value);
+                                    if (parsed == null) {
+                                      return;
+                                    }
+                                    setModalState(() {
+                                      customStartVerse = parsed;
+                                      selectedStartVerse = parsed;
+                                    });
+                                  },
                                 ),
-                                const Icon(Icons.arrow_drop_down),
-                              ],
-                            ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: customEndVerse.toString(),
+                                  keyboardType: TextInputType.number,
+                                  decoration: InputDecoration(
+                                    labelText: 'End verse (1-$maxVerse)',
+                                  ),
+                                  onChanged: (value) {
+                                    final parsed = int.tryParse(value);
+                                    if (parsed == null) {
+                                      return;
+                                    }
+                                    setModalState(() {
+                                      customEndVerse = parsed;
+                                      selectedEndVerse = parsed;
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      RadioListTile<_ComparisonScopeMode>(
+                        value: _ComparisonScopeMode.chapter,
+                        groupValue: scopeMode,
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          setModalState(() {
+                            scopeMode = value;
+                            selectedStartVerse = 1;
+                            selectedEndVerse = maxVerse;
+                          });
+                        },
+                        title: const Text('Entire chapter'),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Selected: $selectedPreview',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      if (scopeError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          scopeError,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Theme.of(context).colorScheme.error),
+                        ),
+                      ],
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: scopeError == null
+                                ? () {
+                                    setModalState(() {
+                                      modalStep = 1;
+                                    });
+                                  }
+                                : null,
+                            child: const Text('Next'),
+                          ),
+                        ],
+                      ),
+                    ] else ...[
+                      Text(
+                        'Select translation to add',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<LanguageOption>(
+                        value: selectedLanguage,
+                        decoration: const InputDecoration(labelText: 'Language'),
+                        items: _supportedLanguages
+                            .map(
+                              (option) => DropdownMenuItem(
+                                value: option,
+                                child: Text(option.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setModalState(() {
+                            selectedLanguage = value;
+                            selectedVersion = _sanitizeVersionForLanguage(
+                              value,
+                              value.apiVersion,
+                            );
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      InkWell(
+                        onTap: choices.isEmpty ? null : openVersionSelector,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(labelText: 'Version'),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  choices.isEmpty
+                                      ? 'No alternative versions available'
+                                      : _versionLabel(
+                                          selectedLanguage.code,
+                                          selectedVersion,
+                                        ),
+                                ),
+                              ),
+                              const Icon(Icons.arrow_drop_down),
+                            ],
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        FilledButton(
-                          onPressed: () {
-                        Navigator.of(context).pop();
-                        final desired = <String>{};
-                            selectedByLanguage.forEach((code, versions) {
-                          final language = _supportedLanguages.firstWhere(
-                            (option) => option.code == code,
-                            orElse: () => mainLanguage,
-                          );
-                          for (final version in versions) {
-                            final key = _comparisonKey(language, version);
-                            if (_isSameTranslation(
-                                language, version, mainLanguage, mainVersion)) {
-                              continue;
-                            }
-                            desired.add(key);
-                          }
-                        });
-
-                        final existing = List<_ComparisonPassage>.from(_comparisons);
-                            setState(() {
-                          _comparisons.removeWhere((entry) {
-                            final key =
-                                _comparisonKey(entry.language, entry.version);
-                            return !desired.contains(key);
-                          });
-                        });
-
-                        for (final key in desired) {
-                          if (existing.any((entry) =>
-                              _comparisonKey(entry.language, entry.version) ==
-                              key)) {
-                            continue;
-                          }
-                          final parts = key.split('|');
-                          if (parts.length != 2) {
-                            continue;
-                          }
-                          final language = _supportedLanguages.firstWhere(
-                            (option) => option.code == parts[0],
-                            orElse: () => mainLanguage,
-                          );
-                          _addComparison(language, parts[1]);
-                        }
-                          },
-                          child: const Text('Done'),
-                        ),
-                      ],
-                    ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Selected: $selectedPreview',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                modalStep = 0;
+                              });
+                            },
+                            child: const Text('Back'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: choices.isEmpty
+                                ? null
+                                : () {
+                                    Navigator.of(context).pop();
+                                    _addComparison(
+                                      selectedLanguage,
+                                      selectedVersion,
+                                      scopeMode,
+                                      selectedStartVerse,
+                                      selectedEndVerse,
+                                    );
+                                  },
+                            child: const Text('Add comparison'),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               );
@@ -3899,11 +4080,27 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
-  void _addComparison(LanguageOption option, String version) {
+  void _addComparison(
+    LanguageOption option,
+    String version,
+    _ComparisonScopeMode scopeMode,
+    int scopeStartVerse,
+    int scopeEndVerse,
+  ) {
     final sanitized = _sanitizeVersionForLanguage(option, version);
+    final maxVerse = _chapterMaxVerse;
+    if (!_isValidScopeRange(scopeStartVerse, scopeEndVerse, maxVerse)) {
+      return;
+    }
     final existing = _comparisons.indexWhere((entry) =>
-        entry.language.code == option.code &&
-        entry.version.toLowerCase() == sanitized.toLowerCase());
+        _comparisonKey(
+          entry.language,
+          entry.version,
+          entry.scopeMode,
+          entry.scopeStartVerse,
+          entry.scopeEndVerse,
+        ) ==
+        _comparisonKey(option, sanitized, scopeMode, scopeStartVerse, scopeEndVerse));
     if (existing != -1) {
       _loadComparisonPassage(_comparisons[existing]);
       return;
@@ -3915,6 +4112,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       withDiacritics: option.code == 'arabic'
           ? _withDiacritics
           : !_isArabicWithoutDiacritics(sanitized),
+      scopeMode: scopeMode,
+      scopeStartVerse: scopeStartVerse,
+      scopeEndVerse: scopeEndVerse,
     );
     setState(() {
       _comparisons.add(entry);
@@ -3930,7 +4130,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       });
       return;
     }
-    final verseParam = widget.verses.trim().isEmpty ? '1' : widget.verses.trim();
+    final verseParam = entry.scopeStartVerse == entry.scopeEndVerse
+        ? '${entry.scopeStartVerse}'
+        : '${entry.scopeStartVerse}-${entry.scopeEndVerse}';
 
     setState(() {
       entry.loading = true;
@@ -4050,11 +4252,18 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         ]);
         continue;
       }
+      final scopedVerses = entry.verses.where((verse) {
+        final number = verse.number;
+        if (number == null) {
+          return false;
+        }
+        return number >= entry.scopeStartVerse && number <= entry.scopeEndVerse;
+      }).toList();
       translations.add(
         _InterlinearTranslation(
           label: label,
           direction: entry.language.direction,
-          verses: _mapVersesByNumber(entry.verses),
+          verses: _mapVersesByNumber(scopedVerses),
         ),
       );
     }
@@ -4119,6 +4328,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         : entry.version;
     final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
     final header = '${entry.language.label} · $versionLabel';
+    final scopeLabel = _scopePreviewLabel(entry.scopeStartVerse, entry.scopeEndVerse);
     final textDirection = entry.language.direction;
 
     return Card(
@@ -4146,6 +4356,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              Text(
+                'Scope: $scopeLabel',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
               if (entry.language.code == 'arabic') ...[
                 const SizedBox(height: 8),
                 _buildComparisonDiacriticsToggle(entry),
@@ -4169,6 +4385,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               ] else ...[
                 const SizedBox(height: 12),
                 ...entry.verses
+                    .where((verse) {
+                      final number = verse.number;
+                      if (number == null) {
+                        return false;
+                      }
+                      return number >= entry.scopeStartVerse &&
+                          number <= entry.scopeEndVerse;
+                    })
                     .map((verse) => _buildVerseParagraph(verse, theme))
                     .toList(),
               ],
@@ -4401,6 +4625,9 @@ class _ComparisonPassage {
   _ComparisonPassage({
     required this.language,
     required this.version,
+    this.scopeMode = _ComparisonScopeMode.custom,
+    this.scopeStartVerse = 1,
+    this.scopeEndVerse = 1,
     this.verses = const <_VerseLine>[],
     this.error,
     this.loading = false,
@@ -4409,6 +4636,9 @@ class _ComparisonPassage {
 
   final LanguageOption language;
   String version;
+  _ComparisonScopeMode scopeMode;
+  int scopeStartVerse;
+  int scopeEndVerse;
   List<_VerseLine> verses;
   String? error;
   bool loading;
