@@ -4178,6 +4178,226 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
   }
 
+  void _showEditComparisonScopeDialog(_ComparisonPassage entry) {
+    final maxVerse = _chapterMaxVerse;
+    if (maxVerse <= 0) {
+      return;
+    }
+
+    var scopeMode = entry.scopeMode;
+    if (scopeMode == _ComparisonScopeMode.highlight && !_hasHighlightScope) {
+      scopeMode = _ComparisonScopeMode.custom;
+    }
+
+    var customStartVerse = entry.scopeStartVerse;
+    var customEndVerse = entry.scopeEndVerse;
+    var selectedStartVerse = entry.scopeStartVerse;
+    var selectedEndVerse = entry.scopeEndVerse;
+
+    if (scopeMode == _ComparisonScopeMode.highlight) {
+      selectedStartVerse = _highlightStartVerseForScope;
+      selectedEndVerse = _highlightEndVerseForScope;
+    } else if (scopeMode == _ComparisonScopeMode.chapter) {
+      selectedStartVerse = 1;
+      selectedEndVerse = maxVerse;
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit comparison verse range'),
+          content: StatefulBuilder(
+            builder: (context, setModalState) {
+              final selectedPreview = _scopePreviewLabel(
+                selectedStartVerse,
+                selectedEndVerse,
+              );
+              final scopeError = _isValidScopeRange(
+                selectedStartVerse,
+                selectedEndVerse,
+                maxVerse,
+              )
+                  ? null
+                  : 'Please select a verse range within 1–$maxVerse.';
+
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_hasHighlightScope)
+                      RadioListTile<_ComparisonScopeMode>(
+                        value: _ComparisonScopeMode.highlight,
+                        groupValue: scopeMode,
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          setModalState(() {
+                            scopeMode = value;
+                            selectedStartVerse = _highlightStartVerseForScope;
+                            selectedEndVerse = _highlightEndVerseForScope;
+                          });
+                        },
+                        title:
+                            const Text('Highlighted reference (recommended)'),
+                      ),
+                    RadioListTile<_ComparisonScopeMode>(
+                      value: _ComparisonScopeMode.custom,
+                      groupValue: scopeMode,
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setModalState(() {
+                          scopeMode = value;
+                          selectedStartVerse = customStartVerse;
+                          selectedEndVerse = customEndVerse;
+                        });
+                      },
+                      title: const Text('Custom range'),
+                    ),
+                    if (scopeMode == _ComparisonScopeMode.custom)
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(
+                            start: 16, end: 16, bottom: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: customStartVerse.toString(),
+                                keyboardType: TextInputType.number,
+                                decoration: InputDecoration(
+                                  labelText: 'Start verse (1-$maxVerse)',
+                                ),
+                                onChanged: (value) {
+                                  final parsed = int.tryParse(value);
+                                  if (parsed == null) {
+                                    return;
+                                  }
+                                  setModalState(() {
+                                    customStartVerse = parsed;
+                                    selectedStartVerse = parsed;
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: customEndVerse.toString(),
+                                keyboardType: TextInputType.number,
+                                decoration: InputDecoration(
+                                  labelText: 'End verse (1-$maxVerse)',
+                                ),
+                                onChanged: (value) {
+                                  final parsed = int.tryParse(value);
+                                  if (parsed == null) {
+                                    return;
+                                  }
+                                  setModalState(() {
+                                    customEndVerse = parsed;
+                                    selectedEndVerse = parsed;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    RadioListTile<_ComparisonScopeMode>(
+                      value: _ComparisonScopeMode.chapter,
+                      groupValue: scopeMode,
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setModalState(() {
+                          scopeMode = value;
+                          selectedStartVerse = 1;
+                          selectedEndVerse = maxVerse;
+                        });
+                      },
+                      title: const Text('Entire chapter'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Selected: $selectedPreview'),
+                    if (scopeError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        scopeError,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Theme.of(context).colorScheme.error),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: !_isValidScopeRange(
+                selectedStartVerse,
+                selectedEndVerse,
+                maxVerse,
+              )
+                  ? null
+                  : () {
+                      final targetKey = _comparisonKey(
+                        entry.language,
+                        entry.version,
+                        scopeMode,
+                        selectedStartVerse,
+                        selectedEndVerse,
+                      );
+                      final duplicateExists = _comparisons.any((item) {
+                        if (identical(item, entry)) {
+                          return false;
+                        }
+                        return _comparisonKey(
+                              item.language,
+                              item.version,
+                              item.scopeMode,
+                              item.scopeStartVerse,
+                              item.scopeEndVerse,
+                            ) ==
+                            targetKey;
+                      });
+                      if (duplicateExists) {
+                        Navigator.of(context).pop();
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'A comparison with this translation and range already exists.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.of(context).pop();
+                      setState(() {
+                        entry.scopeMode = scopeMode;
+                        entry.scopeStartVerse = selectedStartVerse;
+                        entry.scopeEndVerse = selectedEndVerse;
+                      });
+                      _loadComparisonPassage(entry);
+                    },
+              child: const Text('Save range'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildComparisonSection(ThemeData theme) {
     if (_comparisons.isEmpty) {
       return const SizedBox.shrink();
@@ -4348,6 +4568,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       style: theme.textTheme.titleSmall
                           ?.copyWith(fontWeight: FontWeight.w600),
                     ),
+                  ),
+                  IconButton(
+                    onPressed: () => _showEditComparisonScopeDialog(entry),
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: 'Edit comparison range',
                   ),
                   IconButton(
                     onPressed: () => _removeComparison(entry),
