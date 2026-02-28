@@ -3830,23 +3830,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final mainLanguage = _languageOption;
     final mainVersion =
         _sanitizeVersionForLanguage(mainLanguage, _activeVersion);
-    final initialMode =
-        _hasHighlightScope ? _ComparisonScopeMode.highlight : _ComparisonScopeMode.custom;
-    var scopeMode = initialMode;
-    var customStartVerse = 1;
-    var customEndVerse = _defaultScopeEndVerse;
-    var selectedStartVerse =
-        initialMode == _ComparisonScopeMode.highlight ? _highlightStartVerseForScope : customStartVerse;
-    var selectedEndVerse =
-        initialMode == _ComparisonScopeMode.highlight ? _highlightEndVerseForScope : customEndVerse;
 
     LanguageOption selectedLanguage = mainLanguage;
     var selectedVersion = _sanitizeVersionForLanguage(
       selectedLanguage,
       selectedLanguage.apiVersion,
     );
-
-    int modalStep = 0;
 
     showDialog<void>(
       context: context,
@@ -3860,221 +3849,74 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               maxHeight: MediaQuery.of(context).size.height * 0.7,
             ),
             child: StatefulBuilder(
-            builder: (context, setModalState) {
-              final selectedPreview = _scopePreviewLabel(
-                selectedStartVerse,
-                selectedEndVerse,
-              );
-              final scopeError = _isValidScopeRange(
-                selectedStartVerse,
-                selectedEndVerse,
-                maxVerse,
-              )
-                  ? null
-                  : 'Please select a verse range within 1–$maxVerse.';
-              final choices = _selectableVersions(selectedLanguage)
-                  .map((choice) {
-                    final sanitized =
-                        _sanitizeVersionForLanguage(selectedLanguage, choice.id);
-                    return _VersionChoice(
-                      version: sanitized,
-                      label: choice.label,
-                    );
-                  })
-                  .where((choice) => !_isSameTranslation(
-                        selectedLanguage,
-                        choice.version,
-                        mainLanguage,
-                        mainVersion,
-                      ))
-                  .toList();
+              builder: (context, setModalState) {
+                final choices = _selectableVersions(selectedLanguage)
+                    .map((choice) {
+                      final sanitized =
+                          _sanitizeVersionForLanguage(selectedLanguage, choice.id);
+                      return _VersionChoice(
+                        version: sanitized,
+                        label: choice.label,
+                      );
+                    })
+                    .where((choice) => !_isSameTranslation(
+                          selectedLanguage,
+                          choice.version,
+                          mainLanguage,
+                          mainVersion,
+                        ))
+                    .toList();
 
-              if (!choices.any((choice) => choice.version == selectedVersion) &&
-                  choices.isNotEmpty) {
-                selectedVersion = choices.first.version;
-              }
+                if (!choices.any((choice) => choice.version == selectedVersion) &&
+                    choices.isNotEmpty) {
+                  selectedVersion = choices.first.version;
+                }
 
-              Future<void> openVersionSelector() async {
-                await showDialog<void>(
-                  context: context,
-                  builder: (dialogContext) {
-                    return AlertDialog(
-                      title: Text('Select version (${selectedLanguage.label})'),
-                      content: SizedBox(
-                        width: double.maxFinite,
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: choices.map((choice) {
-                            return RadioListTile<String>(
-                              value: choice.version,
-                              groupValue: selectedVersion,
-                              onChanged: (value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                setModalState(() {
-                                  selectedVersion = value;
-                                });
-                                Navigator.of(dialogContext).pop();
-                              },
-                              title: Text(choice.label),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(dialogContext).pop(),
-                          child: const Text('Cancel'),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              }
-
-              return Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.max,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (modalStep == 0) ...[
-                      Text(
-                        'Select verses to compare',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      if (_hasHighlightScope)
-                        RadioListTile<_ComparisonScopeMode>(
-                          value: _ComparisonScopeMode.highlight,
-                          groupValue: scopeMode,
-                          onChanged: (value) {
-                            if (value == null) {
-                              return;
-                            }
-                            setModalState(() {
-                              scopeMode = value;
-                              selectedStartVerse = _highlightStartVerseForScope;
-                              selectedEndVerse = _highlightEndVerseForScope;
-                            });
-                          },
-                          title: const Text('Highlighted reference (recommended)'),
-                        ),
-                      RadioListTile<_ComparisonScopeMode>(
-                        value: _ComparisonScopeMode.custom,
-                        groupValue: scopeMode,
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setModalState(() {
-                            scopeMode = value;
-                            selectedStartVerse = customStartVerse;
-                            selectedEndVerse = customEndVerse;
-                          });
-                        },
-                        title: const Text('Custom range'),
-                      ),
-                      if (scopeMode == _ComparisonScopeMode.custom)
-                        Padding(
-                          padding: const EdgeInsetsDirectional.only(start: 16, end: 16, bottom: 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  initialValue: customStartVerse.toString(),
-                                  keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(
-                                    labelText: 'Start verse (1-$maxVerse)',
-                                  ),
-                                  onChanged: (value) {
-                                    final parsed = int.tryParse(value);
-                                    if (parsed == null) {
-                                      return;
-                                    }
-                                    setModalState(() {
-                                      customStartVerse = parsed;
-                                      selectedStartVerse = parsed;
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: TextFormField(
-                                  initialValue: customEndVerse.toString(),
-                                  keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(
-                                    labelText: 'End verse (1-$maxVerse)',
-                                  ),
-                                  onChanged: (value) {
-                                    final parsed = int.tryParse(value);
-                                    if (parsed == null) {
-                                      return;
-                                    }
-                                    setModalState(() {
-                                      customEndVerse = parsed;
-                                      selectedEndVerse = parsed;
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
+                Future<void> openVersionSelector() async {
+                  await showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) {
+                      return AlertDialog(
+                        title: Text('Select version (${selectedLanguage.label})'),
+                        content: SizedBox(
+                          width: double.maxFinite,
+                          child: ListView(
+                            shrinkWrap: true,
+                            children: choices.map((choice) {
+                              return RadioListTile<String>(
+                                value: choice.version,
+                                groupValue: selectedVersion,
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  setModalState(() {
+                                    selectedVersion = value;
+                                  });
+                                  Navigator.of(dialogContext).pop();
+                                },
+                                title: Text(choice.label),
+                              );
+                            }).toList(),
                           ),
                         ),
-                      RadioListTile<_ComparisonScopeMode>(
-                        value: _ComparisonScopeMode.chapter,
-                        groupValue: scopeMode,
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setModalState(() {
-                            scopeMode = value;
-                            selectedStartVerse = 1;
-                            selectedEndVerse = maxVerse;
-                          });
-                        },
-                        title: const Text('Entire chapter'),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Selected: $selectedPreview',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      if (scopeError != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          scopeError,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: Theme.of(context).colorScheme.error),
-                        ),
-                      ],
-                      const Spacer(),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
+                        actions: [
                           TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: () => Navigator.of(dialogContext).pop(),
                             child: const Text('Cancel'),
                           ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: scopeError == null
-                                ? () {
-                                    setModalState(() {
-                                      modalStep = 1;
-                                    });
-                                  }
-                                : null,
-                            child: const Text('Next'),
-                          ),
                         ],
-                      ),
-                    ] else ...[
+                      );
+                    },
+                  );
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.max,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       Text(
                         'Select translation to add',
                         style: Theme.of(context).textTheme.titleMedium,
@@ -4092,7 +3934,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                             )
                             .toList(),
                         onChanged: (value) {
-                          if (value == null) return;
+                          if (value == null) {
+                            return;
+                          }
                           setModalState(() {
                             selectedLanguage = value;
                             selectedVersion = _sanitizeVersionForLanguage(
@@ -4126,7 +3970,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Selected: $selectedPreview',
+                        'Comparison scope: Entire chapter',
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                       const Spacer(),
@@ -4138,15 +3982,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                             child: const Text('Cancel'),
                           ),
                           const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () {
-                              setModalState(() {
-                                modalStep = 0;
-                              });
-                            },
-                            child: const Text('Back'),
-                          ),
-                          const SizedBox(width: 8),
                           FilledButton(
                             onPressed: choices.isEmpty
                                 ? null
@@ -4155,9 +3990,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                                     _addComparison(
                                       selectedLanguage,
                                       selectedVersion,
-                                      scopeMode,
-                                      selectedStartVerse,
-                                      selectedEndVerse,
+                                      _ComparisonScopeMode.chapter,
+                                      1,
+                                      maxVerse,
                                     );
                                   },
                             child: const Text('Add comparison'),
@@ -4165,11 +4000,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         ],
                       ),
                     ],
-                  ],
-                ),
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
