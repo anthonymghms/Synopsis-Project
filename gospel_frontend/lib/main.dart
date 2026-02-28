@@ -4630,8 +4630,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final maxChapter = gospelChapterCounts[canonical];
     final hasNextChapter = maxChapter == null ? true : widget.chapter < maxChapter;
 
-    void goTo(Uri uri) => _openReferenceUri(uri);
-
     Widget buildColumnHeader(_ParallelColumn column) {
       final versionLabel = _versionLabel(column.language.code, column.version);
       final title = '${column.language.label} · $versionLabel';
@@ -4777,13 +4775,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           hasNextChapter: hasNextChapter,
           hasNextBook: hasNextBook,
           onPreviousBook: hasPrevBook
-              ? () => goTo(_referenceUri(
+              ? () => _openReferenceUri(_referenceUri(
                     book: orderedGospels[bookIndex - 1],
                     chapter: _clampChapterForBook(orderedGospels[bookIndex - 1], widget.chapter),
                   ))
               : null,
           onPreviousChapter: hasPrevChapter
-              ? () => goTo(_referenceUri(book: canonical, chapter: widget.chapter - 1))
+              ? () => _openReferenceUri(_referenceUri(book: canonical, chapter: widget.chapter - 1))
               : null,
           onNextChapter: hasNextChapter
               ? () async {
@@ -4791,14 +4789,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                     final next = widget.chapter + 1;
                     final ok = await _canLoadChapter(canonical, next);
                     if (!ok) return;
-                    await goTo(_referenceUri(book: canonical, chapter: next));
+                    await _openReferenceUri(_referenceUri(book: canonical, chapter: next));
                     return;
                   }
-                  await goTo(_referenceUri(book: canonical, chapter: widget.chapter + 1));
+                  await _openReferenceUri(_referenceUri(book: canonical, chapter: widget.chapter + 1));
                 }
               : null,
           onNextBook: hasNextBook
-              ? () => goTo(_referenceUri(
+              ? () => _openReferenceUri(_referenceUri(
                     book: orderedGospels[bookIndex + 1],
                     chapter: _clampChapterForBook(orderedGospels[bookIndex + 1], widget.chapter),
                   ))
@@ -4814,13 +4812,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           hasNextChapter: hasNextChapter,
           hasNextBook: hasNextBook,
           onPreviousBook: hasPrevBook
-              ? () => goTo(_referenceUri(
+              ? () => _openReferenceUri(_referenceUri(
                     book: orderedGospels[bookIndex - 1],
                     chapter: _clampChapterForBook(orderedGospels[bookIndex - 1], widget.chapter),
                   ))
               : null,
           onPreviousChapter: hasPrevChapter
-              ? () => goTo(_referenceUri(book: canonical, chapter: widget.chapter - 1))
+              ? () => _openReferenceUri(_referenceUri(book: canonical, chapter: widget.chapter - 1))
               : null,
           onNextChapter: hasNextChapter
               ? () async {
@@ -4828,14 +4826,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                     final next = widget.chapter + 1;
                     final ok = await _canLoadChapter(canonical, next);
                     if (!ok) return;
-                    await goTo(_referenceUri(book: canonical, chapter: next));
+                    await _openReferenceUri(_referenceUri(book: canonical, chapter: next));
                     return;
                   }
-                  await goTo(_referenceUri(book: canonical, chapter: widget.chapter + 1));
+                  await _openReferenceUri(_referenceUri(book: canonical, chapter: widget.chapter + 1));
                 }
               : null,
           onNextBook: hasNextBook
-              ? () => goTo(_referenceUri(
+              ? () => _openReferenceUri(_referenceUri(
                     book: orderedGospels[bookIndex + 1],
                     chapter: _clampChapterForBook(orderedGospels[bookIndex + 1], widget.chapter),
                   ))
