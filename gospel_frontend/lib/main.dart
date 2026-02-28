@@ -3248,7 +3248,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
-  Widget _buildVerseParagraph(_VerseLine verse, ThemeData theme, {bool highlighted = false, String? verseId}) {
+  Widget _buildVerseParagraph(
+    _VerseLine verse,
+    ThemeData theme, {
+    bool highlighted = false,
+    String? verseId,
+    String? markerLanguage,
+    String? markerVersion,
+  }) {
     final TextStyle baseStyle =
         theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
             const TextStyle(fontSize: 16, height: 1.6);
@@ -3261,7 +3268,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         style: baseStyle,
         children: [
           if (verse.number != null && verse.number! > 0)
-            TextSpan(text: '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ', style: numberStyle),
+            TextSpan(
+              text:
+                  '${formatVerseMarker(verse.number!, language: markerLanguage ?? _languageOption.apiLanguage, version: markerVersion ?? _activeVersion)}. ',
+              style: numberStyle,
+            ),
           TextSpan(text: verse.text),
         ],
       ),
@@ -4548,7 +4559,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         : entry.version;
     final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
     final header = '${entry.language.label} · $versionLabel';
-    final scopeLabel = _scopePreviewLabel(entry.scopeStartVerse, entry.scopeEndVerse);
     final textDirection = entry.language.direction;
 
     return Card(
@@ -4581,12 +4591,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Scope: $scopeLabel',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-              ),
               if (entry.language.code == 'arabic') ...[
                 const SizedBox(height: 8),
                 _buildComparisonDiacriticsToggle(entry),
@@ -4618,7 +4622,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       return number >= entry.scopeStartVerse &&
                           number <= entry.scopeEndVerse;
                     })
-                    .map((verse) => _buildVerseParagraph(verse, theme))
+                    .map(
+                      (verse) => _buildVerseParagraph(
+                        verse,
+                        theme,
+                        markerLanguage: entry.language.apiLanguage,
+                        markerVersion: resolvedVersion,
+                      ),
+                    )
                     .toList(),
               ],
             ],
