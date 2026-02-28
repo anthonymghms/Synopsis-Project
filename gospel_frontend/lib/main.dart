@@ -3778,8 +3778,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Widget _buildInterlinearToggleButton() {
+    final hasComparisons = _comparisons.isNotEmpty;
     return OutlinedButton.icon(
-      onPressed: _toggleInterlinearView,
+      onPressed: hasComparisons ? _toggleInterlinearView : null,
       icon: Icon(_interlinearView ? Icons.view_agenda : Icons.view_agenda_outlined),
       label: const Text('Interlinear View'),
     );
@@ -4182,6 +4183,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   void _removeComparison(_ComparisonPassage entry) {
     setState(() {
       _comparisons.remove(entry);
+      if (_comparisons.isEmpty) {
+        _interlinearView = false;
+      }
     });
   }
 
