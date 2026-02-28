@@ -813,6 +813,7 @@ class GospelApp extends StatelessWidget {
       final source = uri.queryParameters['source'] ?? '';
       final topicId = uri.queryParameters['topicId'] ?? '';
       final gospel = uri.queryParameters['gospel'] ?? '';
+      final comparisons = uri.queryParameters['comparisons'] ?? '';
 
       return MaterialPageRoute(
         settings: settings,
@@ -829,6 +830,7 @@ class GospelApp extends StatelessWidget {
             source: source,
             topicId: topicId,
             gospel: gospel,
+            comparisonState: comparisons,
           ),
         ),
       );
@@ -2519,6 +2521,7 @@ class ReferenceViewerPage extends StatefulWidget {
     this.source = '',
     this.topicId = '',
     this.gospel = '',
+    this.comparisonState = '',
   });
 
   final String displayBook;
@@ -2532,6 +2535,7 @@ class ReferenceViewerPage extends StatefulWidget {
   final String source;
   final String topicId;
   final String gospel;
+  final String comparisonState;
 
   @override
   State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
@@ -2718,6 +2722,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     _selectedVersion =
         _sanitizeVersionForLanguage(_languageOption, widget.version);
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
+    _hydrateComparisonsFromRoute();
     _loadChapter();
     if (_isHarmonySource) {
       _loadHarmonyTopics();
@@ -2915,6 +2920,79 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   final Map<String, GlobalKey> _verseKeys = <String, GlobalKey>{};
 
+  String _encodeComparisonState() {
+    if (_comparisons.isEmpty) {
+      return '';
+    }
+    final payload = _comparisons.map((entry) => {
+          'language': entry.language.apiLanguage,
+          'version': entry.version,
+          'scopeMode': entry.scopeMode.name,
+          'scopeStartVerse': entry.scopeStartVerse,
+          'scopeEndVerse': entry.scopeEndVerse,
+          'withDiacritics': entry.withDiacritics,
+        }).toList();
+    final jsonText = jsonEncode(payload);
+    return base64Url.encode(utf8.encode(jsonText));
+  }
+
+  void _hydrateComparisonsFromRoute() {
+    final encoded = widget.comparisonState.trim();
+    if (encoded.isEmpty) {
+      return;
+    }
+    try {
+      final decoded = utf8.decode(base64Url.decode(encoded));
+      final raw = jsonDecode(decoded);
+      if (raw is! List) {
+        return;
+      }
+      final parsed = <_ComparisonPassage>[];
+      for (final item in raw) {
+        if (item is! Map) {
+          continue;
+        }
+        final mapItem = Map<String, dynamic>.from(item);
+        final language = _languageOptionForApiLanguage((mapItem['language'] ?? '').toString());
+        if (language == null) {
+          continue;
+        }
+        final version = _sanitizeVersionForLanguage(language, (mapItem['version'] ?? '').toString());
+        final scopeModeRaw = (mapItem['scopeMode'] ?? '').toString();
+        final scopeMode = _ComparisonScopeMode.values.firstWhere(
+          (mode) => mode.name == scopeModeRaw,
+          orElse: () => _ComparisonScopeMode.chapter,
+        );
+        final scopeStartVerse = (mapItem['scopeStartVerse'] is int)
+            ? mapItem['scopeStartVerse'] as int
+            : int.tryParse((mapItem['scopeStartVerse'] ?? '').toString()) ?? 1;
+        final scopeEndVerse = (mapItem['scopeEndVerse'] is int)
+            ? mapItem['scopeEndVerse'] as int
+            : int.tryParse((mapItem['scopeEndVerse'] ?? '').toString()) ?? 1;
+        final withDiacritics = mapItem['withDiacritics'] is bool
+            ? mapItem['withDiacritics'] as bool
+            : true;
+        parsed.add(
+          _ComparisonPassage(
+            language: language,
+            version: version,
+            scopeMode: scopeMode,
+            scopeStartVerse: scopeStartVerse,
+            scopeEndVerse: scopeEndVerse,
+            withDiacritics: withDiacritics,
+          ),
+        );
+      }
+      if (parsed.isNotEmpty) {
+        _comparisons
+          ..clear()
+          ..addAll(parsed);
+      }
+    } catch (_) {
+      // Ignore invalid URL payloads.
+    }
+  }
+
   Uri _referenceUri({required String book, required int chapter}) {
     final queryParameters = <String, String>{
       'book': book,
@@ -2925,6 +3003,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     };
     if (widget.topicName.trim().isNotEmpty) {
       queryParameters['topic'] = widget.topicName.trim();
+    }
+    final comparisonState = _encodeComparisonState();
+    if (comparisonState.isNotEmpty) {
+      queryParameters['comparisons'] = comparisonState;
     }
     if (_isHarmonySource) {
       queryParameters['source'] = 'harmony';
@@ -3182,6 +3264,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _highlightStart = start;
         _loadingChapter = false;
       });
+      for (final comparison in _comparisons) {
+        _loadComparisonPassage(comparison);
+      }
       _scrollToHighlightedVerse();
     } catch (e) {
       if (!mounted) {
@@ -4141,10 +4226,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       });
       return;
     }
-    final verseParam = entry.scopeStartVerse == entry.scopeEndVerse
-        ? '${entry.scopeStartVerse}'
-        : '${entry.scopeStartVerse}-${entry.scopeEndVerse}';
-
     setState(() {
       entry.loading = true;
       entry.error = null;
@@ -4152,13 +4233,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(queryParameters: {
+      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(queryParameters: {
         'language': entry.language.apiLanguage,
         'version': _comparisonVersion(entry.language, entry.version,
             withDiacritics: entry.withDiacritics),
         'book': bookParam,
         'chapter': widget.chapter.toString(),
-        'verse': verseParam,
       });
       final response = await http.get(uri);
       if (response.statusCode != 200) {
@@ -4181,6 +4261,88 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         entry.loading = false;
       });
     }
+  }
+
+  Future<void> _showComparisonColumnSelector(_ComparisonPassage entry) async {
+    LanguageOption selectedLanguage = entry.language;
+    String selectedVersion = _sanitizeVersionForLanguage(selectedLanguage, entry.version);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final versions = _selectableVersions(selectedLanguage);
+            if (!versions.any((v) => v.id == selectedVersion) && versions.isNotEmpty) {
+              selectedVersion = versions.first.id;
+            }
+            return AlertDialog(
+              title: const Text('Change translation'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedLanguage.code,
+                    items: _supportedLanguages
+                        .map((option) => DropdownMenuItem<String>(
+                              value: option.code,
+                              child: Text(option.label),
+                            ))
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      final match = _supportedLanguages.firstWhere((item) => item.code == value);
+                      setModalState(() {
+                        selectedLanguage = match;
+                        selectedVersion = _sanitizeVersionForLanguage(match, match.apiVersion);
+                      });
+                    },
+                    decoration: const InputDecoration(labelText: 'Language'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedVersion,
+                    items: versions
+                        .map((version) => DropdownMenuItem<String>(
+                              value: version.id,
+                              child: Text(version.label),
+                            ))
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setModalState(() {
+                        selectedVersion = value;
+                      });
+                    },
+                    decoration: const InputDecoration(labelText: 'Version'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    setState(() {
+                      entry.language = selectedLanguage;
+                      entry.version = _sanitizeVersionForLanguage(selectedLanguage, selectedVersion);
+                      if (selectedLanguage.code != 'arabic') {
+                        entry.withDiacritics = !_isArabicWithoutDiacritics(entry.version);
+                      }
+                    });
+                    _loadComparisonPassage(entry);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _removeComparison(_ComparisonPassage entry) {
@@ -4406,6 +4568,280 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           ],
         );
       },
+    );
+  }
+
+
+  Widget _buildParallelComparisonSection(ThemeData theme) {
+    if (_loadingChapter) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return Text(
+        _error!,
+        style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
+      );
+    }
+    final columns = <_ParallelColumn>[
+      _ParallelColumn.main(
+        language: _languageOption,
+        version: _activeVersion,
+        verses: _mapVersesByNumber(_chapterVerses),
+      ),
+      ..._comparisons.map(
+        (entry) => _ParallelColumn.comparison(
+          entry: entry,
+          language: entry.language,
+          version: _comparisonVersion(entry.language, entry.version, withDiacritics: entry.withDiacritics),
+          verses: _mapVersesByNumber(entry.verses),
+        ),
+      ),
+    ];
+    final pairs = <List<_ParallelColumn>>[];
+    for (var i = 0; i < columns.length; i += 2) {
+      final end = math.min(i + 2, columns.length);
+      pairs.add(columns.sublist(i, end));
+    }
+    final harmonySections = _buildHarmonySections();
+    final sectionRanges = harmonySections.isNotEmpty
+        ? harmonySections
+            .map((section) => _ParallelSectionRange(
+                  title: section.topicTitle,
+                  start: section.startVerse,
+                  end: section.endVerse,
+                ))
+            .toList()
+        : <_ParallelSectionRange>[
+            _ParallelSectionRange(
+              title: _isHarmonySource ? 'Passage' : _referenceHeading,
+              start: 1,
+              end: _chapterMaxVerse,
+            ),
+          ];
+
+    final canonical = _normalizeGospelName(_bookParameter);
+    final bookIndex = orderedGospels.indexOf(canonical);
+    final hasPrevBook = bookIndex > 0;
+    final hasNextBook = bookIndex >= 0 && bookIndex < orderedGospels.length - 1;
+    final hasPrevChapter = widget.chapter > 1;
+    final maxChapter = gospelChapterCounts[canonical];
+    final hasNextChapter = maxChapter == null ? true : widget.chapter < maxChapter;
+
+    void goTo(Uri uri) => _openReferenceUri(uri);
+
+    Widget buildColumnHeader(_ParallelColumn column) {
+      final versionLabel = _versionLabel(column.language.code, column.version);
+      final title = '${column.language.label} · $versionLabel';
+      return Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              if (column.isMain) {
+                _showVersionPicker();
+              } else if (column.entry != null) {
+                _showComparisonColumnSelector(column.entry!);
+              }
+            },
+            child: const Text('Change'),
+          ),
+          if (!column.isMain && column.entry != null)
+            IconButton(
+              onPressed: () => _removeComparison(column.entry!),
+              icon: const Icon(Icons.close),
+              tooltip: 'Remove comparison',
+            ),
+        ],
+      );
+    }
+
+    Widget buildVerseCell(_ParallelColumn column, int verseNumber) {
+      final text = column.verses[verseNumber] ?? '—';
+      final highlighted = _highlightVerses.contains(verseNumber);
+      return Container(
+        decoration: BoxDecoration(
+          color: highlighted ? theme.colorScheme.primary.withOpacity(0.08) : null,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Directionality(
+          textDirection: column.language.direction,
+          child: RichText(
+            text: TextSpan(
+              style: theme.textTheme.bodyMedium,
+              children: [
+                TextSpan(
+                  text: '${formatVerseMarker(verseNumber, language: column.language.apiLanguage, version: column.version)}. ',
+                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                TextSpan(text: text),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final pairWidgets = <Widget>[];
+    final bookSlug = _slugBookForId(_bookParameter);
+    final registeredScrollVerseIds = <String>{};
+    for (var pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
+      final pair = pairs[pairIndex];
+      final left = pair.first;
+      final right = pair.length > 1 ? pair[1] : null;
+      pairWidgets.add(
+        Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: buildColumnHeader(left)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: right != null ? buildColumnHeader(right) : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...sectionRanges.expand((section) {
+                  final sectionHighlighted = _highlightVerses.any((v) => v >= section.start && v <= section.end);
+                  return [
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 8, bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: sectionHighlighted
+                            ? theme.colorScheme.primary.withOpacity(0.08)
+                            : theme.colorScheme.surfaceVariant.withOpacity(0.35),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        section.title,
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    ...List.generate(section.end - section.start + 1, (index) {
+                      final verseNumber = section.start + index;
+                      final rawVerseId = 'verse-$bookSlug-${widget.chapter}-$verseNumber';
+                      final verseId = pairIndex == 0 && registeredScrollVerseIds.add(rawVerseId)
+                          ? rawVerseId
+                          : null;
+                      return Padding(
+                        key: verseId != null
+                            ? (_verseKeys.putIfAbsent(verseId, () => GlobalKey()))
+                            : null,
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: buildVerseCell(left, verseNumber)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: right != null
+                                  ? buildVerseCell(right, verseNumber)
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ];
+                }),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ChapterNav(
+          chapter: widget.chapter,
+          isArabic: _isArabicLanguage(widget.language),
+          hasPreviousBook: hasPrevBook,
+          hasPreviousChapter: hasPrevChapter,
+          hasNextChapter: hasNextChapter,
+          hasNextBook: hasNextBook,
+          onPreviousBook: hasPrevBook
+              ? () => goTo(_referenceUri(
+                    book: orderedGospels[bookIndex - 1],
+                    chapter: _clampChapterForBook(orderedGospels[bookIndex - 1], widget.chapter),
+                  ))
+              : null,
+          onPreviousChapter: hasPrevChapter
+              ? () => goTo(_referenceUri(book: canonical, chapter: widget.chapter - 1))
+              : null,
+          onNextChapter: hasNextChapter
+              ? () async {
+                  if (maxChapter == null) {
+                    final next = widget.chapter + 1;
+                    final ok = await _canLoadChapter(canonical, next);
+                    if (!ok) return;
+                    await goTo(_referenceUri(book: canonical, chapter: next));
+                    return;
+                  }
+                  await goTo(_referenceUri(book: canonical, chapter: widget.chapter + 1));
+                }
+              : null,
+          onNextBook: hasNextBook
+              ? () => goTo(_referenceUri(
+                    book: orderedGospels[bookIndex + 1],
+                    chapter: _clampChapterForBook(orderedGospels[bookIndex + 1], widget.chapter),
+                  ))
+              : null,
+        ),
+        const SizedBox(height: 8),
+        ...pairWidgets,
+        ChapterNav(
+          chapter: widget.chapter,
+          isArabic: _isArabicLanguage(widget.language),
+          hasPreviousBook: hasPrevBook,
+          hasPreviousChapter: hasPrevChapter,
+          hasNextChapter: hasNextChapter,
+          hasNextBook: hasNextBook,
+          onPreviousBook: hasPrevBook
+              ? () => goTo(_referenceUri(
+                    book: orderedGospels[bookIndex - 1],
+                    chapter: _clampChapterForBook(orderedGospels[bookIndex - 1], widget.chapter),
+                  ))
+              : null,
+          onPreviousChapter: hasPrevChapter
+              ? () => goTo(_referenceUri(book: canonical, chapter: widget.chapter - 1))
+              : null,
+          onNextChapter: hasNextChapter
+              ? () async {
+                  if (maxChapter == null) {
+                    final next = widget.chapter + 1;
+                    final ok = await _canLoadChapter(canonical, next);
+                    if (!ok) return;
+                    await goTo(_referenceUri(book: canonical, chapter: next));
+                    return;
+                  }
+                  await goTo(_referenceUri(book: canonical, chapter: widget.chapter + 1));
+                }
+              : null,
+          onNextBook: hasNextBook
+              ? () => goTo(_referenceUri(
+                    book: orderedGospels[bookIndex + 1],
+                    chapter: _clampChapterForBook(orderedGospels[bookIndex + 1], widget.chapter),
+                  ))
+              : null,
+        ),
+      ],
     );
   }
 
@@ -4720,6 +5156,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                             _buildInterlinearReferenceSection(theme),
                             const SizedBox(height: 24),
                             _buildChapterSection(theme),
+                          ] else if (_comparisons.isNotEmpty) ...[
+                            _buildParallelComparisonSection(theme),
                           ] else ...[
                             _buildChapterSection(theme),
                             const SizedBox(height: 24),
@@ -4857,6 +5295,42 @@ Widget _buildInterlinearVerseGroup({
   );
 }
 
+
+
+class _ParallelSectionRange {
+  const _ParallelSectionRange({
+    required this.title,
+    required this.start,
+    required this.end,
+  });
+
+  final String title;
+  final int start;
+  final int end;
+}
+
+class _ParallelColumn {
+  const _ParallelColumn.main({
+    required this.language,
+    required this.version,
+    required this.verses,
+  })  : isMain = true,
+        entry = null;
+
+  const _ParallelColumn.comparison({
+    required this.entry,
+    required this.language,
+    required this.version,
+    required this.verses,
+  }) : isMain = false;
+
+  final bool isMain;
+  final _ComparisonPassage? entry;
+  final LanguageOption language;
+  final String version;
+  final Map<int, String> verses;
+}
+
 class _ComparisonPassage {
   _ComparisonPassage({
     required this.language,
@@ -4870,7 +5344,7 @@ class _ComparisonPassage {
     this.withDiacritics = true,
   });
 
-  final LanguageOption language;
+  LanguageOption language;
   String version;
   _ComparisonScopeMode scopeMode;
   int scopeStartVerse;
