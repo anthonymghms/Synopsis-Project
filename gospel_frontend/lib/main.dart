@@ -5092,7 +5092,7 @@ Widget _buildInterlinearVerseGroup({
         color: theme.colorScheme.onSurfaceVariant,
       );
   return Padding(
-    padding: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.only(bottom: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5100,24 +5100,27 @@ Widget _buildInterlinearVerseGroup({
           formatVerseMarker(verseNumber, language: language, version: version),
           style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         ...translations.map((translation) {
           final text = translation.verses[verseNumber] ?? '';
+          final verseText = text.isNotEmpty ? text : '—';
           return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Directionality(
               textDirection: translation.direction,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(translation.label, style: resolvedLabelStyle),
-                  const SizedBox(height: 4),
-                  Text(
-                    text.isNotEmpty ? text : '—',
-                    style: resolvedTextStyle,
-                    textAlign: TextAlign.start,
-                  ),
-                ],
+              child: RichText(
+                textAlign: TextAlign.start,
+                text: TextSpan(
+                  style: resolvedTextStyle,
+                  children: [
+                    TextSpan(text: verseText),
+                    const TextSpan(text: ' '),
+                    TextSpan(
+                      text: '(${translation.label})',
+                      style: resolvedLabelStyle,
+                    ),
+                  ],
+                ),
               ),
             ),
           );
