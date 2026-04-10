@@ -5837,10 +5837,23 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   void _showTranslationChangePicker() {
     _showComparisonPicker(
       (language, version) async {
+        final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
+        final forceArabicWithoutDiacritics =
+            _languageOption.code == 'arabic' && language.code == 'arabic';
+        final nextVersion = forceArabicWithoutDiacritics
+            ? (_resolveArabicVersion(
+                    language,
+                    withDiacritics: false,
+                    preferredVersion: sanitizedVersion) ??
+                sanitizedVersion)
+            : sanitizedVersion;
         setState(() {
           _languageOption = language;
-          _apiVersion = _sanitizeVersionForLanguage(language, version);
-          _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
+          _apiVersion = nextVersion;
+          _withDiacritics = language.code == 'arabic'
+              ? !forceArabicWithoutDiacritics &&
+                  !_isArabicWithoutDiacritics(nextVersion)
+              : false;
         });
         LanguageSelectionController.instance.update(language.code);
         await _loadTopicForLanguage(language, _activeVersion);
