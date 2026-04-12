@@ -2653,6 +2653,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   double _textScale = 1.0;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
+  final GlobalKey _selectedHarmonyTopicKey = GlobalKey();
 
   int get _chapterMaxVerse {
     var maxVerse = 0;
@@ -2894,28 +2895,51 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
-  void _scrollToHighlightedVerse() {
+  void _scrollToHighlightedVerse({int attempts = 10}) {
     if (_highlightStart == null) {
       return;
     }
-    final targetId =
-        'verse-${_slugBookForId(_bookParameter)}-${widget.chapter}-${_highlightStart!}';
-    void tryScroll() {
-      final context = _verseKeys[targetId]?.currentContext;
-      if (context != null) {
-        Scrollable.ensureVisible(
-          context,
-          alignment: 0.5,
-          duration: Duration.zero,
-          curve: Curves.linear,
-        );
-      }
+
+    if (_isHarmonySource &&
+        widget.topicId.trim().isNotEmpty &&
+        _loadingHarmonyTopics &&
+        attempts > 0) {
+      Future<void>.delayed(const Duration(milliseconds: 16), () {
+        if (!mounted) {
+          return;
+        }
+        _scrollToHighlightedVerse(attempts: attempts - 1);
+      });
+      return;
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      tryScroll();
-      WidgetsBinding.instance.addPostFrameCallback((_) => tryScroll());
-    });
+    final targetId =
+        'verse-${_slugBookForId(_bookParameter)}-${widget.chapter}-${_highlightStart!}';
+    final targetContext =
+        (_isHarmonySource && widget.topicId.trim().isNotEmpty
+                ? _selectedHarmonyTopicKey.currentContext
+                : null) ??
+            _verseKeys[targetId]?.currentContext;
+
+    if (targetContext == null) {
+      if (attempts <= 0) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _scrollToHighlightedVerse(attempts: attempts - 1);
+      });
+      return;
+    }
+
+    Scrollable.ensureVisible(
+      targetContext,
+      alignment: 0.15,
+      duration: Duration.zero,
+      curve: Curves.linear,
+    );
   }
 
   final Map<String, GlobalKey> _verseKeys = <String, GlobalKey>{};
@@ -3044,6 +3068,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _harmonyTopics = list;
         _loadingHarmonyTopics = false;
       });
+      _scrollToHighlightedVerse();
     } catch (e) {
       if (!mounted) {
         return;
@@ -3457,7 +3482,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   : section.topicTitle.trim();
               return <Widget>[
                 Container(
-                  key: sectionId == widget.topicId.trim() ? const ValueKey<String>('selected-topic-header') : null,
+                  key: sectionId == widget.topicId.trim()
+                      ? _selectedHarmonyTopicKey
+                      : null,
                   margin: const EdgeInsets.only(top: 12, bottom: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
