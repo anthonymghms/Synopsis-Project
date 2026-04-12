@@ -2653,7 +2653,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   double _textScale = 1.0;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
-  final GlobalKey _selectedHarmonyTopicKey = GlobalKey();
 
   int get _chapterMaxVerse {
     var maxVerse = 0;
@@ -2725,9 +2724,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     _hydrateComparisonsFromRoute();
     _loadChapter();
-    if (_isHarmonySource) {
-      _loadHarmonyTopics();
-    }
   }
 
   String get _baseVersion {
@@ -2900,26 +2896,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return;
     }
 
-    if (_isHarmonySource &&
-        widget.topicId.trim().isNotEmpty &&
-        _loadingHarmonyTopics &&
-        attempts > 0) {
-      Future<void>.delayed(const Duration(milliseconds: 16), () {
-        if (!mounted) {
-          return;
-        }
-        _scrollToHighlightedVerse(attempts: attempts - 1);
-      });
-      return;
-    }
-
     final targetId =
         'verse-${_slugBookForId(_bookParameter)}-${widget.chapter}-${_highlightStart!}';
-    final targetContext =
-        (_isHarmonySource && widget.topicId.trim().isNotEmpty
-                ? _selectedHarmonyTopicKey.currentContext
-                : null) ??
-            _verseKeys[targetId]?.currentContext;
+    final targetContext = _verseKeys[targetId]?.currentContext;
 
     if (targetContext == null) {
       if (attempts <= 0) {
@@ -3068,7 +3047,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         _harmonyTopics = list;
         _loadingHarmonyTopics = false;
       });
-      _scrollToHighlightedVerse();
     } catch (e) {
       if (!mounted) {
         return;
@@ -3319,9 +3297,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       }
     });
     _loadChapter();
-    if (_isHarmonySource) {
-      _loadHarmonyTopics();
-    }
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
@@ -3353,9 +3328,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     _loadChapter();
-    if (_isHarmonySource) {
-      _loadHarmonyTopics();
-    }
   }
 
   Widget _buildVerseParagraph(
@@ -3467,107 +3439,28 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         maxChapter == null ? true : widget.chapter < maxChapter;
 
     final bookSlug = _slugBookForId(_bookParameter);
-    final harmonySections = _buildHarmonySections();
-    final useHarmonySections = _isHarmonySource && harmonySections.isNotEmpty;
-
     final registeredScrollVerseIds = <String>{};
-    final verseWidgets = useHarmonySections
-        ? harmonySections
-            .expand<Widget>((section) {
-              final sectionHighlighted = section.verses.any(
-                (verse) => verse.number != null && _highlightVerses.contains(verse.number),
-              );
-              final sectionId = section.topicId.trim().isNotEmpty
-                  ? section.topicId.trim()
-                  : section.topicTitle.trim();
-              return <Widget>[
-                Container(
-                  key: sectionId == widget.topicId.trim()
-                      ? _selectedHarmonyTopicKey
-                      : null,
-                  margin: const EdgeInsets.only(top: 12, bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: sectionHighlighted
-                        ? theme.colorScheme.primary.withOpacity(0.08)
-                        : theme.colorScheme.surfaceVariant.withOpacity(0.35),
-                    borderRadius: BorderRadius.circular(10),
-                    border: BorderDirectional(
-                      start: BorderSide(
-                        color: sectionHighlighted
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.outlineVariant,
-                        width: sectionHighlighted ? 3 : 2,
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    section.topicTitle,
-                    style: (theme.textTheme.titleMedium ??
-                            const TextStyle(fontSize: 19))
-                        .copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.15,
-                    ),
-                    textAlign: TextAlign.start,
-                  ),
-                ),
-                ...section.verses.map((verse) {
-                  final number = verse.number;
-                  final highlighted =
-                      number != null && _highlightVerses.contains(number);
-                  final rawVerseId = number != null && number > 0
-                      ? 'verse-$bookSlug-${widget.chapter}-$number'
-                      : null;
-                  final verseId = rawVerseId != null &&
-                          registeredScrollVerseIds.add(rawVerseId)
-                      ? rawVerseId
-                      : null;
-                  return _buildVerseParagraph(
-                    verse,
-                    theme,
-                    highlighted: highlighted,
-                    verseId: verseId,
-                  );
-                }),
-              ];
-            })
-            .toList()
-        : _chapterVerses.map((verse) {
-            final number = verse.number;
-            final highlighted = number != null && _highlightVerses.contains(number);
-            final rawVerseId = number != null && number > 0
-                ? 'verse-$bookSlug-${widget.chapter}-$number'
-                : null;
-            final verseId = rawVerseId != null &&
-                    registeredScrollVerseIds.add(rawVerseId)
-                ? rawVerseId
-                : null;
-            return _buildVerseParagraph(
-              verse,
-              theme,
-              highlighted: highlighted,
-              verseId: verseId,
-            );
-          }).toList();
+    final verseWidgets = _chapterVerses.map((verse) {
+      final number = verse.number;
+      final highlighted = number != null && _highlightVerses.contains(number);
+      final rawVerseId = number != null && number > 0
+          ? 'verse-$bookSlug-${widget.chapter}-$number'
+          : null;
+      final verseId =
+          rawVerseId != null && registeredScrollVerseIds.add(rawVerseId)
+              ? rawVerseId
+              : null;
+      return _buildVerseParagraph(
+        verse,
+        theme,
+        highlighted: highlighted,
+        verseId: verseId,
+      );
+    }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (_isHarmonySource && _loadingHarmonyTopics)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
-            child: LinearProgressIndicator(minHeight: 2),
-          ),
-        if (_isHarmonySource && _harmonyTopicsError != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              _harmonyTopicsError!,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.error),
-            ),
-          ),
         ChapterNav(
           chapter: widget.chapter,
           isArabic: _isArabicLanguage(widget.language),
