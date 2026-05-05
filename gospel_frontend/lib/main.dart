@@ -137,6 +137,8 @@ class LocalizedUiLabels {
   final String unableToOpenReference;
   final String topicNotFound;
   final String reference;
+  final String clickToReadInChapter;
+  final String clickToReadAllReferences;
 
   const LocalizedUiLabels({
     required this.title,
@@ -190,6 +192,8 @@ class LocalizedUiLabels {
     required this.unableToOpenReference,
     required this.topicNotFound,
     required this.reference,
+    required this.clickToReadInChapter,
+    required this.clickToReadAllReferences,
   });
 }
 
@@ -314,6 +318,8 @@ const List<LanguageOption> kBaseLanguageOptions = [
       unableToOpenReference: 'Unable to open reference.',
       topicNotFound: 'Topic not found',
       reference: 'Reference',
+      clickToReadInChapter: 'Click to read in chapter',
+      clickToReadAllReferences: 'Click to read all references',
     ),
   ),
   LanguageOption(
@@ -321,12 +327,12 @@ const List<LanguageOption> kBaseLanguageOptions = [
     label: 'العربية',
     apiLanguage: 'arabic',
     apiVersion: arabicVersionWithDiacritics,
-    versionLabel: 'Van Dyke',
+    versionLabel: 'البستاني فاندايك',
     versions: [
-      BibleVersion(id: 'Van Dyke', label: 'Van Dyke'),
-      BibleVersion(id: 'Van Dyke-', label: 'Van Dyke'),
-      BibleVersion(id: 'New Arabic Version', label: 'New Arabic Version'),
-      BibleVersion(id: 'New Arabic Version-', label: 'New Arabic Version'),
+      BibleVersion(id: 'Van Dyke', label: 'البستاني فاندايك'),
+      BibleVersion(id: 'Van Dyke-', label: 'البستاني فاندايك'),
+      BibleVersion(id: 'New Arabic Version', label: 'كتاب الحياة'),
+      BibleVersion(id: 'New Arabic Version-', label: 'كتاب الحياة'),
     ],
     direction: TextDirection.rtl,
     ui: LocalizedUiLabels(
@@ -383,6 +389,8 @@ const List<LanguageOption> kBaseLanguageOptions = [
       unableToOpenReference: 'تعذر فتح المرجع.',
       topicNotFound: 'لم يتم العثور على الموضوع',
       reference: 'مرجع',
+      clickToReadInChapter: 'اضغط للقراءة في الفصل',
+      clickToReadAllReferences: 'اضغط لقراءة كل المراجع',
     ),
   ),
 ];
@@ -434,6 +442,14 @@ String _versionLabel(String languageId, String versionId) {
     final stripped = normalizedVersion.endsWith('-')
         ? normalizedVersion.substring(0, normalizedVersion.length - 1).trim()
         : normalizedVersion;
+    final normalizedArabicVersion = stripped.toLowerCase();
+    if (normalizedArabicVersion == 'van dyke') {
+      return 'البستاني فاندايك';
+    }
+    if (normalizedArabicVersion == 'new arabic version' ||
+        normalizedArabicVersion == 'nav') {
+      return 'كتاب الحياة';
+    }
     final baseLabel = _formatLanguageLabel(
       stripped.isNotEmpty ? stripped : normalizedVersion,
     );
@@ -929,6 +945,60 @@ bool _isArabicLanguage(String language) {
       normalized == 'ar';
 }
 
+String _topicNumberForDisplay(
+  Topic topic, {
+  int? zeroBasedIndex,
+  String? rawNumber,
+}) {
+  final override = rawNumber?.trim() ?? '';
+  if (override.isNotEmpty) {
+    return override;
+  }
+
+  final id = topic.id.trim();
+  final parsedId = int.tryParse(id);
+  if (parsedId != null) {
+    return parsedId.toString();
+  }
+  if (id.isNotEmpty) {
+    return id;
+  }
+  if (zeroBasedIndex != null) {
+    return (zeroBasedIndex + 1).toString();
+  }
+  return '';
+}
+
+String _localizedTopicNumber(String rawNumber, LanguageOption option) {
+  final trimmed = rawNumber.trim();
+  if (trimmed.isEmpty) {
+    return '';
+  }
+  return option.code == 'arabic' ? toArabicIndicDigits(trimmed) : trimmed;
+}
+
+String _numberedTopicTitle(
+  Topic topic,
+  LanguageOption option, {
+  int? zeroBasedIndex,
+  String? topicNumber,
+}) {
+  final rawNumber = _topicNumberForDisplay(
+    topic,
+    zeroBasedIndex: zeroBasedIndex,
+    rawNumber: topicNumber,
+  );
+  final localizedNumber = _localizedTopicNumber(rawNumber, option);
+  final title = topic.name.trim();
+  if (localizedNumber.isEmpty) {
+    return title;
+  }
+  if (title.isEmpty) {
+    return localizedNumber;
+  }
+  return '$localizedNumber $title';
+}
+
 String _zoomLabel(double value) => '${(value * 100).round()}%';
 
 double _nearestZoomLevel(double value) {
@@ -1413,6 +1483,7 @@ class GospelApp extends StatelessWidget {
           uri.queryParameters['language'] ?? defaultLanguage;
       final initialVersion = uri.queryParameters['version'] ?? defaultVersion;
       final initialTopicId = uri.queryParameters['topicId'] ?? '';
+      final initialTopicNumber = uri.queryParameters['topicNumber'] ?? '';
 
       final languageOption = _resolveLanguageOption(
         languageParam: initialLanguage,
@@ -1430,6 +1501,7 @@ class GospelApp extends StatelessWidget {
             languageOption: languageOption,
             apiVersion: sanitizedVersion,
             topicId: initialTopicId,
+            topicNumber: initialTopicNumber,
           ),
         ),
       );
@@ -1472,11 +1544,13 @@ class TopicDetailScreen extends StatefulWidget {
     required this.languageOption,
     required this.apiVersion,
     required this.topicId,
+    this.topicNumber = '',
   });
 
   final LanguageOption languageOption;
   final String apiVersion;
   final String topicId;
+  final String topicNumber;
 
   @override
   State<TopicDetailScreen> createState() => _TopicDetailScreenState();
@@ -1597,6 +1671,7 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
       apiVersion: widget.apiVersion,
       topic: topic,
       initialAuthors: authors,
+      topicNumber: widget.topicNumber,
     );
   }
 }
@@ -2023,6 +2098,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           'language': language.apiLanguage,
           'version': version,
           'topicId': topic.id.isNotEmpty ? topic.id : topic.name,
+          'topicNumber': _topicNumberForDisplay(topic),
         },
       );
       Navigator.of(context).pushNamed(uri.toString());
@@ -2035,6 +2111,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           apiVersion: _apiVersionFor(_languageOption),
           topic: topic,
           initialAuthors: authors,
+          topicNumber: _topicNumberForDisplay(topic),
         ),
       ),
     );
@@ -2173,10 +2250,10 @@ class _HarmonyTableState extends State<HarmonyTable> {
     TextStyle? textStyle,
   }) {
     final alignment = isRtl ? Alignment.centerRight : Alignment.centerLeft;
-    final isArabic = widget.languageOption.code == 'arabic';
-    final number = isArabic
-        ? toArabicIndicDigits((index + 1).toString())
-        : (index + 1).toString();
+    final number = _localizedTopicNumber(
+      _topicNumberForDisplay(topic, zeroBasedIndex: index),
+      widget.languageOption,
+    );
 
     return Align(
       alignment: alignment,
@@ -2200,9 +2277,33 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
       child: Text(label, style: style, textAlign: align),
     );
+  }
+
+  WrapAlignment _wrapAlignmentForTextAlign(
+    TextAlign align,
+    TextDirection direction,
+  ) {
+    switch (align) {
+      case TextAlign.center:
+        return WrapAlignment.center;
+      case TextAlign.right:
+        return direction == TextDirection.rtl
+            ? WrapAlignment.start
+            : WrapAlignment.end;
+      case TextAlign.left:
+        return direction == TextDirection.rtl
+            ? WrapAlignment.end
+            : WrapAlignment.start;
+      case TextAlign.start:
+        return WrapAlignment.start;
+      case TextAlign.end:
+        return WrapAlignment.end;
+      case TextAlign.justify:
+        return WrapAlignment.start;
+    }
   }
 
   Widget _buildReferenceCell(
@@ -2218,52 +2319,59 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
     if (filteredRefs.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         child: Text('—', style: style, textAlign: align),
       );
     }
 
-    CrossAxisAlignment crossAxisAlignment;
+    AlignmentGeometry cellAlignment;
     switch (align) {
       case TextAlign.center:
-        crossAxisAlignment = CrossAxisAlignment.center;
+        cellAlignment = Alignment.center;
         break;
       case TextAlign.right:
-        crossAxisAlignment = CrossAxisAlignment.end;
+        cellAlignment = Alignment.centerRight;
         break;
       default:
-        crossAxisAlignment = CrossAxisAlignment.start;
+        cellAlignment = Alignment.centerLeft;
         break;
     }
 
-    final children = <Widget>[];
-    for (var i = 0; i < filteredRefs.length; i++) {
-      children.add(
-        ReferenceHoverText(
-          reference: filteredRefs[i],
-          textStyle: style,
-          textAlign: align,
-          textDirection: widget.languageOption.direction,
-          topicName: topic.name,
-          topicId: topic.id.isNotEmpty ? topic.id : topic.name,
-          sourceContext: 'harmony',
-          gospel: gospel,
-          language: widget.languageOption.apiLanguage,
-          version: widget.apiVersion,
-          tooltipMessage: widget.languageOption.tooltipMessage,
-        ),
-      );
-      if (i < filteredRefs.length - 1) {
-        children.add(const SizedBox(height: 6));
-      }
-    }
+    final wrapAlignment = _wrapAlignmentForTextAlign(
+      align,
+      widget.languageOption.direction,
+    );
+    final children = filteredRefs
+        .map(
+          (ref) => ReferenceHoverText(
+            reference: ref,
+            textStyle: style,
+            textAlign: align,
+            textDirection: widget.languageOption.direction,
+            topicName: topic.name,
+            topicId: topic.id.isNotEmpty ? topic.id : topic.name,
+            sourceContext: 'harmony',
+            gospel: gospel,
+            language: widget.languageOption.apiLanguage,
+            version: widget.apiVersion,
+            tooltipMessage: widget.languageOption.ui.clickToReadInChapter,
+          ),
+        )
+        .toList();
 
     return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: crossAxisAlignment,
-        mainAxisSize: MainAxisSize.min,
-        children: children,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      child: Align(
+        alignment: cellAlignment,
+        child: Wrap(
+          alignment: wrapAlignment,
+          runAlignment: wrapAlignment,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          textDirection: widget.languageOption.direction,
+          spacing: 8,
+          runSpacing: 4,
+          children: children,
+        ),
       ),
     );
   }
@@ -2275,15 +2383,16 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final isRtl = languageOption.direction == TextDirection.rtl;
     final headerStyle = theme.textTheme.titleSmall?.copyWith(
       fontWeight: FontWeight.w600,
-      letterSpacing: 0.2,
+      letterSpacing: 0,
       color: theme.colorScheme.onSurface,
     );
-    final subjectStyle = theme.textTheme.bodyLarge?.copyWith(
+    final subjectStyle = theme.textTheme.bodyMedium?.copyWith(
       fontWeight: FontWeight.w600,
+      height: 1.25,
     );
-    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.4);
-    final borderColor = theme.dividerColor.withOpacity(0.4);
-    final headerBackground = theme.colorScheme.surfaceVariant;
+    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.25);
+    final borderColor = theme.dividerColor.withValues(alpha: 0.4);
+    final headerBackground = theme.colorScheme.surfaceContainerHighest;
     final subjectAlign = isRtl ? TextAlign.right : TextAlign.left;
     final referenceAlign = isRtl ? TextAlign.right : TextAlign.center;
     assert(
@@ -2314,7 +2423,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
       final grouped = _groupReferences(topic);
       final isEvenRow = i.isEven;
       final baseColor = theme.colorScheme.surface;
-      final alternateColor = theme.colorScheme.surfaceVariant.withOpacity(0.35);
+      final alternateColor = theme.colorScheme.surfaceContainerHighest
+          .withValues(alpha: 0.35);
       bodyRows.add(
         TableRow(
           decoration: BoxDecoration(
@@ -2323,18 +2433,25 @@ class _HarmonyTableState extends State<HarmonyTable> {
           children: [
             TableCell(
               verticalAlignment: TableCellVerticalAlignment.top,
-              child: TableRowInkWell(
-                onTap: widget.onTopicSelected == null
-                    ? null
-                    : () => widget.onTopicSelected!(topic),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: _buildNumberedTopic(
-                    index: i,
-                    topic: topic,
-                    textAlign: subjectAlign,
-                    isRtl: isRtl,
-                    textStyle: subjectStyle,
+              child: Tooltip(
+                message: languageOption.ui.clickToReadAllReferences,
+                waitDuration: const Duration(milliseconds: 400),
+                child: TableRowInkWell(
+                  onTap: widget.onTopicSelected == null
+                      ? null
+                      : () => widget.onTopicSelected!(topic),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    child: _buildNumberedTopic(
+                      index: i,
+                      topic: topic,
+                      textAlign: subjectAlign,
+                      isRtl: isRtl,
+                      textStyle: subjectStyle,
+                    ),
                   ),
                 ),
               ),
@@ -2355,33 +2472,43 @@ class _HarmonyTableState extends State<HarmonyTable> {
       );
     }
 
-    final availableWidth = MediaQuery.of(context).size.width;
-    final minTableWidth = availableWidth < 720 ? 720.0 : availableWidth;
+    final availableWidth = MediaQuery.sizeOf(context).width;
+    const minScrollableTableWidth = 760.0;
+    const maxDesktopTableWidth = 1320.0;
+    final tableWidth = availableWidth < minScrollableTableWidth
+        ? minScrollableTableWidth
+        : math.min(availableWidth, maxDesktopTableWidth);
+    final horizontalFrameWidth = math.max(availableWidth, tableWidth);
 
     return Column(
       children: [
         SingleChildScrollView(
           controller: _headerHorizontalController,
           scrollDirection: Axis.horizontal,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: minTableWidth),
-            child: Table(
-              border: TableBorder(
-                verticalInside: BorderSide(color: borderColor, width: 0.6),
-                top: BorderSide(color: borderColor, width: 0.8),
-                bottom: BorderSide(color: borderColor, width: 0.6),
-                left: BorderSide(color: borderColor, width: 0.8),
-                right: BorderSide(color: borderColor, width: 0.8),
+          child: SizedBox(
+            width: horizontalFrameWidth,
+            child: Center(
+              child: SizedBox(
+                width: tableWidth,
+                child: Table(
+                  border: TableBorder(
+                    verticalInside: BorderSide(color: borderColor, width: 0.6),
+                    top: BorderSide(color: borderColor, width: 0.8),
+                    bottom: BorderSide(color: borderColor, width: 0.6),
+                    left: BorderSide(color: borderColor, width: 0.8),
+                    right: BorderSide(color: borderColor, width: 0.8),
+                  ),
+                  columnWidths: const {
+                    0: FlexColumnWidth(2.6),
+                    1: FlexColumnWidth(1.4),
+                    2: FlexColumnWidth(1.4),
+                    3: FlexColumnWidth(1.4),
+                    4: FlexColumnWidth(1.4),
+                  },
+                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                  children: [headerRow],
+                ),
               ),
-              columnWidths: const {
-                0: FlexColumnWidth(2.6),
-                1: FlexColumnWidth(1.4),
-                2: FlexColumnWidth(1.4),
-                3: FlexColumnWidth(1.4),
-                4: FlexColumnWidth(1.4),
-              },
-              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-              children: [headerRow],
             ),
           ),
         ),
@@ -2399,32 +2526,37 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 child: SingleChildScrollView(
                   controller: _bodyHorizontalController,
                   scrollDirection: Axis.horizontal,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: minTableWidth),
-                    child: Table(
-                      border: TableBorder(
-                        horizontalInside: BorderSide(
-                          color: borderColor,
-                          width: 0.6,
+                  child: SizedBox(
+                    width: horizontalFrameWidth,
+                    child: Center(
+                      child: SizedBox(
+                        width: tableWidth,
+                        child: Table(
+                          border: TableBorder(
+                            horizontalInside: BorderSide(
+                              color: borderColor,
+                              width: 0.6,
+                            ),
+                            verticalInside: BorderSide(
+                              color: borderColor,
+                              width: 0.6,
+                            ),
+                            bottom: BorderSide(color: borderColor, width: 0.8),
+                            left: BorderSide(color: borderColor, width: 0.8),
+                            right: BorderSide(color: borderColor, width: 0.8),
+                          ),
+                          columnWidths: const {
+                            0: FlexColumnWidth(2.6),
+                            1: FlexColumnWidth(1.4),
+                            2: FlexColumnWidth(1.4),
+                            3: FlexColumnWidth(1.4),
+                            4: FlexColumnWidth(1.4),
+                          },
+                          defaultVerticalAlignment:
+                              TableCellVerticalAlignment.middle,
+                          children: bodyRows,
                         ),
-                        verticalInside: BorderSide(
-                          color: borderColor,
-                          width: 0.6,
-                        ),
-                        bottom: BorderSide(color: borderColor, width: 0.8),
-                        left: BorderSide(color: borderColor, width: 0.8),
-                        right: BorderSide(color: borderColor, width: 0.8),
                       ),
-                      columnWidths: const {
-                        0: FlexColumnWidth(2.6),
-                        1: FlexColumnWidth(1.4),
-                        2: FlexColumnWidth(1.4),
-                        3: FlexColumnWidth(1.4),
-                        4: FlexColumnWidth(1.4),
-                      },
-                      defaultVerticalAlignment:
-                          TableCellVerticalAlignment.middle,
-                      children: bodyRows,
                     ),
                   ),
                 ),
@@ -2447,7 +2579,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.topicName = '',
     this.language = defaultLanguage,
     this.version = defaultVersion,
-    this.tooltipMessage = 'Click to view more',
+    this.tooltipMessage = 'Click to read in chapter',
     this.labelOverride = '',
     this.enableHoverPreview = true,
     this.topicId = '',
@@ -2903,11 +3035,20 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     );
     final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
     final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
+    final helperStyle = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.primary,
+      fontWeight: FontWeight.w600,
+    );
+    final helperText = widget.tooltipMessage.trim();
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(_previewHeading(), style: headingStyle),
+        if (helperText.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(helperText, style: helperStyle),
+        ],
         const SizedBox(height: 8),
         if (_loadingPreview)
           const Center(child: CircularProgressIndicator())
@@ -2981,7 +3122,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         : widget.reference.formattedReference;
     final alignment = _alignmentForTextAlign(widget.textAlign);
 
-    return MouseRegion(
+    final link = MouseRegion(
       cursor: text.isEmpty
           ? SystemMouseCursors.basic
           : SystemMouseCursors.click,
@@ -3011,6 +3152,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
           onTap: text.isEmpty ? null : _handleTap,
           child: Align(
             alignment: alignment,
+            widthFactor: 1,
+            heightFactor: 1,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: VerseRefText(
@@ -3023,6 +3166,17 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
           ),
         ),
       ),
+    );
+
+    final helperText = widget.tooltipMessage.trim();
+    if (text.isEmpty || helperText.isEmpty) {
+      return link;
+    }
+
+    return Tooltip(
+      message: helperText,
+      waitDuration: const Duration(milliseconds: 400),
+      child: link,
     );
   }
 }
@@ -3110,31 +3264,60 @@ class ChapterNav extends StatelessWidget {
       );
     }
 
+    Widget navButton({
+      required String tooltip,
+      required VoidCallback? onPressed,
+      required IconData icon,
+    }) {
+      return IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: fixedDirectionIcon(icon),
+      );
+    }
+
+    final previousControls = <Widget>[
+      navButton(
+        tooltip: labels.previousBook,
+        onPressed: hasPreviousBook ? onPreviousBook : null,
+        icon: isRtl
+            ? Icons.keyboard_double_arrow_right
+            : Icons.keyboard_double_arrow_left,
+      ),
+      navButton(
+        tooltip: labels.previousChapter,
+        onPressed: hasPreviousChapter ? onPreviousChapter : null,
+        icon: isRtl ? Icons.chevron_right : Icons.chevron_left,
+      ),
+    ];
+    final nextControls = <Widget>[
+      navButton(
+        tooltip: labels.nextChapter,
+        onPressed: hasNextChapter ? onNextChapter : null,
+        icon: isRtl ? Icons.chevron_left : Icons.chevron_right,
+      ),
+      navButton(
+        tooltip: labels.nextBook,
+        onPressed: hasNextBook ? onNextBook : null,
+        icon: isRtl
+            ? Icons.keyboard_double_arrow_left
+            : Icons.keyboard_double_arrow_right,
+      ),
+    ];
+    final leadingControls = isRtl ? nextControls : previousControls;
+    final trailingControls = isRtl ? previousControls : nextControls;
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Directionality(
-          textDirection: languageOption.direction,
-          child: Row(
-            children: [
-              IconButton(
-                tooltip: labels.previousBook,
-                onPressed: hasPreviousBook ? onPreviousBook : null,
-                icon: Icon(
-                  isRtl
-                      ? Icons.keyboard_double_arrow_right
-                      : Icons.keyboard_double_arrow_left,
-                ),
-              ),
-              IconButton(
-                tooltip: labels.previousChapter,
-                onPressed: hasPreviousChapter ? onPreviousChapter : null,
-                icon: fixedDirectionIcon(
-                  isRtl ? Icons.chevron_right : Icons.chevron_left,
-                ),
-              ),
-              Expanded(
+        child: Row(
+          textDirection: TextDirection.ltr,
+          children: [
+            ...leadingControls,
+            Expanded(
+              child: Directionality(
+                textDirection: languageOption.direction,
                 child: Text(
                   '${labels.chapter} $chapterNumber',
                   textAlign: TextAlign.center,
@@ -3143,24 +3326,9 @@ class ChapterNav extends StatelessWidget {
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: labels.nextChapter,
-                onPressed: hasNextChapter ? onNextChapter : null,
-                icon: fixedDirectionIcon(
-                  isRtl ? Icons.chevron_left : Icons.chevron_right,
-                ),
-              ),
-              IconButton(
-                tooltip: labels.nextBook,
-                onPressed: hasNextBook ? onNextBook : null,
-                icon: Icon(
-                  isRtl
-                      ? Icons.keyboard_double_arrow_left
-                      : Icons.keyboard_double_arrow_right,
-                ),
-              ),
-            ],
-          ),
+            ),
+            ...trailingControls,
+          ],
         ),
       ),
     );
@@ -3263,6 +3431,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
     return _languageOptionForVersion(widget.version);
   }
+
+  String get _activeApiLanguage => _languageOption.apiLanguage;
 
   @override
   void initState() {
@@ -3474,7 +3644,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
     final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
       queryParameters: {
-        'language': widget.language,
+        'language': _activeApiLanguage,
         'version': _activeVersion,
         'book': book,
         'chapter': chapter.toString(),
@@ -3611,7 +3781,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       'book': book,
       'bookDisplay': book,
       'chapter': chapter.toString(),
-      'language': widget.language,
+      'language': _activeApiLanguage,
       'version': _activeVersion,
     };
     if (widget.topicName.trim().isNotEmpty) {
@@ -3637,7 +3807,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _harmonyTopicsError = null;
     });
     final uri = Uri.parse('$apiBaseUrl/topics').replace(
-      queryParameters: {'language': widget.language, 'version': _activeVersion},
+      queryParameters: {
+        'language': _activeApiLanguage,
+        'version': _activeVersion,
+      },
     );
     try {
       final response = await http.get(uri);
@@ -3833,7 +4006,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       }
       segments.add(displayVersion.trim());
     }
-    final apiLanguage = widget.language.trim();
+    final apiLanguage = _activeApiLanguage.trim();
     if (apiLanguage.isNotEmpty) {
       final displayLanguage =
           _languageOptionForApiLanguage(apiLanguage)?.label ?? apiLanguage;
@@ -3860,7 +4033,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     try {
       final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
         queryParameters: {
-          'language': widget.language,
+          'language': _activeApiLanguage,
           'version': _activeVersion,
           'book': bookParam,
           'chapter': widget.chapter.toString(),
@@ -3960,46 +4133,33 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final TextStyle baseStyle =
         theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
         const TextStyle(fontSize: 16, height: 1.6);
+    final TextStyle verseStyle = highlighted
+        ? baseStyle.copyWith(fontWeight: FontWeight.w700)
+        : baseStyle;
     final TextStyle numberStyle = baseStyle.copyWith(
-      fontWeight: FontWeight.w600,
+      fontWeight: highlighted ? FontWeight.w700 : FontWeight.w600,
     );
-    final content = RichText(
-      textScaler: TextScaler.linear(_textScale),
-      textAlign: TextAlign.start,
-      text: TextSpan(
-        style: baseStyle,
-        children: [
-          if (verse.number != null && verse.number! > 0)
-            TextSpan(
-              text:
-                  '${formatVerseMarker(verse.number!, language: markerLanguage ?? _languageOption.apiLanguage, version: markerVersion ?? _activeVersion)}. ',
-              style: numberStyle,
-            ),
-          TextSpan(text: verse.text),
-        ],
-      ),
-    );
-
-    final widgetChild = highlighted
-        ? Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(10),
-              border: BorderDirectional(
-                start: BorderSide(color: theme.colorScheme.primary, width: 3),
-              ),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            child: content,
-          )
-        : content;
-
     return Padding(
       key: verseId != null
           ? (_verseKeys.putIfAbsent(verseId, () => GlobalKey()))
           : null,
       padding: const EdgeInsets.only(bottom: 12),
-      child: widgetChild,
+      child: RichText(
+        textScaler: TextScaler.linear(_textScale),
+        textAlign: TextAlign.start,
+        text: TextSpan(
+          style: verseStyle,
+          children: [
+            if (verse.number != null && verse.number! > 0)
+              TextSpan(
+                text:
+                    '${formatVerseMarker(verse.number!, language: markerLanguage ?? _languageOption.apiLanguage, version: markerVersion ?? _activeVersion)}. ',
+                style: numberStyle,
+              ),
+            TextSpan(text: verse.text),
+          ],
+        ),
+      ),
     );
   }
 
@@ -4313,6 +4473,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   void _toggleInterlinearView() {
+    if (_comparisons.isEmpty) {
+      if (_interlinearView) {
+        setState(() {
+          _interlinearView = false;
+        });
+      }
+      return;
+    }
     setState(() {
       _interlinearView = !_interlinearView;
     });
@@ -5131,26 +5299,22 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     Widget buildVerseCell(_ParallelColumn column, int verseNumber) {
       final text = column.verses[verseNumber] ?? '—';
       final highlighted = _highlightVerses.contains(verseNumber);
-      return Container(
-        decoration: BoxDecoration(
-          color: highlighted
-              ? theme.colorScheme.primary.withOpacity(0.08)
-              : null,
-          borderRadius: BorderRadius.circular(8),
-        ),
+      final baseStyle = theme.textTheme.bodyMedium;
+      final verseStyle = highlighted
+          ? baseStyle?.copyWith(fontWeight: FontWeight.w700)
+          : baseStyle;
+      return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Directionality(
           textDirection: column.language.direction,
           child: RichText(
             text: TextSpan(
-              style: theme.textTheme.bodyMedium,
+              style: verseStyle,
               children: [
                 TextSpan(
                   text:
                       '${formatVerseMarker(verseNumber, language: column.language.apiLanguage, version: column.version)}. ',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: baseStyle?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 TextSpan(text: text),
               ],
@@ -5187,9 +5351,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                 ),
                 const SizedBox(height: 8),
                 ...sectionRanges.expand((section) {
-                  final sectionHighlighted = _highlightVerses.any(
-                    (v) => v >= section.start && v <= section.end,
-                  );
                   return [
                     Container(
                       width: double.infinity,
@@ -5199,11 +5360,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: sectionHighlighted
-                            ? theme.colorScheme.primary.withOpacity(0.08)
-                            : theme.colorScheme.surfaceVariant.withOpacity(
-                                0.35,
-                              ),
+                        color: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
@@ -5482,8 +5640,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             verseNumber: number,
             translations: translations,
             theme: theme,
-            language: widget.language,
+            language: _activeApiLanguage,
             version: _activeVersion,
+            emphasized: _highlightVerses.contains(number),
           ),
         ),
         if (statusWidgets.isNotEmpty) ...[
@@ -5645,38 +5804,35 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     ].where((button) => button is! SizedBox).toList();
     final trailingActions = <Widget>[
       _buildArabicReferenceToggleButton(),
-      OutlinedButton.icon(
-        onPressed: () => Navigator.of(context).pushNamed('/'),
-        style: _toolbarOutlinedStyle(context),
-        icon: Icon(
-          direction == TextDirection.rtl
-              ? Icons.arrow_forward
-              : Icons.arrow_back,
-          size: 18,
-        ),
-        label: Text(_languageOption.ui.backToMainTable),
-      ),
     ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
       textDirection: direction,
       child: Column(
         children: [
-          AppToolbar(
-            title: toolbarTitle,
-            language: _languageOption,
-            version: _activeVersion,
-            languages: _supportedLanguages,
-            languagesLoading: _languagesLoading,
-            onLanguageChanged: _updateReferenceLanguage,
-            onVersionChanged: _updateSelectedVersion,
-            primaryActions: primaryActions,
-            trailingActions: trailingActions,
+          Material(
+            color: theme.colorScheme.surface,
+            elevation: 1,
+            surfaceTintColor: theme.colorScheme.surfaceTint,
+            child: AppToolbar(
+              title: toolbarTitle,
+              language: _languageOption,
+              version: _activeVersion,
+              languages: _supportedLanguages,
+              languagesLoading: _languagesLoading,
+              onLanguageChanged: _updateReferenceLanguage,
+              onVersionChanged: _updateSelectedVersion,
+              primaryActions: primaryActions,
+              trailingActions: trailingActions,
+            ),
           ),
           const Divider(height: 0),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.symmetric(
+                horizontal: MediaQuery.sizeOf(context).width < 640 ? 16 : 24,
+                vertical: 24,
+              ),
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 760),
@@ -5781,9 +5937,13 @@ Widget _buildInterlinearVerseGroup({
   String? version,
   TextStyle? textStyle,
   TextStyle? labelStyle,
+  bool emphasized = false,
 }) {
   final resolvedTextStyle =
       textStyle ?? theme.textTheme.bodyLarge?.copyWith(height: 1.6);
+  final verseTextStyle = emphasized
+      ? resolvedTextStyle?.copyWith(fontWeight: FontWeight.w700)
+      : resolvedTextStyle;
   final resolvedLabelStyle =
       labelStyle ??
       theme.textTheme.labelSmall?.copyWith(
@@ -5813,7 +5973,7 @@ Widget _buildInterlinearVerseGroup({
                 text: TextSpan(
                   style: resolvedTextStyle,
                   children: [
-                    TextSpan(text: verseText),
+                    TextSpan(text: verseText, style: verseTextStyle),
                     const TextSpan(text: ' '),
                     TextSpan(
                       text: '(${translation.label})',
@@ -6113,12 +6273,14 @@ class AuthorComparisonScreen extends StatefulWidget {
   final Topic topic;
   final List<String> initialAuthors;
   final String apiVersion;
+  final String topicNumber;
   const AuthorComparisonScreen({
     super.key,
     required this.languageOption,
     required this.topic,
     required this.initialAuthors,
     required this.apiVersion,
+    this.topicNumber = '',
   });
 
   @override
@@ -6223,6 +6385,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final versionLabel = _versionLabel(option.code, _activeVersion);
     return '${option.label} · $versionLabel';
   }
+
+  String get _topicToolbarTitle => _numberedTopicTitle(
+    _topic,
+    _languageOption,
+    topicNumber: widget.topicNumber,
+  );
 
   @override
   void initState() {
@@ -7216,7 +7384,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         body: Column(
           children: [
             AppToolbar(
-              title: _topic.name,
+              title: _topicToolbarTitle,
               language: option,
               version: _activeVersion,
               languages: _supportedLanguages,
@@ -7333,8 +7501,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                                                   topicName: _topic.name,
                                                   language: option.apiLanguage,
                                                   version: _activeVersion,
-                                                  tooltipMessage:
-                                                      option.tooltipMessage,
+                                                  tooltipMessage: option
+                                                      .ui
+                                                      .clickToReadInChapter,
                                                   labelOverride: entry.title,
                                                   enableHoverPreview: false,
                                                 );
