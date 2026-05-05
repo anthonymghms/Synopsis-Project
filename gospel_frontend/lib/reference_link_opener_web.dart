@@ -3,7 +3,7 @@ import 'dart:html' as html;
 
 Future<bool> openReferenceLinkImpl(Uri uri) async {
   if (uri.hasScheme || uri.hasAuthority) {
-    html.window.open(uri.toString(), '_blank');
+    html.window.open(uri.toString(), '_self');
     return true;
   }
 
@@ -17,7 +17,8 @@ Future<bool> openReferenceLinkImpl(Uri uri) async {
       ? uri.toString()
       : '/${uri.toString()}';
 
-  final target = '$base#${pathWithQuery.startsWith('/') ? '' : '/'}$pathWithQuery';
-  html.window.open(target, '_blank');
+  final target =
+      '$base#${pathWithQuery.startsWith('/') ? '' : '/'}$pathWithQuery';
+  html.window.open(target, '_self');
   return true;
 }
