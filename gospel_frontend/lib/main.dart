@@ -13,11 +13,13 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:gospel_frontend/utils/format_verse_ref.dart';
 import 'package:gospel_frontend/widgets/verse_ref_text.dart';
-import 'reference_link_opener.dart';
+import 'package:url_launcher/link.dart';
 
 // ---- CONFIGURATION ----
-const apiBaseUrl =
-    "http://164.68.108.181:8000"; // Change if your backend is hosted elsewhere
+const apiBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'http://127.0.0.1:8000',
+);
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
@@ -33,7 +35,9 @@ const _versionFieldCandidates = [
   'supported_versions',
 ];
 
-const List<double> _zoomLevels = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
+const double _zoomMin = 0.8;
+const double _zoomMax = 1.6;
+const double _zoomDefault = 1.0;
 
 class LanguageSelectionController {
   LanguageSelectionController._();
@@ -78,6 +82,99 @@ class LanguageSelectionController {
   }
 }
 
+class MenuLanguageController {
+  MenuLanguageController._();
+
+  static final MenuLanguageController instance = MenuLanguageController._();
+
+  final ValueNotifier<String> _languageCode = ValueNotifier<String>(
+    defaultLanguage,
+  );
+  SharedPreferences? _prefs;
+  bool _initialized = false;
+
+  ValueListenable<String> get listenable => _languageCode;
+  ValueNotifier<String> get notifier => _languageCode;
+  String get languageCode => _languageCode.value;
+
+  Future<void> initialize({String? fallbackLanguageCode}) async {
+    if (_initialized) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _prefs = prefs;
+      final stored = prefs.getString('selected_menu_language_code');
+      final fallback = fallbackLanguageCode?.trim();
+      _languageCode.value = stored?.trim().isNotEmpty == true
+          ? stored!.trim()
+          : (fallback?.isNotEmpty == true ? fallback! : defaultLanguage);
+    } catch (_) {
+      final fallback = fallbackLanguageCode?.trim();
+      _languageCode.value = fallback?.isNotEmpty == true
+          ? fallback!
+          : defaultLanguage;
+    } finally {
+      _initialized = true;
+    }
+  }
+
+  void update(String code) {
+    final normalized = code.trim();
+    if (normalized.isEmpty || normalized == _languageCode.value) {
+      return;
+    }
+    _languageCode.value = normalized;
+    final prefs = _prefs;
+    if (prefs != null) {
+      prefs.setString('selected_menu_language_code', normalized);
+    }
+  }
+}
+
+class ZoomController {
+  ZoomController._();
+
+  static final ZoomController instance = ZoomController._();
+
+  final ValueNotifier<double> _textScale = ValueNotifier<double>(_zoomDefault);
+  SharedPreferences? _prefs;
+  bool _initialized = false;
+
+  ValueListenable<double> get listenable => _textScale;
+  double get textScale => _textScale.value;
+
+  Future<void> initialize() async {
+    if (_initialized) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _prefs = prefs;
+      final stored = prefs.getDouble('reader_zoom_scale');
+      if (stored != null) {
+        _textScale.value = stored.clamp(_zoomMin, _zoomMax).toDouble();
+      }
+    } catch (_) {
+      _textScale.value = _zoomDefault;
+    } finally {
+      _initialized = true;
+    }
+  }
+
+  void update(double value) {
+    final next = value.clamp(_zoomMin, _zoomMax).toDouble();
+    if ((next - _textScale.value).abs() < 0.001) {
+      return;
+    }
+    _textScale.value = next;
+    final prefs = _prefs;
+    if (prefs != null) {
+      prefs.setDouble('reader_zoom_scale', next);
+    }
+  }
+}
+
 class BibleVersion {
   final String id;
   final String label;
@@ -104,6 +201,8 @@ class LocalizedUiLabels {
   final String backToMainTable;
   final String nextChapter;
   final String previousChapter;
+  final String nextTopic;
+  final String previousTopic;
   final String nextBook;
   final String previousBook;
   final String chapter;
@@ -139,6 +238,15 @@ class LocalizedUiLabels {
   final String reference;
   final String clickToReadInChapter;
   final String clickToReadAllReferences;
+  final String showTopicNames;
+  final String hideTopicNames;
+  final String menuLanguage;
+  final String settings;
+  final String logout;
+  final String account;
+  final String continueAction;
+  final String compare;
+  final String chooseAuthors;
 
   const LocalizedUiLabels({
     required this.title,
@@ -159,6 +267,8 @@ class LocalizedUiLabels {
     required this.backToMainTable,
     required this.nextChapter,
     required this.previousChapter,
+    required this.nextTopic,
+    required this.previousTopic,
     required this.nextBook,
     required this.previousBook,
     required this.chapter,
@@ -194,6 +304,15 @@ class LocalizedUiLabels {
     required this.reference,
     required this.clickToReadInChapter,
     required this.clickToReadAllReferences,
+    required this.showTopicNames,
+    required this.hideTopicNames,
+    required this.menuLanguage,
+    required this.settings,
+    required this.logout,
+    required this.account,
+    required this.continueAction,
+    required this.compare,
+    required this.chooseAuthors,
   });
 }
 
@@ -284,6 +403,8 @@ const List<LanguageOption> kBaseLanguageOptions = [
       backToMainTable: 'Back to main table',
       nextChapter: 'Next chapter',
       previousChapter: 'Previous chapter',
+      nextTopic: 'Next topic',
+      previousTopic: 'Previous topic',
       nextBook: 'Next book',
       previousBook: 'Previous book',
       chapter: 'Chapter',
@@ -291,7 +412,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       removeDiacritics: 'Remove diacritics',
       selectVersion: 'Select version',
       selectVersions: 'Select versions',
-      selectTranslationToAdd: 'Select translation to add',
+      selectTranslationToAdd: 'Select translations to add',
       selectLanguage: 'Select language',
       versions: 'Versions',
       noAlternativeVersions: 'No alternative versions available',
@@ -320,13 +441,22 @@ const List<LanguageOption> kBaseLanguageOptions = [
       reference: 'Reference',
       clickToReadInChapter: 'Click to read in chapter',
       clickToReadAllReferences: 'Click to read all references',
+      showTopicNames: 'Show topic names',
+      hideTopicNames: 'Hide topic names',
+      menuLanguage: 'Menu language',
+      settings: 'Settings',
+      logout: 'Logout',
+      account: 'Account',
+      continueAction: 'Continue',
+      compare: 'Compare',
+      chooseAuthors: 'Choose authors',
     ),
   ),
   LanguageOption(
     code: 'arabic',
     label: 'العربية',
     apiLanguage: 'arabic',
-    apiVersion: arabicVersionWithDiacritics,
+    apiVersion: arabicVersionWithoutDiacritics,
     versionLabel: 'البستاني فاندايك',
     versions: [
       BibleVersion(id: 'Van Dyke', label: 'البستاني فاندايك'),
@@ -348,7 +478,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       tooltipMessage: 'اضغط لعرض المزيد',
       comparePrompt: 'اختر الأناجيل للمقارنة',
       language: 'اللغة',
-      version: 'النسخة',
+      version: 'الترجمة',
       addTranslation: 'إضافة ترجمة',
       addComparison: 'إضافة مقارنة',
       interlinearView: 'العرض المتوازي',
@@ -356,17 +486,19 @@ const List<LanguageOption> kBaseLanguageOptions = [
       backToMainTable: 'العودة إلى الجدول الرئيسي',
       nextChapter: 'الفصل التالي',
       previousChapter: 'الفصل السابق',
+      nextTopic: 'الموضوع التالي',
+      previousTopic: 'الموضوع السابق',
       nextBook: 'السفر التالي',
       previousBook: 'السفر السابق',
       chapter: 'فصل',
       addDiacritics: 'إضافة الحركات',
       removeDiacritics: 'إزالة الحركات',
-      selectVersion: 'اختر النسخة',
-      selectVersions: 'اختر النسخ',
-      selectTranslationToAdd: 'اختر الترجمة لإضافتها',
+      selectVersion: 'اختر الترجمة',
+      selectVersions: 'اختر الترجمات',
+      selectTranslationToAdd: 'اختر ترجمات لإضافتها',
       selectLanguage: 'اختر اللغة',
-      versions: 'النسخ',
-      noAlternativeVersions: 'لا توجد نسخ بديلة متاحة',
+      versions: 'الترجمات',
+      noAlternativeVersions: 'لا توجد ترجمات بديلة متاحة',
       comparisonScopeChapter: 'نطاق المقارنة: الفصل كاملًا',
       comparisons: 'المقارنات',
       change: 'تغيير',
@@ -389,8 +521,17 @@ const List<LanguageOption> kBaseLanguageOptions = [
       unableToOpenReference: 'تعذر فتح المرجع.',
       topicNotFound: 'لم يتم العثور على الموضوع',
       reference: 'مرجع',
-      clickToReadInChapter: 'اضغط للقراءة في الفصل',
-      clickToReadAllReferences: 'اضغط لقراءة كل المراجع',
+      clickToReadInChapter: 'قراءة ضمن الفصل',
+      clickToReadAllReferences: 'قراءة كل المراجع',
+      showTopicNames: 'إظهار أسماء المواضيع',
+      hideTopicNames: 'إخفاء أسماء المواضيع',
+      menuLanguage: 'لغة القوائم',
+      settings: 'الإعدادات',
+      logout: 'تسجيل الخروج',
+      account: 'الحساب',
+      continueAction: 'متابعة',
+      compare: 'قارن',
+      chooseAuthors: 'اختر الأناجيل',
     ),
   ),
 ];
@@ -523,9 +664,7 @@ Future<void> _collectVersionManifestDocs(
 }
 
 Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
-  final docRef = FirebaseFirestore.instance
-      .collection('bibles')
-      .doc(languageId);
+  final docRef = FirebaseFirestore.instance.collection('bibles').doc(languageId);
   final Set<String> versionIds = {};
 
   try {
@@ -616,6 +755,53 @@ LanguageOption _languageOptionForCode(String code) {
     (option) => option.code == code,
     orElse: () => _supportedLanguages.first,
   );
+}
+
+class MenuLanguageScope extends InheritedNotifier<ValueNotifier<String>> {
+  const MenuLanguageScope({
+    super.key,
+    required ValueNotifier<String> notifier,
+    required super.child,
+  }) : super(notifier: notifier);
+
+  static LanguageOption of(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<MenuLanguageScope>();
+    final code =
+        scope?.notifier?.value ?? MenuLanguageController.instance.languageCode;
+    return _languageOptionForCode(code);
+  }
+}
+
+Uri _mainTableUri({required LanguageOption language, required String version}) {
+  return Uri(
+    path: '/',
+    queryParameters: {
+      'language': language.apiLanguage,
+      'version': _sanitizeVersionForLanguage(language, version),
+    },
+  );
+}
+
+Uri _topicUri({
+  required Topic topic,
+  required LanguageOption language,
+  required String version,
+  String topicNumber = '',
+  String comparisonState = '',
+}) {
+  final queryParameters = {
+    'language': language.apiLanguage,
+    'version': _sanitizeVersionForLanguage(language, version),
+    'topicId': topic.id.isNotEmpty ? topic.id : topic.name,
+    'topicNumber': topicNumber.trim().isNotEmpty
+        ? topicNumber.trim()
+        : _topicNumberForDisplay(topic),
+  };
+  if (comparisonState.trim().isNotEmpty) {
+    queryParameters['comparisons'] = comparisonState.trim();
+  }
+  return Uri(path: '/topic', queryParameters: queryParameters);
 }
 
 BibleVersion? _versionOptionFor(LanguageOption option, String versionId) {
@@ -760,6 +946,35 @@ bool _isArabicWithoutDiacritics(String version) {
   final normalized = version.trim().toLowerCase();
   return normalized == arabicVersionWithoutDiacritics.toLowerCase() ||
       normalized.endsWith('-');
+}
+
+final RegExp _arabicDiacriticsPattern = RegExp(
+  r'[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]',
+);
+
+String _stripArabicDiacritics(String text) {
+  if (text.isEmpty) {
+    return text;
+  }
+  return text.replaceAll(_arabicDiacriticsPattern, '');
+}
+
+List<_VerseLine> _normalizeVerseLinesForDisplay(
+  List<_VerseLine> verses, {
+  required LanguageOption language,
+  required bool withDiacritics,
+}) {
+  if (language.code != 'arabic' || withDiacritics) {
+    return verses;
+  }
+  return verses
+      .map(
+        (verse) => _VerseLine(
+          number: verse.number,
+          text: _stripArabicDiacritics(verse.text),
+        ),
+      )
+      .toList();
 }
 
 String _arabicBaseVersion(String version) {
@@ -1001,19 +1216,6 @@ String _numberedTopicTitle(
 
 String _zoomLabel(double value) => '${(value * 100).round()}%';
 
-double _nearestZoomLevel(double value) {
-  var nearest = _zoomLevels.first;
-  var distance = (value - nearest).abs();
-  for (final level in _zoomLevels.skip(1)) {
-    final nextDistance = (value - level).abs();
-    if (nextDistance < distance) {
-      nearest = level;
-      distance = nextDistance;
-    }
-  }
-  return nearest;
-}
-
 ButtonStyle _toolbarOutlinedStyle(BuildContext context) {
   return OutlinedButton.styleFrom(
     minimumSize: const Size(0, 36),
@@ -1035,6 +1237,35 @@ ButtonStyle _toolbarFilledStyle(BuildContext context) {
   );
 }
 
+Widget _compactDiacriticsButton({
+  required BuildContext context,
+  required bool withDiacritics,
+  required LocalizedUiLabels labels,
+  required VoidCallback onPressed,
+}) {
+  final label = withDiacritics ? labels.removeDiacritics : labels.addDiacritics;
+  final icon = withDiacritics
+      ? Icons.remove_circle_outline
+      : Icons.add_circle_outline;
+  return Tooltip(
+    message: label,
+    child: TextButton.icon(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(0, 32),
+        padding: const EdgeInsetsDirectional.symmetric(
+          horizontal: 8,
+          vertical: 6,
+        ),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(icon, size: 18),
+      label: Text(label, overflow: TextOverflow.ellipsis),
+    ),
+  );
+}
+
 Widget _toolbarDropdownButton<T>({
   required BuildContext context,
   required IconData icon,
@@ -1042,6 +1273,8 @@ Widget _toolbarDropdownButton<T>({
   required List<PopupMenuEntry<T>> items,
   required PopupMenuItemSelected<T> onSelected,
   bool enabled = true,
+  Key? popupKey,
+  VoidCallback? onCanceled,
 }) {
   final button = OutlinedButton.icon(
     onPressed: enabled ? () {} : null,
@@ -1054,12 +1287,17 @@ Widget _toolbarDropdownButton<T>({
     return button;
   }
 
-  return PopupMenuButton<T>(
-    tooltip: label,
-    position: PopupMenuPosition.under,
-    onSelected: onSelected,
-    itemBuilder: (_) => items,
-    child: IgnorePointer(child: button),
+  return Directionality(
+    textDirection: MenuLanguageScope.of(context).direction,
+    child: PopupMenuButton<T>(
+      key: popupKey,
+      tooltip: label,
+      position: PopupMenuPosition.under,
+      onCanceled: onCanceled,
+      onSelected: onSelected,
+      itemBuilder: (_) => items,
+      child: IgnorePointer(child: button),
+    ),
   );
 }
 
@@ -1067,22 +1305,33 @@ PopupMenuItem<T> _checkedMenuItem<T>({
   required T value,
   required String label,
   required bool selected,
+  required TextDirection textDirection,
 }) {
   return PopupMenuItem<T>(
     value: value,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 24,
-          child: selected ? const Icon(Icons.check, size: 18) : null,
-        ),
-        const SizedBox(width: 8),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 240),
-          child: Text(label, overflow: TextOverflow.ellipsis),
-        ),
-      ],
+    child: Directionality(
+      textDirection: textDirection,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        textDirection: textDirection,
+        children: [
+          SizedBox(
+            width: 24,
+            child: selected ? const Icon(Icons.check, size: 18) : null,
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 240),
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              textAlign: textDirection == TextDirection.rtl
+                  ? TextAlign.right
+                  : TextAlign.left,
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -1090,10 +1339,12 @@ PopupMenuItem<T> _checkedMenuItem<T>({
 Widget _buildToolbarLanguageButton({
   required BuildContext context,
   required LanguageOption language,
+  required LanguageOption menuLanguage,
   required List<LanguageOption> languages,
   required ValueChanged<LanguageOption> onSelected,
   bool loading = false,
 }) {
+  final labels = menuLanguage.ui;
   if (loading) {
     return OutlinedButton.icon(
       onPressed: null,
@@ -1103,14 +1354,14 @@ Widget _buildToolbarLanguageButton({
         height: 16,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      label: Text(language.ui.language),
+      label: Text(labels.language),
     );
   }
 
   return _toolbarDropdownButton<String>(
     context: context,
     icon: Icons.language,
-    label: '${language.ui.language}: ${language.label}',
+    label: '${labels.language}: ${language.label}',
     enabled: languages.length > 1,
     items: languages
         .map(
@@ -1118,6 +1369,7 @@ Widget _buildToolbarLanguageButton({
             value: option.code,
             label: option.label,
             selected: option.code == language.code,
+            textDirection: menuLanguage.direction,
           ),
         )
         .toList(),
@@ -1136,8 +1388,11 @@ Widget _buildToolbarLanguageButton({
 Widget _buildToolbarVersionButton({
   required BuildContext context,
   required LanguageOption language,
+  required LanguageOption menuLanguage,
   required String selectedVersion,
   required ValueChanged<String> onSelected,
+  Key? popupKey,
+  VoidCallback? onCanceled,
 }) {
   final versions = _selectableVersions(language);
   if (versions.isEmpty) {
@@ -1149,8 +1404,10 @@ Widget _buildToolbarVersionButton({
   return _toolbarDropdownButton<String>(
     context: context,
     icon: Icons.menu_book_outlined,
-    label: '${language.ui.version}: $currentLabel',
+    label: '${menuLanguage.ui.version}: $currentLabel',
     enabled: versions.length > 1,
+    popupKey: popupKey,
+    onCanceled: onCanceled,
     items: versions
         .map(
           (version) => _checkedMenuItem<String>(
@@ -1159,6 +1416,7 @@ Widget _buildToolbarVersionButton({
             selected:
                 _selectionVersionValue(language, version.id).toLowerCase() ==
                 current.toLowerCase(),
+            textDirection: menuLanguage.direction,
           ),
         )
         .toList(),
@@ -1168,29 +1426,67 @@ Widget _buildToolbarVersionButton({
 
 Widget _buildToolbarZoomButton({
   required BuildContext context,
-  required LanguageOption language,
+  required LanguageOption menuLanguage,
   required double value,
   required ValueChanged<double> onSelected,
 }) {
-  final current = _nearestZoomLevel(value);
-  return _toolbarDropdownButton<double>(
-    context: context,
-    icon: Icons.zoom_in,
-    label: '${language.ui.zoom}: ${_zoomLabel(current)}',
-    items: _zoomLevels
-        .map(
-          (level) => _checkedMenuItem<double>(
-            value: level,
-            label: _zoomLabel(level),
-            selected: (level - current).abs() < 0.001,
-          ),
-        )
-        .toList(),
-    onSelected: onSelected,
+  final current = value.clamp(_zoomMin, _zoomMax).toDouble();
+  final label = '${menuLanguage.ui.zoom}: ${_zoomLabel(current)}';
+  return Directionality(
+    textDirection: menuLanguage.direction,
+    child: Tooltip(
+      message: label,
+      child: Container(
+        height: 36,
+        width: 222,
+        padding: const EdgeInsetsDirectional.only(start: 10, end: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.zoom_in, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 7,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 14,
+                  ),
+                ),
+                child: Slider(
+                  min: _zoomMin,
+                  max: _zoomMax,
+                  value: current,
+                  onChanged: onSelected,
+                  semanticFormatterCallback: _zoomLabel,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 42,
+              child: Text(
+                _zoomLabel(current),
+                textAlign: TextAlign.end,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 }
 
-class AppToolbar extends StatelessWidget {
+typedef ToolbarTranslationChanged =
+    FutureOr<void> Function(LanguageOption language, String version);
+
+class AppToolbar extends StatefulWidget {
   const AppToolbar({
     super.key,
     required this.language,
@@ -1199,14 +1495,17 @@ class AppToolbar extends StatelessWidget {
     required this.onLanguageChanged,
     required this.onVersionChanged,
     this.title,
+    this.titleWidget,
     this.languagesLoading = false,
     this.primaryActions = const <Widget>[],
     this.trailingActions = const <Widget>[],
     this.showVersionSelector = true,
     this.showLanguageSelector = true,
+    this.onTranslationChanged,
   });
 
   final String? title;
+  final Widget? titleWidget;
   final LanguageOption language;
   final String version;
   final List<LanguageOption> languages;
@@ -1217,61 +1516,222 @@ class AppToolbar extends StatelessWidget {
   final List<Widget> trailingActions;
   final bool showVersionSelector;
   final bool showLanguageSelector;
+  final ToolbarTranslationChanged? onTranslationChanged;
+
+  @override
+  State<AppToolbar> createState() => _AppToolbarState();
+}
+
+class _AppToolbarState extends State<AppToolbar> {
+  final GlobalKey<PopupMenuButtonState<String>> _versionMenuKey =
+      GlobalKey<PopupMenuButtonState<String>>();
+  LanguageOption? _versionGuidanceLanguage;
+
+  LanguageOption get _versionLanguage =>
+      _versionGuidanceLanguage ?? widget.language;
+
+  String get _versionValue {
+    final guidanceLanguage = _versionGuidanceLanguage;
+    if (guidanceLanguage == null) {
+      return widget.version;
+    }
+    return _defaultToolbarVersion(guidanceLanguage);
+  }
+
+  String _defaultToolbarVersion(LanguageOption language) {
+    if (language.code == widget.language.code) {
+      return widget.version;
+    }
+    final versions = _selectableVersions(language);
+    if (versions.isNotEmpty) {
+      return _sanitizeVersionForLanguage(language, versions.first.id);
+    }
+    return _sanitizeVersionForLanguage(language, language.apiVersion);
+  }
+
+  void _clearVersionGuidance() {
+    if (_versionGuidanceLanguage == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _versionGuidanceLanguage = null;
+    });
+  }
+
+  void _handleLanguageSelected(LanguageOption language) {
+    if (language.code == widget.language.code) {
+      return;
+    }
+    final combinedHandler = widget.onTranslationChanged;
+    final versions = _selectableVersions(language);
+    if (combinedHandler == null || versions.length <= 1) {
+      final version = versions.isNotEmpty
+          ? versions.first.id
+          : language.apiVersion;
+      if (combinedHandler != null) {
+        combinedHandler(
+          language,
+          _sanitizeVersionForLanguage(language, version),
+        );
+      } else {
+        widget.onLanguageChanged(language);
+      }
+      return;
+    }
+
+    setState(() {
+      _versionGuidanceLanguage = language;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _versionMenuKey.currentState?.showButtonMenu();
+    });
+  }
+
+  void _handleVersionSelected(String version) {
+    final guidanceLanguage = _versionGuidanceLanguage;
+    if (guidanceLanguage != null) {
+      setState(() {
+        _versionGuidanceLanguage = null;
+      });
+      widget.onTranslationChanged?.call(
+        guidanceLanguage,
+        _sanitizeVersionForLanguage(guidanceLanguage, version),
+      );
+      return;
+    }
+    widget.onVersionChanged(version);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final titleText = title?.trim() ?? '';
-    final controls = <Widget>[
-      if (showVersionSelector)
-        _buildToolbarVersionButton(
-          context: context,
-          language: language,
-          selectedVersion: version,
-          onSelected: onVersionChanged,
-        ),
-      ...primaryActions,
-      if (showLanguageSelector)
-        _buildToolbarLanguageButton(
-          context: context,
-          language: language,
-          languages: languages,
-          loading: languagesLoading,
-          onSelected: onLanguageChanged,
-        ),
-      ...trailingActions,
-    ].where((widget) => widget is! SizedBox).toList();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (titleText.isNotEmpty) ...[
-            SizedBox(
-              width: double.infinity,
-              child: Text(
+    final titleText = widget.title?.trim() ?? '';
+    final menuLanguage = MenuLanguageScope.of(context);
+    final resolvedTitle =
+        widget.titleWidget ??
+        (titleText.isEmpty
+            ? null
+            : Text(
                 titleText,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
                 textAlign: TextAlign.center,
+              ));
+    final controls = <Widget>[
+      if (widget.showLanguageSelector)
+        _buildToolbarLanguageButton(
+          context: context,
+          language: widget.language,
+          menuLanguage: menuLanguage,
+          languages: widget.languages,
+          loading: widget.languagesLoading,
+          onSelected: _handleLanguageSelected,
+        ),
+      if (widget.showVersionSelector)
+        _buildToolbarVersionButton(
+          context: context,
+          language: _versionLanguage,
+          menuLanguage: menuLanguage,
+          selectedVersion: _versionValue,
+          onSelected: _handleVersionSelected,
+          popupKey: _versionMenuKey,
+          onCanceled: _clearVersionGuidance,
+        ),
+      ...widget.primaryActions,
+      ...widget.trailingActions,
+    ].where((widget) => widget is! SizedBox).toList();
+
+    return Directionality(
+      textDirection: menuLanguage.direction,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (resolvedTitle != null) ...[
+              SizedBox(width: double.infinity, child: resolvedTitle),
+              const SizedBox(height: 6),
+            ],
+            if (controls.isNotEmpty)
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                textDirection: menuLanguage.direction,
+                spacing: 6,
+                runSpacing: 6,
+                children: controls,
               ),
-            ),
-            const SizedBox(height: 8),
           ],
-          if (controls.isNotEmpty)
-            Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: controls,
-            ),
-        ],
+        ),
       ),
     );
   }
+}
+
+Widget _buildMenuLanguageButton({
+  required BuildContext context,
+  required LanguageOption menuLanguage,
+}) {
+  final languages = _supportedLanguages.isNotEmpty
+      ? _supportedLanguages
+      : kBaseLanguageOptions;
+  return Directionality(
+    textDirection: menuLanguage.direction,
+    child: PopupMenuButton<String>(
+      tooltip: menuLanguage.ui.menuLanguage,
+      position: PopupMenuPosition.under,
+      icon: const Icon(Icons.public, size: 22),
+      onSelected: MenuLanguageController.instance.update,
+      itemBuilder: (_) => languages
+          .map(
+            (option) => _checkedMenuItem<String>(
+              value: option.code,
+              label: option.label,
+              selected: option.code == menuLanguage.code,
+              textDirection: menuLanguage.direction,
+            ),
+          )
+          .toList(),
+    ),
+  );
+}
+
+Widget _buildGlobalTopNavigation({
+  required BuildContext context,
+  required LanguageOption contentLanguage,
+  required String contentVersion,
+  bool showBackToMainTable = false,
+}) {
+  final menuLanguage = MenuLanguageScope.of(context);
+  final labels = menuLanguage.ui;
+  return Directionality(
+    textDirection: menuLanguage.direction,
+    child: Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        if (showBackToMainTable)
+          TextButton.icon(
+            onPressed: () {
+              Navigator.of(context).pushNamed(
+                _mainTableUri(
+                  language: contentLanguage,
+                  version: contentVersion,
+                ).toString(),
+              );
+            },
+            icon: const Icon(Icons.table_chart_outlined, size: 18),
+            label: Text(labels.backToMainTable),
+          ),
+        _buildMenuLanguageButton(context: context, menuLanguage: menuLanguage),
+      ],
+    ),
+  );
 }
 
 Future<String> _storedVersionForLanguage(LanguageOption option) async {
@@ -1279,10 +1739,26 @@ Future<String> _storedVersionForLanguage(LanguageOption option) async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString('selected_version_${option.code}');
     if (stored != null && stored.trim().isNotEmpty) {
+      if (option.code == 'arabic') {
+        return _resolveArabicVersion(
+              option,
+              withDiacritics: false,
+              preferredVersion: stored,
+            ) ??
+            _sanitizeVersionForLanguage(option, stored);
+      }
       return _sanitizeVersionForLanguage(option, stored);
     }
   } catch (_) {
     // Persistence is a convenience, not a blocker for navigation.
+  }
+  if (option.code == 'arabic') {
+    return _resolveArabicVersion(
+          option,
+          withDiacritics: false,
+          preferredVersion: option.apiVersion,
+        ) ??
+        _sanitizeVersionForLanguage(option, option.apiVersion);
   }
   return _sanitizeVersionForLanguage(option, option.apiVersion);
 }
@@ -1392,6 +1868,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await LanguageSelectionController.instance.initialize();
+  await MenuLanguageController.instance.initialize(
+    fallbackLanguageCode: LanguageSelectionController.instance.languageCode,
+  );
+  await ZoomController.instance.initialize();
   runApp(GospelApp());
 }
 
@@ -1399,10 +1879,20 @@ class GospelApp extends StatelessWidget {
   const GospelApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Gospel Topics',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      onGenerateRoute: _onGenerateRoute,
+    return MenuLanguageScope(
+      notifier: MenuLanguageController.instance.notifier,
+      child: MaterialApp(
+        title: 'Gospel Topics',
+        theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+        onGenerateRoute: _onGenerateRoute,
+        builder: (context, child) {
+          final menuLanguage = MenuLanguageScope.of(context);
+          return Directionality(
+            textDirection: menuLanguage.direction,
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
+      ),
     );
   }
 
@@ -1425,15 +1915,23 @@ class GospelApp extends StatelessWidget {
       normalized = '/$normalized';
     }
 
-    if (normalized == '/' || normalized.isEmpty) {
+    final uri = Uri.parse(normalized);
+    final path = uri.path.isEmpty ? '/' : uri.path;
+
+    if (path == '/') {
+      final rawLanguage = uri.queryParameters['language'];
+      final rawVersion = uri.queryParameters['version'];
       return MaterialPageRoute(
         settings: settings,
-        builder: (_) => AuthGate(builder: (context) => const TopicListScreen()),
+        builder: (_) => AuthGate(
+          builder: (context) => TopicListScreen(
+            initialLanguage: rawLanguage,
+            initialVersion: rawVersion,
+          ),
+        ),
       );
     }
 
-    final uri = Uri.parse(normalized);
-    final path = uri.path.isEmpty ? '/' : uri.path;
     if (path == '/reference') {
       final rawLanguage = uri.queryParameters['language'] ?? defaultLanguage;
       final rawVersion = uri.queryParameters['version'] ?? defaultVersion;
@@ -1484,6 +1982,7 @@ class GospelApp extends StatelessWidget {
       final initialVersion = uri.queryParameters['version'] ?? defaultVersion;
       final initialTopicId = uri.queryParameters['topicId'] ?? '';
       final initialTopicNumber = uri.queryParameters['topicNumber'] ?? '';
+      final comparisons = uri.queryParameters['comparisons'] ?? '';
 
       final languageOption = _resolveLanguageOption(
         languageParam: initialLanguage,
@@ -1502,6 +2001,7 @@ class GospelApp extends StatelessWidget {
             apiVersion: sanitizedVersion,
             topicId: initialTopicId,
             topicNumber: initialTopicNumber,
+            comparisonState: comparisons,
           ),
         ),
       );
@@ -1545,12 +2045,14 @@ class TopicDetailScreen extends StatefulWidget {
     required this.apiVersion,
     required this.topicId,
     this.topicNumber = '',
+    this.comparisonState = '',
   });
 
   final LanguageOption languageOption;
   final String apiVersion;
   final String topicId;
   final String topicNumber;
+  final String comparisonState;
 
   @override
   State<TopicDetailScreen> createState() => _TopicDetailScreenState();
@@ -1558,6 +2060,8 @@ class TopicDetailScreen extends StatefulWidget {
 
 class _TopicDetailScreenState extends State<TopicDetailScreen> {
   Topic? _topic;
+  List<Topic> _topics = const <Topic>[];
+  int _topicIndex = -1;
   bool _loading = true;
   String? _error;
 
@@ -1593,13 +2097,16 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
 
       final List data = json.decode(response.body);
       final topics = data.map((e) => Topic.fromJson(e)).toList();
-      final match = _findTopic(topics);
+      final matchIndex = _findTopicIndex(topics);
+      final match = matchIndex == -1 ? null : topics[matchIndex];
 
       if (!mounted) {
         return;
       }
 
       setState(() {
+        _topics = topics;
+        _topicIndex = matchIndex;
         _topic = match;
         _loading = false;
         if (match == null) {
@@ -1617,50 +2124,60 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
     }
   }
 
-  Topic? _findTopic(List<Topic> topics) {
+  int _findTopicIndex(List<Topic> topics) {
     final normalizedId = widget.topicId.trim().toLowerCase();
-    for (final topic in topics) {
+    for (var i = 0; i < topics.length; i++) {
+      final topic = topics[i];
       final id = topic.id.trim();
       if (id.isNotEmpty && id.toLowerCase() == normalizedId) {
-        return topic;
+        return i;
       }
       final name = topic.name.trim();
       if (name.isNotEmpty && name.toLowerCase() == normalizedId) {
-        return topic;
+        return i;
       }
     }
-    return null;
+    return -1;
   }
 
   @override
   Widget build(BuildContext context) {
-    final textDirection = widget.languageOption.direction;
+    final menuLanguage = MenuLanguageScope.of(context);
+    final textDirection = menuLanguage.direction;
 
-    if (_loading) {
+    Widget pageScaffold(Widget body) {
       return Directionality(
         textDirection: textDirection,
-        child: const Scaffold(body: Center(child: CircularProgressIndicator())),
+        child: MainScaffold(
+          title: '',
+          topNavigation: _buildGlobalTopNavigation(
+            context: context,
+            contentLanguage: widget.languageOption,
+            contentVersion: widget.apiVersion,
+            showBackToMainTable: true,
+          ),
+          settingsLabel: menuLanguage.ui.settings,
+          logoutLabel: menuLanguage.ui.logout,
+          accountTooltip: menuLanguage.ui.account,
+          body: body,
+        ),
       );
     }
 
+    if (_loading) {
+      return pageScaffold(const Center(child: CircularProgressIndicator()));
+    }
+
     if (_error != null) {
-      return Directionality(
-        textDirection: textDirection,
-        child: Scaffold(
-          appBar: AppBar(),
-          body: Center(child: Text(_error!)),
-        ),
-      );
+      final message = _error == 'Topic not found'
+          ? menuLanguage.ui.topicNotFound
+          : _error!;
+      return pageScaffold(Center(child: Text(message)));
     }
 
     final topic = _topic;
     if (topic == null) {
-      return Directionality(
-        textDirection: textDirection,
-        child: Scaffold(
-          body: Center(child: Text(widget.languageOption.ui.topicNotFound)),
-        ),
-      );
+      return pageScaffold(Center(child: Text(menuLanguage.ui.topicNotFound)));
     }
 
     final authors = topic.references.map((e) => e.book).toSet().toList()
@@ -1671,7 +2188,12 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
       apiVersion: widget.apiVersion,
       topic: topic,
       initialAuthors: authors,
-      topicNumber: widget.topicNumber,
+      topics: _topics,
+      topicIndex: _topicIndex,
+      topicNumber: widget.topicNumber.trim().isNotEmpty
+          ? widget.topicNumber
+          : _topicNumberForDisplay(topic, zeroBasedIndex: _topicIndex),
+      comparisonState: widget.comparisonState,
     );
   }
 }
@@ -1705,6 +2227,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   SharedPreferences? _prefs;
   String? _pendingTopicId;
   bool _isAdmin = false;
+  bool _routeProvidedInitialVersion = false;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -1721,6 +2244,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       );
       _selectedLanguageCode = resolved.code;
       if (initialVersion != null && initialVersion.isNotEmpty) {
+        _routeProvidedInitialVersion = true;
         _selectedVersions[_selectedLanguageCode] = _sanitizeVersionForLanguage(
           resolved,
           initialVersion,
@@ -1763,7 +2287,14 @@ class _TopicListScreenState extends State<TopicListScreen> {
       if (stored == null) {
         continue;
       }
-      final sanitized = _sanitizeVersionForLanguage(option, stored);
+      final sanitized = option.code == 'arabic'
+          ? (_resolveArabicVersion(
+                  option,
+                  withDiacritics: false,
+                  preferredVersion: stored,
+                ) ??
+                _sanitizeVersionForLanguage(option, stored))
+          : _sanitizeVersionForLanguage(option, stored);
       if (sanitized != stored) {
         updates[option.code] = sanitized;
       }
@@ -1795,7 +2326,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
   Future<void> _initializePreferences() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final storedArabicPref = prefs.getBool('arabic_with_diacritics');
       final versionSelections = <String, String>{};
       for (final option in _supportedLanguages) {
         final storedVersion =
@@ -1806,10 +2336,15 @@ class _TopicListScreenState extends State<TopicListScreen> {
       }
       setState(() {
         _prefs = prefs;
-        if (storedArabicPref != null) {
-          _arabicWithDiacritics = storedArabicPref;
+        _arabicWithDiacritics = false;
+        for (final entry in versionSelections.entries) {
+          final routeOwnsCurrentSelection =
+              _routeProvidedInitialVersion &&
+              entry.key == _selectedLanguageCode;
+          if (!routeOwnsCurrentSelection) {
+            _selectedVersions[entry.key] = entry.value;
+          }
         }
-        _selectedVersions.addAll(versionSelections);
       });
     } catch (_) {
       // If persistence fails we silently fall back to defaults.
@@ -1865,17 +2400,18 @@ class _TopicListScreenState extends State<TopicListScreen> {
     LanguageOption option,
     String versionId,
   ) async {
-    final normalized = _sanitizeVersionForLanguage(option, versionId);
+    final normalized = option.code == 'arabic'
+        ? (_resolveArabicVersion(
+                option,
+                withDiacritics: false,
+                preferredVersion: versionId,
+              ) ??
+              _sanitizeVersionForLanguage(option, versionId))
+        : _sanitizeVersionForLanguage(option, versionId);
     if (normalized.isEmpty) {
       return;
     }
     final arabicWithDiacritics = false;
-    setState(() {
-      _selectedVersions[option.code] = normalized;
-      if (option.code == 'arabic') {
-        _arabicWithDiacritics = arabicWithDiacritics;
-      }
-    });
     try {
       final prefs = _prefs ?? await SharedPreferences.getInstance();
       _prefs = prefs;
@@ -1887,8 +2423,48 @@ class _TopicListScreenState extends State<TopicListScreen> {
       // Ignore persistence errors to keep UX smooth.
     }
     if (mounted && option.code == _selectedLanguageCode) {
-      fetchTopics(option);
+      Navigator.of(context).pushReplacementNamed(
+        _mainTableUri(language: option, version: normalized).toString(),
+      );
+      return;
     }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedVersions[option.code] = normalized;
+      if (option.code == 'arabic') {
+        _arabicWithDiacritics = arabicWithDiacritics;
+      }
+    });
+  }
+
+  Future<void> _updateContentTranslation(
+    LanguageOption option,
+    String versionId,
+  ) async {
+    final normalized = option.code == 'arabic'
+        ? (_resolveArabicVersion(
+                option,
+                withDiacritics: false,
+                preferredVersion: versionId,
+              ) ??
+              _sanitizeVersionForLanguage(option, versionId))
+        : _sanitizeVersionForLanguage(option, versionId);
+    if (normalized.isEmpty) {
+      return;
+    }
+    await _persistLanguageVersion(
+      option,
+      normalized,
+      withDiacritics: option.code == 'arabic' ? false : null,
+    );
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushReplacementNamed(
+      _mainTableUri(language: option, version: normalized).toString(),
+    );
   }
 
   Future<void> _updateLanguage(LanguageOption option) async {
@@ -1896,18 +2472,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       return;
     }
     final storedVersion = await _storedVersionForLanguage(option);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _selectedLanguageCode = option.code;
-      _selectedVersions[option.code] = storedVersion;
-      if (option.code == 'arabic') {
-        _arabicWithDiacritics = !_isArabicWithoutDiacritics(storedVersion);
-      }
-    });
-    LanguageSelectionController.instance.update(option.code);
-    fetchTopics(option);
+    await _updateContentTranslation(option, storedVersion);
   }
 
   String _apiVersionFor(LanguageOption option) {
@@ -2020,10 +2585,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
+    final menuLanguage = MenuLanguageScope.of(context);
     return Directionality(
-      textDirection: languageOption.direction,
+      textDirection: menuLanguage.direction,
       child: MainScaffold(
         title: '',
+        topNavigation: _buildGlobalTopNavigation(
+          context: context,
+          contentLanguage: languageOption,
+          contentVersion: _apiVersionFor(languageOption),
+        ),
+        settingsLabel: menuLanguage.ui.settings,
+        logoutLabel: menuLanguage.ui.logout,
+        accountTooltip: menuLanguage.ui.account,
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -2032,7 +2606,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AppToolbar(
-                    title: languageOption.title,
                     language: languageOption,
                     version: _apiVersionFor(languageOption),
                     languages: _supportedLanguages,
@@ -2040,6 +2613,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                     onLanguageChanged: _updateLanguage,
                     onVersionChanged: (version) =>
                         _updateVersionForLanguage(languageOption, version),
+                    onTranslationChanged: _updateContentTranslation,
                     trailingActions: [
                       if (_isAdmin)
                         FilledButton.icon(
@@ -2047,7 +2621,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  languageOption.pdfUnavailableMessage,
+                                  menuLanguage.pdfUnavailableMessage,
                                 ),
                               ),
                             );
@@ -2057,7 +2631,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                             Icons.picture_as_pdf_outlined,
                             size: 18,
                           ),
-                          label: Text(languageOption.downloadLabel),
+                          label: Text(menuLanguage.downloadLabel),
                         ),
                       if (_isAdmin)
                         OutlinedButton.icon(
@@ -2066,7 +2640,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                           },
                           style: _toolbarOutlinedStyle(context),
                           icon: const Icon(Icons.refresh, size: 18),
-                          label: Text(languageOption.resetLabel),
+                          label: Text(menuLanguage.resetLabel),
                         ),
                     ],
                   ),
@@ -2075,7 +2649,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
                     child: HarmonyTable(
                       key: _tableKey,
                       topics: _topics,
-                      onTopicSelected: _openTopic,
                       languageOption: languageOption,
                       apiVersion: _apiVersionFor(languageOption),
                     ),
@@ -2092,15 +2665,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (kIsWeb) {
       final language = _languageOption;
       final version = _apiVersionFor(language);
-      final uri = Uri(
-        path: '/topic',
-        queryParameters: {
-          'language': language.apiLanguage,
-          'version': version,
-          'topicId': topic.id.isNotEmpty ? topic.id : topic.name,
-          'topicNumber': _topicNumberForDisplay(topic),
-        },
-      );
+      final uri = _topicUri(topic: topic, language: language, version: version);
       Navigator.of(context).pushNamed(uri.toString());
       return;
     }
@@ -2122,13 +2687,11 @@ class HarmonyTable extends StatefulWidget {
   const HarmonyTable({
     super.key,
     required this.topics,
-    this.onTopicSelected,
     required this.languageOption,
     required this.apiVersion,
   });
 
   final List<Topic> topics;
-  final ValueChanged<Topic>? onTopicSelected;
   final LanguageOption languageOption;
   final String apiVersion;
 
@@ -2262,13 +2825,27 @@ class _HarmonyTableState extends State<HarmonyTable> {
         mainAxisAlignment: isRtl
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
         children: [
-          Text(number, style: textStyle, textAlign: TextAlign.start),
+          Text(
+            number,
+            style: textStyle,
+            textAlign: TextAlign.start,
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+            softWrap: false,
+          ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(topic.name, style: textStyle, textAlign: textAlign),
+            child: Text(
+              topic.name,
+              style: textStyle,
+              textAlign: textAlign,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+            ),
           ),
         ],
       ),
@@ -2277,8 +2854,17 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
       child: Text(label, style: style, textAlign: align),
+    );
+  }
+
+  Uri _topicRouteUri(Topic topic, int index) {
+    return _topicUri(
+      topic: topic,
+      language: widget.languageOption,
+      version: widget.apiVersion,
+      topicNumber: _topicNumberForDisplay(topic, zeroBasedIndex: index),
     );
   }
 
@@ -2344,6 +2930,17 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final children = filteredRefs
         .map(
           (ref) => ReferenceHoverText(
+            key: ValueKey(
+              [
+                widget.languageOption.apiLanguage,
+                widget.apiVersion,
+                topic.id,
+                ref.bookId,
+                ref.book,
+                ref.chapter,
+                ref.verses,
+              ].join('|'),
+            ),
             reference: ref,
             textStyle: style,
             textAlign: align,
@@ -2354,13 +2951,15 @@ class _HarmonyTableState extends State<HarmonyTable> {
             gospel: gospel,
             language: widget.languageOption.apiLanguage,
             version: widget.apiVersion,
-            tooltipMessage: widget.languageOption.ui.clickToReadInChapter,
+            tooltipMessage: MenuLanguageScope.of(
+              context,
+            ).ui.clickToReadInChapter,
           ),
         )
         .toList();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
       child: Align(
         alignment: cellAlignment,
         child: Wrap(
@@ -2380,6 +2979,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final languageOption = widget.languageOption;
+    final menuLanguage = MenuLanguageScope.of(context);
+    final labels = menuLanguage.ui;
     final isRtl = languageOption.direction == TextDirection.rtl;
     final headerStyle = theme.textTheme.titleSmall?.copyWith(
       fontWeight: FontWeight.w600,
@@ -2388,29 +2989,25 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
     final subjectStyle = theme.textTheme.bodyMedium?.copyWith(
       fontWeight: FontWeight.w600,
-      height: 1.25,
+      height: 1.18,
     );
-    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.25);
+    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.18);
     final borderColor = theme.dividerColor.withValues(alpha: 0.4);
     final headerBackground = theme.colorScheme.surfaceContainerHighest;
     final subjectAlign = isRtl ? TextAlign.right : TextAlign.left;
     final referenceAlign = isRtl ? TextAlign.right : TextAlign.center;
     assert(
-      languageOption.gospelHeaders.length == orderedGospels.length,
-      'languageOption.gospelHeaders must match number of gospels',
+      labels.gospelHeaders.length == orderedGospels.length,
+      'labels.gospelHeaders must match number of gospels',
     );
 
     final headerRow = TableRow(
       decoration: BoxDecoration(color: headerBackground),
       children: [
-        _buildHeaderCell(
-          languageOption.subjectsHeader,
-          headerStyle,
-          subjectAlign,
-        ),
+        _buildHeaderCell(labels.subjectsHeader, headerStyle, subjectAlign),
         for (var i = 0; i < orderedGospels.length; i++)
           _buildHeaderCell(
-            languageOption.gospelHeaders[i],
+            labels.gospelHeaders[i],
             headerStyle,
             TextAlign.center,
           ),
@@ -2434,23 +3031,26 @@ class _HarmonyTableState extends State<HarmonyTable> {
             TableCell(
               verticalAlignment: TableCellVerticalAlignment.top,
               child: Tooltip(
-                message: languageOption.ui.clickToReadAllReferences,
+                message:
+                    '${labels.clickToReadAllReferences}\n${_numberedTopicTitle(topic, languageOption, zeroBasedIndex: i)}',
                 waitDuration: const Duration(milliseconds: 400),
-                child: TableRowInkWell(
-                  onTap: widget.onTopicSelected == null
-                      ? null
-                      : () => widget.onTopicSelected!(topic),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 9,
-                    ),
-                    child: _buildNumberedTopic(
-                      index: i,
-                      topic: topic,
-                      textAlign: subjectAlign,
-                      isRtl: isRtl,
-                      textStyle: subjectStyle,
+                child: Link(
+                  uri: _topicRouteUri(topic, i),
+                  target: LinkTarget.self,
+                  builder: (context, followLink) => TableRowInkWell(
+                    onTap: followLink,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      child: _buildNumberedTopic(
+                        index: i,
+                        topic: topic,
+                        textAlign: subjectAlign,
+                        isRtl: isRtl,
+                        textStyle: subjectStyle,
+                      ),
                     ),
                   ),
                 ),
@@ -2474,11 +3074,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
     final availableWidth = MediaQuery.sizeOf(context).width;
     const minScrollableTableWidth = 760.0;
-    const maxDesktopTableWidth = 1320.0;
-    final tableWidth = availableWidth < minScrollableTableWidth
-        ? minScrollableTableWidth
-        : math.min(availableWidth, maxDesktopTableWidth);
-    final horizontalFrameWidth = math.max(availableWidth, tableWidth);
+    final tableWidth = math.max(availableWidth, minScrollableTableWidth);
+    final horizontalFrameWidth = tableWidth;
 
     return Column(
       children: [
@@ -2611,7 +3208,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
   static const double _previewViewportPadding = 8;
 
   bool _isHovered = false;
-  bool _isLaunching = false;
   bool _loadingPreview = false;
   String? _previewError;
   List<_VerseLine> _previewVerses = const <_VerseLine>[];
@@ -2684,49 +3280,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     return Uri(path: '/reference', queryParameters: queryParameters);
   }
 
-  Future<void> _handleTap() async {
-    if (_isLaunching) {
-      return;
-    }
-    final uri = _buildReferenceUri(widget.reference);
-    if (uri == null) {
-      return;
-    }
-    setState(() {
-      _isLaunching = true;
-    });
-    try {
-      if (!uri.hasScheme && !uri.hasAuthority) {
-        Navigator.of(context).pushNamed(uri.toString());
-      } else {
-        final opened = await openReferenceLink(uri);
-        if (!opened && mounted) {
-          final languageOption =
-              _languageOptionForApiLanguage(widget.language) ??
-              _languageOptionForCode(defaultLanguage);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(languageOption.ui.unableToOpenReference)),
-          );
-        }
-      }
-    } catch (_) {
-      if (mounted) {
-        final languageOption =
-            _languageOptionForApiLanguage(widget.language) ??
-            _languageOptionForCode(defaultLanguage);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(languageOption.ui.unableToOpenReference)),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLaunching = false;
-        });
-      }
-    }
-  }
-
   void _updateHover(bool isHovered) {
     if (_isHovered != isHovered) {
       setState(() {
@@ -2753,7 +3306,25 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final bookParam = reference.bookId.trim().isNotEmpty
         ? reference.bookId.trim()
         : reference.book.trim();
-    return '${widget.language}|${widget.version}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+    return '${widget.language}|${_previewVersionForRequest()}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  LanguageOption _previewLanguageOption() {
+    return _languageOptionForApiLanguage(widget.language) ??
+        _languageOptionForCode(defaultLanguage);
+  }
+
+  String _previewVersionForRequest() {
+    final option = _previewLanguageOption();
+    if (option.code == 'arabic') {
+      return _resolveArabicVersion(
+            option,
+            withDiacritics: false,
+            preferredVersion: widget.version,
+          ) ??
+          widget.version;
+    }
+    return widget.version;
   }
 
   String _previewHeading() {
@@ -2893,7 +3464,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
         queryParameters: {
           'language': widget.language,
-          'version': widget.version,
+          'version': _previewVersionForRequest(),
           'book': bookParam,
           'chapter': reference.chapter.toString(),
           'verse': verseParam,
@@ -2903,7 +3474,11 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerseLines(response.body);
+      final verses = _normalizeVerseLinesForDisplay(
+        _parseVerseLines(response.body),
+        language: _previewLanguageOption(),
+        withDiacritics: false,
+      );
       if (!mounted) {
         return;
       }
@@ -3023,32 +3598,96 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     _markPreviewNeedsBuild();
   }
 
+  bool _previewIdentityChanged(ReferenceHoverText oldWidget) {
+    final oldReference = oldWidget.reference;
+    final reference = widget.reference;
+    return oldWidget.language != widget.language ||
+        oldWidget.version != widget.version ||
+        oldReference.book != reference.book ||
+        oldReference.bookId != reference.bookId ||
+        oldReference.chapter != reference.chapter ||
+        oldReference.verses != reference.verses;
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
   }
 
-  Widget _buildPreviewContent(ThemeData theme) {
+  @override
+  void didUpdateWidget(covariant ReferenceHoverText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_previewIdentityChanged(oldWidget)) {
+      return;
+    }
+    _hidePreview();
+    _cancelHideTimer();
+    _isHovered = false;
+    _isTriggerHovered = false;
+    _isPreviewHovered = false;
+    _loadingPreview = false;
+    _previewLoaded = false;
+    _previewError = null;
+    _previewVerses = const <_VerseLine>[];
+  }
+
+  Widget _buildPreviewHeader(ThemeData theme) {
     final headingStyle = theme.textTheme.titleSmall?.copyWith(
       fontWeight: FontWeight.w600,
     );
-    final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
-    final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
+    final helperText = widget.tooltipMessage.trim();
     final helperStyle = theme.textTheme.labelSmall?.copyWith(
       color: theme.colorScheme.primary,
       fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: theme.colorScheme.primary,
     );
-    final helperText = widget.tooltipMessage.trim();
+    final uri = _buildReferenceUri(widget.reference);
+    return Row(
+      textDirection: widget.textDirection,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            _previewHeading(),
+            style: headingStyle,
+            textAlign: TextAlign.start,
+          ),
+        ),
+        if (helperText.isNotEmpty && uri != null) ...[
+          const SizedBox(width: 8),
+          Link(
+            uri: uri,
+            target: LinkTarget.self,
+            builder: (context, followLink) => InkWell(
+              onTap: followLink,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  helperText,
+                  style: helperStyle,
+                  textAlign: TextAlign.start,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPreviewContent(ThemeData theme) {
+    final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
+    final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_previewHeading(), style: headingStyle),
-        if (helperText.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(helperText, style: helperStyle),
-        ],
+        _buildPreviewHeader(theme),
         const SizedBox(height: 8),
         if (_loadingPreview)
           const Center(child: CircularProgressIndicator())
@@ -3075,6 +3714,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
                       (verse) => Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: RichText(
+                          textScaler: TextScaler.linear(
+                            ZoomController.instance.textScale,
+                          ),
                           text: TextSpan(
                             style: bodyStyle,
                             children: [
@@ -3121,6 +3763,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         ? override
         : widget.reference.formattedReference;
     final alignment = _alignmentForTextAlign(widget.textAlign);
+    final uri = _buildReferenceUri(widget.reference);
 
     final link = MouseRegion(
       cursor: text.isEmpty
@@ -3147,20 +3790,24 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       },
       child: KeyedSubtree(
         key: _anchorKey,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: text.isEmpty ? null : _handleTap,
-          child: Align(
-            alignment: alignment,
-            widthFactor: 1,
-            heightFactor: 1,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: VerseRefText(
-                value: text,
-                lang: widget.language,
-                style: _isHovered ? hoverStyle : baseStyle,
-                textAlign: widget.textAlign,
+        child: Link(
+          uri: text.isEmpty ? null : uri,
+          target: LinkTarget.self,
+          builder: (context, followLink) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: followLink,
+            child: Align(
+              alignment: alignment,
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: VerseRefText(
+                  value: text,
+                  lang: widget.language,
+                  style: _isHovered ? hoverStyle : baseStyle,
+                  textAlign: widget.textAlign,
+                ),
               ),
             ),
           ),
@@ -3226,34 +3873,25 @@ class ChapterNav extends StatelessWidget {
   const ChapterNav({
     super.key,
     required this.chapter,
-    required this.onPreviousBook,
-    required this.onPreviousChapter,
-    required this.onNextChapter,
-    required this.onNextBook,
-    required this.hasPreviousBook,
-    required this.hasPreviousChapter,
-    required this.hasNextChapter,
-    required this.hasNextBook,
-    required this.languageOption,
+    required this.previousBookUri,
+    required this.previousChapterUri,
+    required this.nextChapterUri,
+    required this.nextBookUri,
   });
 
   final int chapter;
-  final VoidCallback? onPreviousBook;
-  final VoidCallback? onPreviousChapter;
-  final VoidCallback? onNextChapter;
-  final VoidCallback? onNextBook;
-  final bool hasPreviousBook;
-  final bool hasPreviousChapter;
-  final bool hasNextChapter;
-  final bool hasNextBook;
-  final LanguageOption languageOption;
+  final Uri? previousBookUri;
+  final Uri? previousChapterUri;
+  final Uri? nextChapterUri;
+  final Uri? nextBookUri;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isRtl = languageOption.direction == TextDirection.rtl;
-    final labels = languageOption.ui;
-    final chapterNumber = languageOption.code == 'arabic'
+    final uiLanguage = MenuLanguageScope.of(context);
+    final isRtl = uiLanguage.direction == TextDirection.rtl;
+    final labels = uiLanguage.ui;
+    final chapterNumber = uiLanguage.code == 'arabic'
         ? toArabicIndicDigits(chapter.toString())
         : chapter.toString();
 
@@ -3266,46 +3904,70 @@ class ChapterNav extends StatelessWidget {
 
     Widget navButton({
       required String tooltip,
-      required VoidCallback? onPressed,
+      required Uri? uri,
       required IconData icon,
     }) {
-      return IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        icon: fixedDirectionIcon(icon),
+      return Link(
+        uri: uri,
+        target: LinkTarget.self,
+        builder: (context, followLink) => IconButton(
+          tooltip: tooltip,
+          onPressed: uri == null ? null : followLink,
+          icon: fixedDirectionIcon(icon),
+        ),
       );
     }
 
-    final previousControls = <Widget>[
-      navButton(
-        tooltip: labels.previousBook,
-        onPressed: hasPreviousBook ? onPreviousBook : null,
-        icon: isRtl
-            ? Icons.keyboard_double_arrow_right
-            : Icons.keyboard_double_arrow_left,
-      ),
-      navButton(
-        tooltip: labels.previousChapter,
-        onPressed: hasPreviousChapter ? onPreviousChapter : null,
-        icon: isRtl ? Icons.chevron_right : Icons.chevron_left,
-      ),
-    ];
-    final nextControls = <Widget>[
-      navButton(
-        tooltip: labels.nextChapter,
-        onPressed: hasNextChapter ? onNextChapter : null,
-        icon: isRtl ? Icons.chevron_left : Icons.chevron_right,
-      ),
-      navButton(
-        tooltip: labels.nextBook,
-        onPressed: hasNextBook ? onNextBook : null,
-        icon: isRtl
-            ? Icons.keyboard_double_arrow_left
-            : Icons.keyboard_double_arrow_right,
-      ),
-    ];
-    final leadingControls = isRtl ? nextControls : previousControls;
-    final trailingControls = isRtl ? previousControls : nextControls;
+    final leadingControls = isRtl
+        ? <Widget>[
+            navButton(
+              tooltip: labels.nextBook,
+              uri: nextBookUri,
+              icon: Icons.keyboard_double_arrow_left,
+            ),
+            navButton(
+              tooltip: labels.nextChapter,
+              uri: nextChapterUri,
+              icon: Icons.chevron_left,
+            ),
+          ]
+        : <Widget>[
+            navButton(
+              tooltip: labels.previousBook,
+              uri: previousBookUri,
+              icon: Icons.keyboard_double_arrow_left,
+            ),
+            navButton(
+              tooltip: labels.previousChapter,
+              uri: previousChapterUri,
+              icon: Icons.chevron_left,
+            ),
+          ];
+    final trailingControls = isRtl
+        ? <Widget>[
+            navButton(
+              tooltip: labels.previousChapter,
+              uri: previousChapterUri,
+              icon: Icons.chevron_right,
+            ),
+            navButton(
+              tooltip: labels.previousBook,
+              uri: previousBookUri,
+              icon: Icons.keyboard_double_arrow_right,
+            ),
+          ]
+        : <Widget>[
+            navButton(
+              tooltip: labels.nextChapter,
+              uri: nextChapterUri,
+              icon: Icons.chevron_right,
+            ),
+            navButton(
+              tooltip: labels.nextBook,
+              uri: nextBookUri,
+              icon: Icons.keyboard_double_arrow_right,
+            ),
+          ];
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -3317,7 +3979,7 @@ class ChapterNav extends StatelessWidget {
             ...leadingControls,
             Expanded(
               child: Directionality(
-                textDirection: languageOption.direction,
+                textDirection: uiLanguage.direction,
                 child: Text(
                   '${labels.chapter} $chapterNumber',
                   textAlign: TextAlign.center,
@@ -3335,27 +3997,18 @@ class ChapterNav extends StatelessWidget {
   }
 }
 
-class _HarmonySection {
-  const _HarmonySection({
-    required this.topicId,
-    required this.topicTitle,
-    required this.startVerse,
-    required this.endVerse,
-    required this.verses,
-  });
+class _ChapterVerseGroup {
+  const _ChapterVerseGroup({required this.title, required this.verses});
 
-  final String topicId;
-  final String topicTitle;
-  final int startVerse;
-  final int endVerse;
+  final String? title;
   final List<_VerseLine> verses;
 }
 
 enum _ComparisonScopeMode { highlight, custom, chapter }
 
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
-  static const double _minTextScale = 0.8;
-  static const double _maxTextScale = 1.5;
+  static const double _minTextScale = _zoomMin;
+  static const double _maxTextScale = _zoomMax;
   bool _loadingChapter = true;
   String? _error;
   List<_VerseLine> _chapterVerses = const <_VerseLine>[];
@@ -3364,7 +4017,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _loadingHarmonyTopics = false;
   String? _harmonyTopicsError;
   List<Topic> _harmonyTopics = const <Topic>[];
-  bool _withDiacritics = true;
+  bool _withDiacritics = false;
+  bool _showTopicNames = false;
   bool _interlinearView = false;
   double _textScale = 1.0;
   late String _selectedVersion;
@@ -3398,32 +4052,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return verses;
   }
 
-  int get _defaultScopeEndVerse {
-    final maxVerse = _chapterMaxVerse;
-    if (maxVerse <= 0) {
-      return 1;
-    }
-    return math.min(10, maxVerse);
-  }
-
-  int get _highlightStartVerseForScope {
-    if (_highlightVerses.isEmpty) {
-      return 1;
-    }
-    final ordered = _highlightVerses.toList()..sort();
-    return ordered.first;
-  }
-
-  int get _highlightEndVerseForScope {
-    if (_highlightVerses.isEmpty) {
-      return _defaultScopeEndVerse;
-    }
-    final ordered = _highlightVerses.toList()..sort();
-    return ordered.last;
-  }
-
-  bool get _hasHighlightScope => _highlightVerses.isNotEmpty;
-
   LanguageOption get _languageOption {
     final fromLanguage = _languageOptionForApiLanguage(widget.language);
     if (fromLanguage != null) {
@@ -3432,17 +4060,31 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return _languageOptionForVersion(widget.version);
   }
 
+  LocalizedUiLabels get _labels => MenuLanguageScope.of(context).ui;
+
   String get _activeApiLanguage => _languageOption.apiLanguage;
 
   @override
   void initState() {
     super.initState();
+    _textScale = ZoomController.instance.textScale;
     LanguageSelectionController.instance.update(_languageOption.code);
     _selectedVersion = _sanitizeVersionForLanguage(
       _languageOption,
       widget.version,
     );
-    _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
+    if (_languageOption.code == 'arabic') {
+      _selectedVersion =
+          _resolveArabicVersion(
+            _languageOption,
+            withDiacritics: false,
+            preferredVersion: _selectedVersion,
+          ) ??
+          _selectedVersion;
+      _withDiacritics = false;
+    } else {
+      _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
+    }
     _hydrateComparisonsFromRoute();
     _loadChapter();
     if (_isHarmonySource) {
@@ -3559,7 +4201,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       );
     }
     if (book.isEmpty) {
-      return _languageOption.ui.reference;
+      return _labels.reference;
     }
     if (widget.chapter <= 0) {
       return book;
@@ -3636,30 +4278,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       }
     }
     return verses;
-  }
-
-  Future<bool> _canLoadChapter(String book, int chapter) async {
-    if (chapter <= 0) {
-      return false;
-    }
-    final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
-      queryParameters: {
-        'language': _activeApiLanguage,
-        'version': _activeVersion,
-        'book': book,
-        'chapter': chapter.toString(),
-      },
-    );
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        return false;
-      }
-      final verses = _parseVerseLines(response.body);
-      return verses.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
   }
 
   void _scrollToHighlightedVerse({int attempts = 10}) {
@@ -3754,7 +4372,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             : int.tryParse((mapItem['scopeEndVerse'] ?? '').toString()) ?? 1;
         final withDiacritics = mapItem['withDiacritics'] is bool
             ? mapItem['withDiacritics'] as bool
-            : true;
+            : language.code != 'arabic';
         parsed.add(
           _ComparisonPassage(
             language: language,
@@ -3952,47 +4570,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return verses;
   }
 
-  List<_HarmonySection> _buildHarmonySections() {
-    if (!_isHarmonySource || _harmonyTopics.isEmpty || _chapterVerses.isEmpty) {
-      return const <_HarmonySection>[];
-    }
-
-    final canonicalBook = _currentCanonicalBook;
-    final sections = <_HarmonySection>[];
-
-    for (final topic in _harmonyTopics) {
-      final topicVerses = <int>{};
-      for (final reference in topic.references) {
-        if (_normalizeGospelName(reference.book) != canonicalBook) {
-          continue;
-        }
-        topicVerses.addAll(_topicVerseNumbersForCurrentChapter(reference));
-      }
-      if (topicVerses.isEmpty) {
-        continue;
-      }
-      final ordered = topicVerses.toList()..sort();
-      final verses = _chapterVerses.where((verse) {
-        final number = verse.number;
-        return number != null && topicVerses.contains(number);
-      }).toList();
-      if (verses.isEmpty) {
-        continue;
-      }
-      sections.add(
-        _HarmonySection(
-          topicId: topic.id,
-          topicTitle: topic.name,
-          startVerse: ordered.first,
-          endVerse: ordered.last,
-          verses: verses,
-        ),
-      );
-    }
-
-    return sections;
-  }
-
   String get _metaSummary {
     final segments = <String>[];
     final version = _activeVersion.trim();
@@ -4043,7 +4620,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerseLines(response.body);
+      final verses = _normalizeVerseLinesForDisplay(
+        _parseVerseLines(response.body),
+        language: _languageOption,
+        withDiacritics: _withDiacritics,
+      );
       final highlights = _parseHighlightVerses();
       final start = highlights.isEmpty
           ? null
@@ -4072,54 +4653,52 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
-  void _toggleReferenceDiacritics() {
+  Future<void> _toggleReferenceDiacritics() async {
     if (_languageOption.code != 'arabic') {
       return;
     }
-    final shouldReloadChapter = _chapterVerses.isNotEmpty || _error != null;
     setState(() {
       _withDiacritics = !_withDiacritics;
-      if (shouldReloadChapter) {
-        _chapterVerses = const <_VerseLine>[];
-        _error = null;
-        _loadingChapter = false;
-      }
     });
-    _loadChapter();
+    await _loadChapter();
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
-    final sanitized = _sanitizeVersionForLanguage(_languageOption, newVersion);
-    if (sanitized == _selectedVersion &&
-        (_languageOption.code != 'arabic' ||
-            _withDiacritics == !_isArabicWithoutDiacritics(sanitized))) {
+    await _updateReferenceTranslation(_languageOption, newVersion);
+  }
+
+  Future<void> _updateReferenceTranslation(
+    LanguageOption language,
+    String versionId,
+  ) async {
+    final sanitized = language.code == 'arabic'
+        ? (_resolveArabicVersion(
+                language,
+                withDiacritics: false,
+                preferredVersion: versionId,
+              ) ??
+              _sanitizeVersionForLanguage(language, versionId))
+        : _sanitizeVersionForLanguage(language, versionId);
+    if (language.code == _languageOption.code &&
+        sanitized == _selectedVersion &&
+        (language.code != 'arabic' || !_withDiacritics)) {
       return;
     }
-    final shouldReloadChapter = _chapterVerses.isNotEmpty || _error != null;
-
-    setState(() {
-      _selectedVersion = sanitized;
-      if (_languageOption.code == 'arabic') {
-        _withDiacritics = false;
-      }
-      if (shouldReloadChapter) {
-        _chapterVerses = const <_VerseLine>[];
-        _error = null;
-        _loadingChapter = false;
-      }
-    });
 
     try {
       await _persistLanguageVersion(
-        _languageOption,
+        language,
         sanitized,
-        withDiacritics: _languageOption.code == 'arabic'
-            ? !_isArabicWithoutDiacritics(_activeVersion)
-            : null,
+        withDiacritics: language.code == 'arabic' ? false : null,
       );
     } catch (_) {}
 
-    _loadChapter();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushReplacementNamed(
+      _referenceUriForTranslation(language, sanitized).toString(),
+    );
   }
 
   Widget _buildVerseParagraph(
@@ -4163,10 +4742,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
-  Future<void> _openReferenceUri(Uri uri) async {
-    Navigator.of(context).pushNamed(uri.toString());
-  }
-
   Uri _referenceUriForTranslation(LanguageOption language, String version) {
     final queryParameters = <String, String>{
       'book': _bookParameter,
@@ -4204,34 +4779,159 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _updateReferenceLanguage(LanguageOption language) async {
-    final version = await _storedVersionForLanguage(language);
-    await _persistLanguageVersion(
-      language,
-      version,
-      withDiacritics: language.code == 'arabic'
-          ? !_isArabicWithoutDiacritics(version)
+    final storedVersion = await _storedVersionForLanguage(language);
+    await _updateReferenceTranslation(language, storedVersion);
+  }
+
+  ChapterNav _buildChapterNavigation() {
+    final canonical = _normalizeGospelName(_bookParameter);
+    final bookIndex = orderedGospels.indexOf(canonical);
+    final maxChapter = gospelChapterCounts[canonical];
+    final hasPreviousBook = bookIndex > 0;
+    final hasNextBook = bookIndex >= 0 && bookIndex < orderedGospels.length - 1;
+    final hasPreviousChapter = widget.chapter > 1;
+    final hasNextChapter =
+        bookIndex >= 0 &&
+        (maxChapter == null ? true : widget.chapter < maxChapter);
+
+    return ChapterNav(
+      chapter: widget.chapter,
+      previousBookUri: hasPreviousBook
+          ? _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1)
           : null,
-    );
-    if (!mounted) {
-      return;
-    }
-    Navigator.of(context).pushReplacementNamed(
-      _referenceUriForTranslation(language, version).toString(),
+      previousChapterUri: hasPreviousChapter
+          ? _referenceUri(book: canonical, chapter: widget.chapter - 1)
+          : null,
+      nextChapterUri: hasNextChapter
+          ? _referenceUri(book: canonical, chapter: widget.chapter + 1)
+          : null,
+      nextBookUri: hasNextBook
+          ? _referenceUri(book: orderedGospels[bookIndex + 1], chapter: 1)
+          : null,
     );
   }
 
-  int _clampChapterForBook(String book, int chapter) {
-    final maxChapter = gospelChapterCounts[_normalizeGospelName(book)];
-    if (maxChapter == null) {
-      return chapter <= 0 ? 1 : chapter;
+  List<_ChapterVerseGroup> _buildChapterVerseGroups(List<_VerseLine> verses) {
+    if (!_showTopicNames || verses.isEmpty || _harmonyTopics.isEmpty) {
+      return [_ChapterVerseGroup(title: null, verses: verses)];
     }
-    if (chapter <= 0) {
-      return 1;
+
+    final canonicalBook = _currentCanonicalBook;
+    final topicByVerse = <int, String>{};
+    for (final topic in _harmonyTopics) {
+      final topicTitle = topic.name.trim();
+      if (topicTitle.isEmpty) {
+        continue;
+      }
+      for (final reference in topic.references) {
+        if (_normalizeGospelName(reference.book) != canonicalBook) {
+          continue;
+        }
+        final verseNumbers = _topicVerseNumbersForCurrentChapter(
+          reference,
+        ).toList()..sort();
+        for (final number in verseNumbers) {
+          topicByVerse.putIfAbsent(number, () => topicTitle);
+        }
+      }
     }
-    if (chapter > maxChapter) {
-      return maxChapter;
+
+    if (topicByVerse.isEmpty) {
+      return [_ChapterVerseGroup(title: null, verses: verses)];
     }
-    return chapter;
+
+    final groups = <_ChapterVerseGroup>[];
+    String? currentTitle;
+    var currentVerses = <_VerseLine>[];
+
+    void flush() {
+      if (currentVerses.isEmpty) {
+        return;
+      }
+      groups.add(
+        _ChapterVerseGroup(
+          title: currentTitle,
+          verses: List<_VerseLine>.from(currentVerses),
+        ),
+      );
+      currentVerses = <_VerseLine>[];
+    }
+
+    for (final verse in verses) {
+      final number = verse.number;
+      final title = number == null ? null : topicByVerse[number];
+      if (currentVerses.isNotEmpty && title != currentTitle) {
+        flush();
+      }
+      currentTitle = title;
+      currentVerses.add(verse);
+    }
+    flush();
+
+    return groups.isEmpty
+        ? [_ChapterVerseGroup(title: null, verses: verses)]
+        : groups;
+  }
+
+  List<Widget> _buildVerseGroupWidgets({
+    required List<_VerseLine> verses,
+    required ThemeData theme,
+    required LanguageOption language,
+    required String version,
+    bool registerScrollTargets = false,
+  }) {
+    final groups = _buildChapterVerseGroups(verses);
+    final bookSlug = _slugBookForId(_bookParameter);
+    final registeredScrollVerseIds = <String>{};
+    final widgets = <Widget>[];
+
+    for (final group in groups) {
+      final title = group.title?.trim();
+      if (title != null && title.isNotEmpty) {
+        widgets.add(
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 8, bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.35,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              title,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        );
+      }
+
+      for (final verse in group.verses) {
+        final number = verse.number;
+        final rawVerseId = registerScrollTargets && number != null && number > 0
+            ? 'verse-$bookSlug-${widget.chapter}-$number'
+            : null;
+        final verseId =
+            rawVerseId != null && registeredScrollVerseIds.add(rawVerseId)
+            ? rawVerseId
+            : null;
+        widgets.add(
+          _buildVerseParagraph(
+            verse,
+            theme,
+            highlighted: number != null && _highlightVerses.contains(number),
+            verseId: verseId,
+            markerLanguage: language.apiLanguage,
+            markerVersion: version,
+          ),
+        );
+      }
+    }
+
+    return widgets;
   }
 
   Widget _buildChapterSection(ThemeData theme) {
@@ -4252,148 +4952,23 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     if (_chapterVerses.isEmpty) {
-      return Text(
-        'No chapter text is available for this passage yet.',
-        style: theme.textTheme.bodyMedium,
-      );
+      return Text(_labels.noPassageText, style: theme.textTheme.bodyMedium);
     }
-
-    final canonical = _normalizeGospelName(_bookParameter);
-    final bookIndex = orderedGospels.indexOf(canonical);
-    final hasPrevBook = bookIndex > 0;
-    final hasNextBook = bookIndex >= 0 && bookIndex < orderedGospels.length - 1;
-    final hasPrevChapter = widget.chapter > 1;
-    final maxChapter = gospelChapterCounts[canonical];
-    final hasNextChapter = maxChapter == null
-        ? true
-        : widget.chapter < maxChapter;
-
-    final bookSlug = _slugBookForId(_bookParameter);
-    final registeredScrollVerseIds = <String>{};
-    final verseWidgets = _chapterVerses.map((verse) {
-      final number = verse.number;
-      final highlighted = number != null && _highlightVerses.contains(number);
-      final rawVerseId = number != null && number > 0
-          ? 'verse-$bookSlug-${widget.chapter}-$number'
-          : null;
-      final verseId =
-          rawVerseId != null && registeredScrollVerseIds.add(rawVerseId)
-          ? rawVerseId
-          : null;
-      return _buildVerseParagraph(
-        verse,
-        theme,
-        highlighted: highlighted,
-        verseId: verseId,
-      );
-    }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ChapterNav(
-          chapter: widget.chapter,
-          languageOption: _languageOption,
-          hasPreviousBook: hasPrevBook,
-          hasPreviousChapter: hasPrevChapter,
-          hasNextChapter: hasNextChapter,
-          hasNextBook: hasNextBook,
-          onPreviousBook: hasPrevBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex - 1],
-                    chapter: _clampChapterForBook(
-                      orderedGospels[bookIndex - 1],
-                      widget.chapter,
-                    ),
-                  ),
-                )
-              : null,
-          onPreviousChapter: hasPrevChapter
-              ? () => _openReferenceUri(
-                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
-                )
-              : null,
-          onNextChapter: hasNextChapter
-              ? () async {
-                  if (maxChapter == null) {
-                    final next = widget.chapter + 1;
-                    final ok = await _canLoadChapter(canonical, next);
-                    if (!ok) {
-                      return;
-                    }
-                    await _openReferenceUri(
-                      _referenceUri(book: canonical, chapter: next),
-                    );
-                    return;
-                  }
-                  await _openReferenceUri(
-                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
-                  );
-                }
-              : null,
-          onNextBook: hasNextBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex + 1],
-                    chapter: 1,
-                  ),
-                )
-              : null,
-        ),
+        _buildChapterNavigation(),
         const SizedBox(height: 8),
-        ...verseWidgets,
-        const SizedBox(height: 12),
-        ChapterNav(
-          chapter: widget.chapter,
-          languageOption: _languageOption,
-          hasPreviousBook: hasPrevBook,
-          hasPreviousChapter: hasPrevChapter,
-          hasNextChapter: hasNextChapter,
-          hasNextBook: hasNextBook,
-          onPreviousBook: hasPrevBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex - 1],
-                    chapter: _clampChapterForBook(
-                      orderedGospels[bookIndex - 1],
-                      widget.chapter,
-                    ),
-                  ),
-                )
-              : null,
-          onPreviousChapter: hasPrevChapter
-              ? () => _openReferenceUri(
-                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
-                )
-              : null,
-          onNextChapter: hasNextChapter
-              ? () async {
-                  if (maxChapter == null) {
-                    final next = widget.chapter + 1;
-                    final ok = await _canLoadChapter(canonical, next);
-                    if (!ok) {
-                      return;
-                    }
-                    await _openReferenceUri(
-                      _referenceUri(book: canonical, chapter: next),
-                    );
-                    return;
-                  }
-                  await _openReferenceUri(
-                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
-                  );
-                }
-              : null,
-          onNextBook: hasNextBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex + 1],
-                    chapter: 1,
-                  ),
-                )
-              : null,
+        ..._buildVerseGroupWidgets(
+          verses: _chapterVerses,
+          theme: theme,
+          language: _languageOption,
+          version: _activeVersion,
+          registerScrollTargets: true,
         ),
+        const SizedBox(height: 12),
+        _buildChapterNavigation(),
       ],
     );
   }
@@ -4402,17 +4977,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (_languageOption.code != 'arabic') {
       return const SizedBox.shrink();
     }
-    final label = _withDiacritics
-        ? _languageOption.ui.removeDiacritics
-        : _languageOption.ui.addDiacritics;
-    final icon = _withDiacritics
-        ? Icons.remove_circle_outline
-        : Icons.add_circle_outline;
-    return OutlinedButton.icon(
+    return _compactDiacriticsButton(
+      context: context,
+      withDiacritics: _withDiacritics,
+      labels: _labels,
       onPressed: _toggleReferenceDiacritics,
-      style: _toolbarOutlinedStyle(context),
-      icon: Icon(icon),
-      label: Text(label),
     );
   }
 
@@ -4425,50 +4994,110 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   void _showVersionPicker() {
     final versions = _selectableVersions(_languageOption);
-    final current = _selectionVersionValue(_languageOption, _activeVersion);
-    final labels = _languageOption.ui;
-    showModalBottomSheet<void>(
+    var selectedVersion =
+        versions.any((version) {
+          return _selectionVersionValue(
+                _languageOption,
+                version.id,
+              ).toLowerCase() ==
+              _selectionVersionValue(
+                _languageOption,
+                _activeVersion,
+              ).toLowerCase();
+        })
+        ? versions.firstWhere((version) {
+            return _selectionVersionValue(
+                  _languageOption,
+                  version.id,
+                ).toLowerCase() ==
+                _selectionVersionValue(
+                  _languageOption,
+                  _activeVersion,
+                ).toLowerCase();
+          }).id
+        : (versions.isNotEmpty ? versions.first.id : '');
+    final labels = _labels;
+    showDialog<void>(
       context: context,
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  '${labels.selectVersion} (${_languageOption.label})',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              ...versions.map(
-                (version) => RadioListTile<String>(
-                  title: Text(version.label),
-                  value: version.id,
-                  groupValue: current,
-                  onChanged: (value) {
-                    if (value != null) {
-                      Navigator.of(context).pop();
-                      _updateSelectedVersion(value);
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
+        return AlertDialog(
+          title: Text('${labels.selectVersion} (${_languageOption.label})'),
+          content: StatefulBuilder(
+            builder: (context, setModalState) {
+              return DropdownButtonFormField<String>(
+                key: ValueKey('reference-main-version-$selectedVersion'),
+                initialValue: selectedVersion.isEmpty ? null : selectedVersion,
+                decoration: InputDecoration(labelText: labels.version),
+                items: versions
+                    .map(
+                      (version) => DropdownMenuItem<String>(
+                        value: version.id,
+                        child: Text(version.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setModalState(() {
+                    selectedVersion = value;
+                  });
+                },
+              );
+            },
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(labels.cancel),
+            ),
+            FilledButton(
+              onPressed: selectedVersion.isEmpty
+                  ? null
+                  : () {
+                      Navigator.of(context).pop();
+                      _updateSelectedVersion(selectedVersion);
+                    },
+              child: Text(labels.save),
+            ),
+          ],
         );
       },
     );
   }
 
   Widget _buildAddComparisonButton() {
-    return OutlinedButton.icon(
+    return FilledButton.icon(
       onPressed: _showComparisonPicker,
+      style: _toolbarFilledStyle(context),
+      icon: const Icon(Icons.library_add, size: 18),
+      label: Text(_labels.addTranslation),
+    );
+  }
+
+  void _toggleTopicNames() {
+    final next = !_showTopicNames;
+    setState(() {
+      _showTopicNames = next;
+    });
+    if (next && _harmonyTopics.isEmpty && !_loadingHarmonyTopics) {
+      _loadHarmonyTopics();
+    }
+  }
+
+  Widget _buildTopicNamesToggleButton() {
+    final label = _showTopicNames
+        ? _labels.hideTopicNames
+        : _labels.showTopicNames;
+    return OutlinedButton.icon(
+      onPressed: _toggleTopicNames,
       style: _toolbarOutlinedStyle(context),
-      icon: const Icon(Icons.library_add),
-      label: Text(_languageOption.ui.addComparison),
+      icon: Icon(
+        _showTopicNames ? Icons.label_off_outlined : Icons.label_outline,
+        size: 18,
+      ),
+      label: Text(label),
     );
   }
 
@@ -4487,14 +5116,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   void _setTextScale(double value) {
+    final next = value.clamp(_minTextScale, _maxTextScale).toDouble();
+    ZoomController.instance.update(next);
     setState(() {
-      _textScale = value.clamp(_minTextScale, _maxTextScale).toDouble();
+      _textScale = next;
     });
   }
 
   Widget _buildZoomControl() => _buildToolbarZoomButton(
     context: context,
-    language: _languageOption,
+    menuLanguage: MenuLanguageScope.of(context),
     value: _textScale,
     onSelected: _setTextScale,
   );
@@ -4515,7 +5146,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       icon: Icon(
         _interlinearView ? Icons.view_agenda : Icons.view_agenda_outlined,
       ),
-      label: Text(_languageOption.ui.interlinearView),
+      label: Text(_labels.interlinearView),
     );
   }
 
@@ -4527,24 +5158,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     int scopeEndVerse,
   ) {
     return '${option.code}|${version.toLowerCase()}|${scopeMode.name}|$scopeStartVerse|$scopeEndVerse';
-  }
-
-  String _scopePreviewLabel(int startVerse, int endVerse) {
-    final reference = startVerse == endVerse
-        ? '${widget.chapter}:$startVerse'
-        : '${widget.chapter}:$startVerse–$endVerse';
-    final direction =
-        _languageOptionForApiLanguage(widget.language)?.direction ??
-        TextDirection.ltr;
-    final book = _displayBookLabel.isNotEmpty
-        ? _displayBookLabel
-        : _currentCanonicalBook;
-    return _combineBookAndReference(
-      book,
-      reference,
-      direction,
-      isArabic: _isArabicLanguage(widget.language),
-    );
   }
 
   bool _isValidScopeRange(int startVerse, int endVerse, int maxVerse) {
@@ -4563,7 +5176,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (_supportedLanguages.isEmpty || maxVerse <= 0) {
       return;
     }
-    final labels = _languageOption.ui;
+    final labels = _labels;
 
     final mainLanguage = _languageOption;
     final mainVersion = _sanitizeVersionForLanguage(
@@ -4571,11 +5184,15 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _activeVersion,
     );
 
-    LanguageOption selectedLanguage = mainLanguage;
+    LanguageOption selectedLanguage = _supportedLanguages.firstWhere(
+      (option) => option.code == mainLanguage.code,
+      orElse: () => _supportedLanguages.first,
+    );
     var selectedVersion = _sanitizeVersionForLanguage(
       selectedLanguage,
       selectedLanguage.apiVersion,
     );
+    final versionFocusNode = FocusNode();
 
     showDialog<void>(
       context: context,
@@ -4620,47 +5237,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   selectedVersion = choices.first.version;
                 }
 
-                Future<void> openVersionSelector() async {
-                  await showDialog<void>(
-                    context: context,
-                    builder: (dialogContext) {
-                      return AlertDialog(
-                        title: Text(
-                          '${labels.selectVersion} (${selectedLanguage.label})',
-                        ),
-                        content: SizedBox(
-                          width: double.maxFinite,
-                          child: ListView(
-                            shrinkWrap: true,
-                            children: choices.map((choice) {
-                              return RadioListTile<String>(
-                                value: choice.version,
-                                groupValue: selectedVersion,
-                                onChanged: (value) {
-                                  if (value == null) {
-                                    return;
-                                  }
-                                  setModalState(() {
-                                    selectedVersion = value;
-                                  });
-                                  Navigator.of(dialogContext).pop();
-                                },
-                                title: Text(choice.label),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(),
-                            child: Text(labels.cancel),
-                          ),
-                        ],
-                      );
-                    },
-                  );
-                }
-
                 return Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
@@ -4673,7 +5249,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       ),
                       const SizedBox(height: 16),
                       DropdownButtonFormField<LanguageOption>(
-                        value: selectedLanguage,
+                        key: ValueKey(
+                          'reference-add-language-${selectedLanguage.code}',
+                        ),
+                        initialValue: selectedLanguage,
                         decoration: InputDecoration(labelText: labels.language),
                         items: _supportedLanguages
                             .map(
@@ -4694,31 +5273,43 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                               value.apiVersion,
                             );
                           });
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            versionFocusNode.requestFocus();
+                          });
                         },
                       ),
                       const SizedBox(height: 12),
-                      InkWell(
-                        onTap: choices.isEmpty ? null : openVersionSelector,
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            labelText: labels.version,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  choices.isEmpty
-                                      ? labels.noAlternativeVersions
-                                      : _versionLabel(
-                                          selectedLanguage.code,
-                                          selectedVersion,
-                                        ),
-                                ),
-                              ),
-                              const Icon(Icons.arrow_drop_down),
-                            ],
-                          ),
+                      DropdownButtonFormField<String>(
+                        key: ValueKey(
+                          'reference-add-version-${selectedLanguage.code}-${choices.length}-$selectedVersion',
                         ),
+                        focusNode: versionFocusNode,
+                        initialValue:
+                            choices.any(
+                              (choice) => choice.version == selectedVersion,
+                            )
+                            ? selectedVersion
+                            : null,
+                        decoration: InputDecoration(labelText: labels.version),
+                        hint: Text(labels.noAlternativeVersions),
+                        items: choices
+                            .map(
+                              (choice) => DropdownMenuItem<String>(
+                                value: choice.version,
+                                child: Text(choice.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: choices.isEmpty
+                            ? null
+                            : (value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                setModalState(() {
+                                  selectedVersion = value;
+                                });
+                              },
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -4759,7 +5350,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           ),
         );
       },
-    );
+    ).whenComplete(versionFocusNode.dispose);
   }
 
   void _addComparison(
@@ -4799,9 +5390,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final entry = _ComparisonPassage(
       language: option,
       version: sanitized,
-      withDiacritics: option.code == 'arabic'
-          ? _withDiacritics
-          : !_isArabicWithoutDiacritics(sanitized),
+      withDiacritics:
+          option.code != 'arabic' && !_isArabicWithoutDiacritics(sanitized),
       scopeMode: scopeMode,
       scopeStartVerse: scopeStartVerse,
       scopeEndVerse: scopeEndVerse,
@@ -4864,7 +5454,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _showComparisonColumnSelector(_ComparisonPassage entry) async {
-    final labels = _languageOption.ui;
+    final labels = _labels;
     LanguageOption selectedLanguage = entry.language;
     String selectedVersion = _sanitizeVersionForLanguage(
       selectedLanguage,
@@ -4887,7 +5477,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
-                    value: selectedLanguage.code,
+                    key: ValueKey(
+                      'reference-edit-language-${selectedLanguage.code}',
+                    ),
+                    initialValue: selectedLanguage.code,
                     items: _supportedLanguages
                         .map(
                           (option) => DropdownMenuItem<String>(
@@ -4913,7 +5506,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: selectedVersion,
+                    key: ValueKey(
+                      'reference-edit-version-${selectedLanguage.code}-$selectedVersion-${versions.length}',
+                    ),
+                    initialValue: selectedVersion,
                     items: versions
                         .map(
                           (version) => DropdownMenuItem<String>(
@@ -4946,11 +5542,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         selectedLanguage,
                         selectedVersion,
                       );
-                      if (selectedLanguage.code != 'arabic') {
-                        entry.withDiacritics = !_isArabicWithoutDiacritics(
-                          entry.version,
-                        );
-                      }
+                      entry.withDiacritics = selectedLanguage.code != 'arabic';
                     });
                     _loadComparisonPassage(entry);
                   },
@@ -4973,224 +5565,130 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
   }
 
-  void _showEditComparisonScopeDialog(_ComparisonPassage entry) {
-    final maxVerse = _chapterMaxVerse;
-    if (maxVerse <= 0) {
-      return;
+  List<_VerseLine> _scopedComparisonVerses(_ComparisonPassage entry) {
+    return entry.verses.where((verse) {
+      final number = verse.number;
+      if (number == null) {
+        return false;
+      }
+      return number >= entry.scopeStartVerse && number <= entry.scopeEndVerse;
+    }).toList();
+  }
+
+  Widget _buildTranslationPanel({
+    required ThemeData theme,
+    required LanguageOption language,
+    required String version,
+    required List<_VerseLine> verses,
+    _ComparisonPassage? entry,
+    bool isMain = false,
+  }) {
+    final versionLabel = _versionLabel(language.code, version);
+    final title = '${language.label} · $versionLabel';
+    final labels = _labels;
+
+    Widget body;
+    if (entry?.loading == true) {
+      body = const LinearProgressIndicator();
+    } else if (entry?.error != null) {
+      body = Text(
+        entry!.error!,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.error,
+        ),
+      );
+    } else if (verses.isEmpty) {
+      body = Text(_labels.noPassageText, style: theme.textTheme.bodyMedium);
+    } else {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: _buildVerseGroupWidgets(
+          verses: verses,
+          theme: theme,
+          language: language,
+          version: version,
+          registerScrollTargets: isMain,
+        ),
+      );
     }
-    final labels = _languageOption.ui;
 
-    var scopeMode = entry.scopeMode;
-    if (scopeMode == _ComparisonScopeMode.highlight && !_hasHighlightScope) {
-      scopeMode = _ComparisonScopeMode.custom;
-    }
+    final headerControls = <Widget>[
+      if (language.code == 'arabic')
+        isMain
+            ? _buildArabicReferenceToggleButton()
+            : _buildComparisonDiacriticsToggle(entry!),
+      TextButton(
+        onPressed: isMain
+            ? _showVersionPicker
+            : entry == null
+            ? null
+            : () => _showComparisonColumnSelector(entry),
+        child: Text(labels.change),
+      ),
+      if (!isMain && entry != null)
+        IconButton(
+          onPressed: () => _removeComparison(entry),
+          icon: const Icon(Icons.close),
+          tooltip: labels.removeComparison,
+        ),
+    ];
+    final titleWidget = Text(
+      title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    );
 
-    var customStartVerse = entry.scopeStartVerse;
-    var customEndVerse = entry.scopeEndVerse;
-    var selectedStartVerse = entry.scopeStartVerse;
-    var selectedEndVerse = entry.scopeEndVerse;
-
-    if (scopeMode == _ComparisonScopeMode.highlight) {
-      selectedStartVerse = _highlightStartVerseForScope;
-      selectedEndVerse = _highlightEndVerseForScope;
-    } else if (scopeMode == _ComparisonScopeMode.chapter) {
-      selectedStartVerse = 1;
-      selectedEndVerse = maxVerse;
-    }
-
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(labels.editComparisonRange),
-          content: StatefulBuilder(
-            builder: (context, setModalState) {
-              final selectedPreview = _scopePreviewLabel(
-                selectedStartVerse,
-                selectedEndVerse,
-              );
-              final scopeError =
-                  _isValidScopeRange(
-                    selectedStartVerse,
-                    selectedEndVerse,
-                    maxVerse,
-                  )
-                  ? null
-                  : 'Please select a verse range within 1–$maxVerse.';
-
-              return SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_hasHighlightScope)
-                      RadioListTile<_ComparisonScopeMode>(
-                        value: _ComparisonScopeMode.highlight,
-                        groupValue: scopeMode,
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setModalState(() {
-                            scopeMode = value;
-                            selectedStartVerse = _highlightStartVerseForScope;
-                            selectedEndVerse = _highlightEndVerseForScope;
-                          });
-                        },
-                        title: Text(labels.highlightedReference),
-                      ),
-                    RadioListTile<_ComparisonScopeMode>(
-                      value: _ComparisonScopeMode.custom,
-                      groupValue: scopeMode,
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setModalState(() {
-                          scopeMode = value;
-                          selectedStartVerse = customStartVerse;
-                          selectedEndVerse = customEndVerse;
-                        });
-                      },
-                      title: Text(labels.customRange),
-                    ),
-                    if (scopeMode == _ComparisonScopeMode.custom)
-                      Padding(
-                        padding: const EdgeInsetsDirectional.only(
-                          start: 16,
-                          end: 16,
-                          bottom: 8,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Directionality(
+          textDirection: language.direction,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compactHeader = constraints.maxWidth < 430;
+                  if (compactHeader) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        titleWidget,
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          textDirection: language.direction,
+                          children: headerControls,
                         ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: customStartVerse.toString(),
-                                keyboardType: TextInputType.number,
-                                decoration: InputDecoration(
-                                  labelText:
-                                      '${labels.startVerse} (1-$maxVerse)',
-                                ),
-                                onChanged: (value) {
-                                  final parsed = int.tryParse(value);
-                                  if (parsed == null) {
-                                    return;
-                                  }
-                                  setModalState(() {
-                                    customStartVerse = parsed;
-                                    selectedStartVerse = parsed;
-                                  });
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                initialValue: customEndVerse.toString(),
-                                keyboardType: TextInputType.number,
-                                decoration: InputDecoration(
-                                  labelText: '${labels.endVerse} (1-$maxVerse)',
-                                ),
-                                onChanged: (value) {
-                                  final parsed = int.tryParse(value);
-                                  if (parsed == null) {
-                                    return;
-                                  }
-                                  setModalState(() {
-                                    customEndVerse = parsed;
-                                    selectedEndVerse = parsed;
-                                  });
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    RadioListTile<_ComparisonScopeMode>(
-                      value: _ComparisonScopeMode.chapter,
-                      groupValue: scopeMode,
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setModalState(() {
-                          scopeMode = value;
-                          selectedStartVerse = 1;
-                          selectedEndVerse = maxVerse;
-                        });
-                      },
-                      title: Text(labels.entireChapter),
-                    ),
-                    const SizedBox(height: 8),
-                    Text('${labels.selected}: $selectedPreview'),
-                    if (scopeError != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        scopeError,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: titleWidget),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        textDirection: language.direction,
+                        children: headerControls,
                       ),
                     ],
-                  ],
-                ),
-              );
-            },
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              body,
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(labels.cancel),
-            ),
-            FilledButton(
-              onPressed:
-                  !_isValidScopeRange(
-                    selectedStartVerse,
-                    selectedEndVerse,
-                    maxVerse,
-                  )
-                  ? null
-                  : () {
-                      final targetKey = _comparisonKey(
-                        entry.language,
-                        entry.version,
-                        scopeMode,
-                        selectedStartVerse,
-                        selectedEndVerse,
-                      );
-                      final duplicateExists = _comparisons.any((item) {
-                        if (identical(item, entry)) {
-                          return false;
-                        }
-                        return _comparisonKey(
-                              item.language,
-                              item.version,
-                              item.scopeMode,
-                              item.scopeStartVerse,
-                              item.scopeEndVerse,
-                            ) ==
-                            targetKey;
-                      });
-                      if (duplicateExists) {
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(this.context).showSnackBar(
-                          SnackBar(content: Text(labels.duplicateComparison)),
-                        );
-                        return;
-                      }
-                      Navigator.of(context).pop();
-                      setState(() {
-                        entry.scopeMode = scopeMode;
-                        entry.scopeStartVerse = selectedStartVerse;
-                        entry.scopeEndVerse = selectedEndVerse;
-                      });
-                      _loadComparisonPassage(entry);
-                    },
-              child: Text(labels.saveRange),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -5209,259 +5707,41 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         ),
       );
     }
-    final columns = <_ParallelColumn>[
-      _ParallelColumn.main(
-        language: _languageOption,
-        version: _activeVersion,
-        verses: _mapVersesByNumber(_chapterVerses),
+    final panels = <Widget Function(double width)>[
+      (width) => SizedBox(
+        width: width,
+        child: _buildTranslationPanel(
+          theme: theme,
+          language: _languageOption,
+          version: _activeVersion,
+          verses: _chapterVerses,
+          isMain: true,
+        ),
       ),
-      ..._comparisons.map(
-        (entry) => _ParallelColumn.comparison(
-          entry: entry,
-          language: entry.language,
-          version: _comparisonVersion(
+      for (final entry in _comparisons)
+        (width) {
+          final resolvedVersion = _comparisonVersion(
             entry.language,
             entry.version,
             withDiacritics: entry.withDiacritics,
-          ),
-          verses: _mapVersesByNumber(entry.verses),
-        ),
-      ),
+          );
+          return SizedBox(
+            width: width,
+            child: _buildTranslationPanel(
+              theme: theme,
+              language: entry.language,
+              version: resolvedVersion,
+              verses: _scopedComparisonVerses(entry),
+              entry: entry,
+            ),
+          );
+        },
     ];
-    final pairs = <List<_ParallelColumn>>[];
-    for (var i = 0; i < columns.length; i += 2) {
-      final end = math.min(i + 2, columns.length);
-      pairs.add(columns.sublist(i, end));
-    }
-    final harmonySections = _buildHarmonySections();
-    final sectionRanges = harmonySections.isNotEmpty
-        ? harmonySections
-              .map(
-                (section) => _ParallelSectionRange(
-                  title: section.topicTitle,
-                  start: section.startVerse,
-                  end: section.endVerse,
-                ),
-              )
-              .toList()
-        : <_ParallelSectionRange>[
-            _ParallelSectionRange(
-              title: _isHarmonySource ? 'Passage' : _referenceHeading,
-              start: 1,
-              end: _chapterMaxVerse,
-            ),
-          ];
-
-    final canonical = _normalizeGospelName(_bookParameter);
-    final bookIndex = orderedGospels.indexOf(canonical);
-    final hasPrevBook = bookIndex > 0;
-    final hasNextBook = bookIndex >= 0 && bookIndex < orderedGospels.length - 1;
-    final hasPrevChapter = widget.chapter > 1;
-    final maxChapter = gospelChapterCounts[canonical];
-    final hasNextChapter = maxChapter == null
-        ? true
-        : widget.chapter < maxChapter;
-
-    Widget buildColumnHeader(_ParallelColumn column) {
-      final versionLabel = _versionLabel(column.language.code, column.version);
-      final title = '${column.language.label} · $versionLabel';
-      final labels = _languageOption.ui;
-      return Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              if (column.isMain) {
-                _showVersionPicker();
-              } else if (column.entry != null) {
-                _showComparisonColumnSelector(column.entry!);
-              }
-            },
-            child: Text(labels.change),
-          ),
-          if (!column.isMain && column.entry != null)
-            IconButton(
-              onPressed: () => _removeComparison(column.entry!),
-              icon: const Icon(Icons.close),
-              tooltip: labels.removeComparison,
-            ),
-        ],
-      );
-    }
-
-    Widget buildVerseCell(_ParallelColumn column, int verseNumber) {
-      final text = column.verses[verseNumber] ?? '—';
-      final highlighted = _highlightVerses.contains(verseNumber);
-      final baseStyle = theme.textTheme.bodyMedium;
-      final verseStyle = highlighted
-          ? baseStyle?.copyWith(fontWeight: FontWeight.w700)
-          : baseStyle;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Directionality(
-          textDirection: column.language.direction,
-          child: RichText(
-            text: TextSpan(
-              style: verseStyle,
-              children: [
-                TextSpan(
-                  text:
-                      '${formatVerseMarker(verseNumber, language: column.language.apiLanguage, version: column.version)}. ',
-                  style: baseStyle?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                TextSpan(text: text),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    final pairWidgets = <Widget>[];
-    final bookSlug = _slugBookForId(_bookParameter);
-    final registeredScrollVerseIds = <String>{};
-    for (var pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
-      final pair = pairs[pairIndex];
-      final left = pair.first;
-      final right = pair.length > 1 ? pair[1] : null;
-      pairWidgets.add(
-        Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(child: buildColumnHeader(left)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: right != null
-                          ? buildColumnHeader(right)
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ...sectionRanges.expand((section) {
-                  return [
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(top: 8, bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.35),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        section.title,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    ...List.generate(section.end - section.start + 1, (index) {
-                      final verseNumber = section.start + index;
-                      final rawVerseId =
-                          'verse-$bookSlug-${widget.chapter}-$verseNumber';
-                      final verseId =
-                          pairIndex == 0 &&
-                              registeredScrollVerseIds.add(rawVerseId)
-                          ? rawVerseId
-                          : null;
-                      return Padding(
-                        key: verseId != null
-                            ? (_verseKeys.putIfAbsent(
-                                verseId,
-                                () => GlobalKey(),
-                              ))
-                            : null,
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: buildVerseCell(left, verseNumber)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: right != null
-                                  ? buildVerseCell(right, verseNumber)
-                                  : const SizedBox.shrink(),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ];
-                }),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ChapterNav(
-          chapter: widget.chapter,
-          languageOption: _languageOption,
-          hasPreviousBook: hasPrevBook,
-          hasPreviousChapter: hasPrevChapter,
-          hasNextChapter: hasNextChapter,
-          hasNextBook: hasNextBook,
-          onPreviousBook: hasPrevBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex - 1],
-                    chapter: _clampChapterForBook(
-                      orderedGospels[bookIndex - 1],
-                      widget.chapter,
-                    ),
-                  ),
-                )
-              : null,
-          onPreviousChapter: hasPrevChapter
-              ? () => _openReferenceUri(
-                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
-                )
-              : null,
-          onNextChapter: hasNextChapter
-              ? () async {
-                  if (maxChapter == null) {
-                    final next = widget.chapter + 1;
-                    final ok = await _canLoadChapter(canonical, next);
-                    if (!ok) return;
-                    await _openReferenceUri(
-                      _referenceUri(book: canonical, chapter: next),
-                    );
-                    return;
-                  }
-                  await _openReferenceUri(
-                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
-                  );
-                }
-              : null,
-          onNextBook: hasNextBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex + 1],
-                    chapter: 1,
-                  ),
-                )
-              : null,
-        ),
+        _buildChapterNavigation(),
         const SizedBox(height: 8),
         if (_loadingHarmonyTopics) ...[
           const LinearProgressIndicator(),
@@ -5476,76 +5756,43 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           ),
           const SizedBox(height: 8),
         ],
-        ...pairWidgets,
-        ChapterNav(
-          chapter: widget.chapter,
-          languageOption: _languageOption,
-          hasPreviousBook: hasPrevBook,
-          hasPreviousChapter: hasPrevChapter,
-          hasNextChapter: hasNextChapter,
-          hasNextBook: hasNextBook,
-          onPreviousBook: hasPrevBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex - 1],
-                    chapter: _clampChapterForBook(
-                      orderedGospels[bookIndex - 1],
-                      widget.chapter,
-                    ),
-                  ),
-                )
-              : null,
-          onPreviousChapter: hasPrevChapter
-              ? () => _openReferenceUri(
-                  _referenceUri(book: canonical, chapter: widget.chapter - 1),
-                )
-              : null,
-          onNextChapter: hasNextChapter
-              ? () async {
-                  if (maxChapter == null) {
-                    final next = widget.chapter + 1;
-                    final ok = await _canLoadChapter(canonical, next);
-                    if (!ok) return;
-                    await _openReferenceUri(
-                      _referenceUri(book: canonical, chapter: next),
-                    );
-                    return;
-                  }
-                  await _openReferenceUri(
-                    _referenceUri(book: canonical, chapter: widget.chapter + 1),
-                  );
-                }
-              : null,
-          onNextBook: hasNextBook
-              ? () => _openReferenceUri(
-                  _referenceUri(
-                    book: orderedGospels[bookIndex + 1],
-                    chapter: 1,
-                  ),
-                )
-              : null,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildComparisonSection(ThemeData theme) {
-    if (_comparisons.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          _languageOption.ui.comparisons,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final availableWidth = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.of(context).size.width;
+            final count = panels.length;
+            final spacing = availableWidth >= 760 ? 14.0 : 10.0;
+            final columnCount = availableWidth < 760 || count == 1
+                ? 1
+                : (availableWidth < 1180
+                      ? math.min(2, count)
+                      : math.min(3, count));
+            final maxSinglePanelWidth = count == 1 ? 760.0 : availableWidth;
+            final contentWidth = count == 1
+                ? math.min(availableWidth, maxSinglePanelWidth)
+                : availableWidth;
+            final itemWidth = columnCount == 1
+                ? math.min(contentWidth, maxSinglePanelWidth)
+                : (contentWidth - (spacing * (columnCount - 1))) / columnCount;
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: contentWidth,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  runAlignment: WrapAlignment.center,
+                  spacing: spacing,
+                  runSpacing: spacing,
+                  textDirection: _languageOption.direction,
+                  children: [for (final panel in panels) panel(itemWidth)],
+                ),
+              ),
+            );
+          },
         ),
         const SizedBox(height: 12),
-        ..._comparisons
-            .map((entry) => _buildComparisonCard(entry, theme))
-            .toList(),
+        _buildChapterNavigation(),
       ],
     );
   }
@@ -5553,7 +5800,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Widget _buildInterlinearReferenceSection(ThemeData theme) {
     if (_chapterVerses.isEmpty) {
       return Text(
-        _languageOption.ui.noPassageText,
+        _labels.noPassageText,
         style: theme.textTheme.bodyMedium,
         textAlign: TextAlign.start,
       );
@@ -5601,7 +5848,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (entry.verses.isEmpty) {
         statusWidgets.addAll([
           Text(
-            '$label: ${_languageOption.ui.noPassageText}',
+            '$label: ${_labels.noPassageText}',
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 8),
@@ -5627,7 +5874,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final verseKeys = _sortedVerseKeys(translations.map((t) => t.verses));
     if (verseKeys.isEmpty) {
       return Text(
-        _languageOption.ui.noPassageText,
+        _labels.noPassageText,
         style: theme.textTheme.bodyMedium,
         textAlign: TextAlign.start,
       );
@@ -5667,109 +5914,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (entry.language.code != 'arabic') {
       return const SizedBox.shrink();
     }
-    final label = entry.withDiacritics
-        ? _languageOption.ui.removeDiacritics
-        : _languageOption.ui.addDiacritics;
-    final icon = entry.withDiacritics
-        ? Icons.remove_circle_outline
-        : Icons.add_circle_outline;
-    return OutlinedButton.icon(
+    return _compactDiacriticsButton(
+      context: context,
+      withDiacritics: entry.withDiacritics,
+      labels: _labels,
       onPressed: () => _toggleComparisonDiacritics(entry),
-      style: _toolbarOutlinedStyle(context),
-      icon: Icon(icon),
-      label: Text(label),
-    );
-  }
-
-  Widget _buildComparisonCard(_ComparisonPassage entry, ThemeData theme) {
-    final resolvedVersion = entry.language.code == 'arabic'
-        ? _comparisonVersion(
-            entry.language,
-            entry.version,
-            withDiacritics: entry.withDiacritics,
-          )
-        : entry.version;
-    final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
-    final header = '${entry.language.label} · $versionLabel';
-    final textDirection = entry.language.direction;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Directionality(
-          textDirection: textDirection,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      header,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => _showEditComparisonScopeDialog(entry),
-                    icon: const Icon(Icons.edit_outlined),
-                    tooltip: _languageOption.ui.editComparisonRange,
-                  ),
-                  IconButton(
-                    onPressed: () => _removeComparison(entry),
-                    icon: const Icon(Icons.close),
-                    tooltip: _languageOption.ui.removeComparison,
-                  ),
-                ],
-              ),
-              if (entry.language.code == 'arabic') ...[
-                const SizedBox(height: 8),
-                _buildComparisonDiacriticsToggle(entry),
-              ],
-              if (entry.loading) ...[
-                const SizedBox(height: 12),
-                const LinearProgressIndicator(),
-              ] else if (entry.error != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  entry.error!,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ] else if (entry.verses.isEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _languageOption.ui.noPassageText,
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ] else ...[
-                const SizedBox(height: 12),
-                ...entry.verses
-                    .where((verse) {
-                      final number = verse.number;
-                      if (number == null) {
-                        return false;
-                      }
-                      return number >= entry.scopeStartVerse &&
-                          number <= entry.scopeEndVerse;
-                    })
-                    .map(
-                      (verse) => _buildVerseParagraph(
-                        verse,
-                        theme,
-                        markerLanguage: entry.language.apiLanguage,
-                        markerVersion: resolvedVersion,
-                      ),
-                    )
-                    .toList(),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -5778,7 +5927,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         ? _displayBookLabel
         : _currentCanonicalBook;
     if (book.isEmpty) {
-      return _languageOption.ui.reference;
+      return _labels.reference;
     }
     if (_languageOption.code == 'arabic') {
       return 'إنجيل $book';
@@ -5788,22 +5937,33 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return MainScaffold(title: '', body: _buildBody(context));
+    final menuLanguage = MenuLanguageScope.of(context);
+    return MainScaffold(
+      title: '',
+      topNavigation: _buildGlobalTopNavigation(
+        context: context,
+        contentLanguage: _languageOption,
+        contentVersion: _activeVersion,
+        showBackToMainTable: true,
+      ),
+      settingsLabel: menuLanguage.ui.settings,
+      logoutLabel: menuLanguage.ui.logout,
+      accountTooltip: menuLanguage.ui.account,
+      body: _buildBody(context),
+    );
   }
 
   Widget _buildBody(BuildContext context) {
     final theme = Theme.of(context);
-    final direction = _languageOption.direction;
+    final direction = MenuLanguageScope.of(context).direction;
     final toolbarTitle = _isHarmonySource
         ? _harmonyAppBarTitle
         : _referenceHeading;
     final primaryActions = <Widget>[
       _buildAddComparisonButton(),
       _buildInterlinearToggleButton(),
+      _buildTopicNamesToggleButton(),
       _buildZoomControl(),
-    ].where((button) => button is! SizedBox).toList();
-    final trailingActions = <Widget>[
-      _buildArabicReferenceToggleButton(),
     ].where((button) => button is! SizedBox).toList();
 
     return Directionality(
@@ -5822,37 +5982,36 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               languagesLoading: _languagesLoading,
               onLanguageChanged: _updateReferenceLanguage,
               onVersionChanged: _updateSelectedVersion,
+              onTranslationChanged: _updateReferenceTranslation,
               primaryActions: primaryActions,
-              trailingActions: trailingActions,
             ),
           ),
           const Divider(height: 0),
           Expanded(
             child: SingleChildScrollView(
               padding: EdgeInsets.symmetric(
-                horizontal: MediaQuery.sizeOf(context).width < 640 ? 16 : 24,
-                vertical: 24,
+                horizontal: MediaQuery.sizeOf(context).width < 640 ? 14 : 20,
+                vertical: 14,
               ),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 760),
-                  child: _wrapWithTextScale(
-                    context,
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_interlinearView && _comparisons.isNotEmpty) ...[
-                          _buildInterlinearReferenceSection(theme),
-                          const SizedBox(height: 24),
-                          _buildChapterSection(theme),
-                        ] else if (_comparisons.isNotEmpty) ...[
-                          _buildParallelComparisonSection(theme),
-                        ] else ...[
-                          _buildChapterSection(theme),
-                          const SizedBox(height: 24),
-                          _buildComparisonSection(theme),
+                  constraints: const BoxConstraints(maxWidth: 1280),
+                  child: Directionality(
+                    textDirection: _languageOption.direction,
+                    child: _wrapWithTextScale(
+                      context,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_interlinearView && _comparisons.isNotEmpty) ...[
+                            _buildInterlinearReferenceSection(theme),
+                            const SizedBox(height: 24),
+                            _buildChapterSection(theme),
+                          ] else ...[
+                            _buildParallelComparisonSection(theme),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -5990,40 +6149,6 @@ Widget _buildInterlinearVerseGroup({
   );
 }
 
-class _ParallelSectionRange {
-  const _ParallelSectionRange({
-    required this.title,
-    required this.start,
-    required this.end,
-  });
-
-  final String title;
-  final int start;
-  final int end;
-}
-
-class _ParallelColumn {
-  const _ParallelColumn.main({
-    required this.language,
-    required this.version,
-    required this.verses,
-  }) : isMain = true,
-       entry = null;
-
-  const _ParallelColumn.comparison({
-    required this.entry,
-    required this.language,
-    required this.version,
-    required this.verses,
-  }) : isMain = false;
-
-  final bool isMain;
-  final _ComparisonPassage? entry;
-  final LanguageOption language;
-  final String version;
-  final Map<int, String> verses;
-}
-
 class _ComparisonPassage {
   _ComparisonPassage({
     required this.language,
@@ -6120,7 +6245,7 @@ class GospelReference {
 // ----- Second Screen: Choose Version -----
 class ChooseVersionScreen extends StatefulWidget {
   final Topic topic;
-  ChooseVersionScreen({super.key, required this.topic});
+  const ChooseVersionScreen({super.key, required this.topic});
 
   @override
   State<ChooseVersionScreen> createState() => _ChooseVersionScreenState();
@@ -6133,32 +6258,41 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final menuLanguage = MenuLanguageScope.of(context);
     return MainScaffold(
-      title: "Choose Version",
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: availableOptions.length,
-              itemBuilder: (context, idx) {
-                final option = availableOptions[idx];
-                final version = option.apiVersion;
-                return RadioListTile<String>(
-                  title: Text(option.versionLabel),
-                  value: version,
-                  groupValue: _selected,
-                  onChanged: (val) {
-                    setState(() {
-                      _selected = val;
-                    });
-                  },
-                );
+      title: menuLanguage.ui.selectVersion,
+      topNavigation: _buildGlobalTopNavigation(
+        context: context,
+        contentLanguage: menuLanguage,
+        contentVersion: menuLanguage.apiVersion,
+        showBackToMainTable: true,
+      ),
+      settingsLabel: menuLanguage.ui.settings,
+      logoutLabel: menuLanguage.ui.logout,
+      accountTooltip: menuLanguage.ui.account,
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _selected,
+              decoration: InputDecoration(labelText: menuLanguage.ui.version),
+              items: availableOptions
+                  .map(
+                    (option) => DropdownMenuItem<String>(
+                      value: option.apiVersion,
+                      child: Text('${option.label} · ${option.versionLabel}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                setState(() {
+                  _selected = val;
+                });
               },
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: ElevatedButton(
+            const Spacer(),
+            FilledButton(
               onPressed: _selected == null
                   ? null
                   : () {
@@ -6172,10 +6306,10 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
                         ),
                       );
                     },
-              child: const Text("Continue"),
+              child: Text(menuLanguage.ui.continueAction),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -6213,8 +6347,18 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
   @override
   Widget build(BuildContext context) {
     final option = _languageOptionForVersion(widget.version);
+    final menuLanguage = MenuLanguageScope.of(context);
     return MainScaffold(
-      title: "Choose Authors",
+      title: menuLanguage.ui.chooseAuthors,
+      topNavigation: _buildGlobalTopNavigation(
+        context: context,
+        contentLanguage: option,
+        contentVersion: widget.version,
+        showBackToMainTable: true,
+      ),
+      settingsLabel: menuLanguage.ui.settings,
+      logoutLabel: menuLanguage.ui.logout,
+      accountTooltip: menuLanguage.ui.account,
       body: Column(
         children: [
           Expanded(
@@ -6259,7 +6403,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                         ),
                       );
                     },
-              child: const Text("Compare"),
+              child: Text(menuLanguage.ui.compare),
             ),
           ),
         ],
@@ -6274,6 +6418,9 @@ class AuthorComparisonScreen extends StatefulWidget {
   final List<String> initialAuthors;
   final String apiVersion;
   final String topicNumber;
+  final List<Topic> topics;
+  final int topicIndex;
+  final String comparisonState;
   const AuthorComparisonScreen({
     super.key,
     required this.languageOption,
@@ -6281,6 +6428,9 @@ class AuthorComparisonScreen extends StatefulWidget {
     required this.initialAuthors,
     required this.apiVersion,
     this.topicNumber = '',
+    this.topics = const <Topic>[],
+    this.topicIndex = -1,
+    this.comparisonState = '',
   });
 
   @override
@@ -6304,12 +6454,13 @@ class _AuthorTextEntry {
 }
 
 class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
-  static const double _minTextScale = 0.8;
-  static const double _maxTextScale = 1.5;
+  static const double _minTextScale = _zoomMin;
+  static const double _maxTextScale = _zoomMax;
   late List<String> _allAuthors;
   late Set<String> _selected;
   Map<String, List<_AuthorTextEntry>> _texts = {};
   final Map<String, List<_ComparisonPassage>> _entryComparisons = {};
+  final List<_ComparisonPassage> _comparisonTemplates = [];
   String? _error;
   bool _loading = true;
   bool _withDiacritics = true;
@@ -6319,6 +6470,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   late String _apiVersion;
   late Topic _topic;
   bool _languagesLoading = false;
+
+  LocalizedUiLabels get _labels => MenuLanguageScope.of(context).ui;
 
   String get _activeVersion {
     if (_languageOption.code == 'arabic') {
@@ -6395,12 +6548,24 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   void initState() {
     super.initState();
+    _textScale = ZoomController.instance.textScale;
     _languageOption = widget.languageOption;
     _apiVersion = _sanitizeVersionForLanguage(
       _languageOption,
       widget.apiVersion,
     );
-    _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
+    if (_languageOption.code == 'arabic') {
+      _apiVersion =
+          _resolveArabicVersion(
+            _languageOption,
+            withDiacritics: false,
+            preferredVersion: _apiVersion,
+          ) ??
+          _apiVersion;
+      _withDiacritics = false;
+    } else {
+      _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
+    }
     LanguageSelectionController.instance.update(_languageOption.code);
     _topic = widget.topic;
     _allAuthors =
@@ -6410,11 +6575,13 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             .toList()
           ..sort(_compareBooks);
     _selected = widget.initialAuthors.map(_normalizeGospelName).toSet();
-    fetchTexts();
+    _hydrateTopicComparisonsFromRoute();
+    fetchTexts(preserveComparisons: true);
     _refreshLanguagesForToolbar();
   }
 
   bool get _hasEntryComparisons =>
+      _comparisonTemplates.isNotEmpty ||
       _entryComparisons.values.any((entries) => entries.isNotEmpty);
 
   Future<void> _refreshLanguagesForToolbar() async {
@@ -6445,88 +6612,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     }
   }
 
-  Future<void> _loadTopicForLanguage(
-    LanguageOption language,
-    String version,
-  ) async {
-    final topicKey = _topic.id.trim().isNotEmpty
-        ? _topic.id.trim()
-        : _topic.name.trim();
-    if (topicKey.isEmpty) {
-      return;
-    }
-    final uri = Uri.parse('$apiBaseUrl/topics').replace(
-      queryParameters: {'language': language.apiLanguage, 'version': version},
-    );
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        return;
-      }
-      final List data = json.decode(response.body);
-      final topics = data.map((e) => Topic.fromJson(e)).toList();
-      final normalizedKey = topicKey.toLowerCase();
-      Topic? match;
-      for (final topic in topics) {
-        final id = topic.id.trim();
-        if (id.isNotEmpty && id.toLowerCase() == normalizedKey) {
-          match = topic;
-          break;
-        }
-        final name = topic.name.trim();
-        if (name.isNotEmpty && name.toLowerCase() == normalizedKey) {
-          match = topic;
-          break;
-        }
-      }
-      if (!mounted || match == null) {
-        return;
-      }
-      final authors =
-          match.references
-              .map((e) => _normalizeGospelName(e.book))
-              .toSet()
-              .toList()
-            ..sort(_compareBooks);
-      final authorSet = authors.toSet();
-      final updatedSelected = _selected
-          .where((author) => authorSet.contains(author))
-          .toSet();
-      setState(() {
-        _topic = match!;
-        _allAuthors = authors;
-        _selected = updatedSelected.isNotEmpty ? updatedSelected : authorSet;
-      });
-    } catch (_) {
-      // Ignore topic refresh issues and keep the previous topic.
-    }
-  }
-
-  Future<void> _toggleArabicDiacritics() async {
-    if (_languageOption.code != 'arabic') {
-      return;
-    }
-    final newValue = !_withDiacritics;
-    setState(() {
-      _withDiacritics = newValue;
-      _entryComparisons.forEach((key, entries) {
-        for (final entry in entries) {
-          if (entry.language.code == 'arabic') {
-            entry.withDiacritics = newValue;
-          }
-        }
-      });
-    });
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('arabic_with_diacritics', newValue);
-    } catch (_) {
-      // Ignore persistence issues.
-    }
-    await fetchTexts(preserveComparisons: true);
-    _reloadEntryComparisons(onlyArabic: true);
-  }
-
   Future<void> fetchTexts({bool preserveComparisons = false}) async {
     if (_selected.isEmpty) {
       setState(() {
@@ -6534,6 +6619,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _loading = false;
         if (!preserveComparisons) {
           _entryComparisons.clear();
+          _comparisonTemplates.clear();
         }
       });
       return;
@@ -6543,6 +6629,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       _error = null;
       if (!preserveComparisons) {
         _entryComparisons.clear();
+        _comparisonTemplates.clear();
       }
     });
     try {
@@ -6568,7 +6655,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             throw Exception("Error ${response.statusCode} for $author");
           }
           final List<dynamic> verses = json.decode(response.body);
-          final verseLines = _parseVerseLinesFromJson(verses);
+          final verseLines = _normalizeVerseLinesForDisplay(
+            _parseVerseLinesFromJson(verses),
+            language: option,
+            withDiacritics: _withDiacritics,
+          );
           final text = verseLines
               .map((v) {
                 if (v.number == null) {
@@ -6610,37 +6701,15 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _texts = Map.fromEntries(results);
         _loading = false;
       });
+      if (_comparisonTemplates.isNotEmpty) {
+        _syncComparisonTemplatesToVisibleReferences(reloadMissing: true);
+      }
     } catch (e) {
       setState(() {
         _error = "Failed to fetch: $e";
         _loading = false;
       });
     }
-  }
-
-  void _reloadEntryComparisons({bool onlyArabic = false}) {
-    if (_entryComparisons.isEmpty) {
-      return;
-    }
-    final references = _visibleReferences;
-    if (references.isEmpty) {
-      return;
-    }
-    final referenceLookup = <String, GospelReference>{
-      for (final reference in references) _entryKey(reference): reference,
-    };
-    _entryComparisons.forEach((key, entries) {
-      final reference = referenceLookup[key];
-      if (reference == null) {
-        return;
-      }
-      for (final entry in entries) {
-        if (onlyArabic && entry.language.code != 'arabic') {
-          continue;
-        }
-        _loadEntryComparison(reference, entry);
-      }
-    });
   }
 
   void _showTopicComparisonPicker() {
@@ -6656,8 +6725,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     String version,
   ) async {
     final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
-    final forceArabicWithoutDiacritics =
-        _languageOption.code == 'arabic' && language.code == 'arabic';
+    final forceArabicWithoutDiacritics = language.code == 'arabic';
     final nextVersion = forceArabicWithoutDiacritics
         ? (_resolveArabicVersion(
                 language,
@@ -6666,14 +6734,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               ) ??
               sanitizedVersion)
         : sanitizedVersion;
-    setState(() {
-      _languageOption = language;
-      _apiVersion = nextVersion;
-      _withDiacritics = language.code == 'arabic'
-          ? !forceArabicWithoutDiacritics &&
-                !_isArabicWithoutDiacritics(nextVersion)
-          : false;
-    });
     await _persistLanguageVersion(
       language,
       nextVersion,
@@ -6681,9 +6741,18 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           ? !_isArabicWithoutDiacritics(nextVersion)
           : null,
     );
-    await _loadTopicForLanguage(language, _activeVersion);
-    await fetchTexts(preserveComparisons: true);
-    _reloadEntryComparisons();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushReplacementNamed(
+      _topicUri(
+        topic: _topic,
+        language: language,
+        version: nextVersion,
+        topicNumber: widget.topicNumber,
+        comparisonState: _encodeTopicComparisonState(),
+      ).toString(),
+    );
   }
 
   Future<void> _handleToolbarLanguageChanged(LanguageOption language) async {
@@ -6698,35 +6767,354 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     await _changeMainTranslation(_languageOption, version);
   }
 
+  bool get _hasPreviousTopic =>
+      widget.topicIndex > 0 && widget.topicIndex < widget.topics.length;
+
+  bool get _hasNextTopic =>
+      widget.topicIndex >= 0 && widget.topicIndex < widget.topics.length - 1;
+
+  void _navigateAdjacentTopic(int delta) {
+    final nextIndex = widget.topicIndex + delta;
+    if (nextIndex < 0 || nextIndex >= widget.topics.length) {
+      return;
+    }
+    final topic = widget.topics[nextIndex];
+    Navigator.of(context).pushNamed(
+      _topicUri(
+        topic: topic,
+        language: _languageOption,
+        version: _activeVersion,
+        topicNumber: _topicNumberForDisplay(topic, zeroBasedIndex: nextIndex),
+        comparisonState: _encodeTopicComparisonState(),
+      ).toString(),
+    );
+  }
+
+  Widget _buildTopicNavigationButton({
+    required bool isPrevious,
+    required bool enabled,
+    bool compact = false,
+  }) {
+    final labels = _labels;
+    final menuDirection = MenuLanguageScope.of(context).direction;
+    final isRtl = menuDirection == TextDirection.rtl;
+    final label = isPrevious ? labels.previousTopic : labels.nextTopic;
+    final icon = isPrevious
+        ? (isRtl ? Icons.chevron_right : Icons.chevron_left)
+        : (isRtl ? Icons.chevron_left : Icons.chevron_right);
+    Widget arrowIcon(double size) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Icon(icon, size: size),
+    );
+    if (compact) {
+      return IconButton(
+        onPressed: enabled
+            ? () => _navigateAdjacentTopic(isPrevious ? -1 : 1)
+            : null,
+        tooltip: label,
+        icon: arrowIcon(20),
+      );
+    }
+    return OutlinedButton(
+      onPressed: enabled
+          ? () => _navigateAdjacentTopic(isPrevious ? -1 : 1)
+          : null,
+      style: _toolbarOutlinedStyle(context),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        textDirection: menuDirection,
+        children: [arrowIcon(18), const SizedBox(width: 6), Text(label)],
+      ),
+    );
+  }
+
+  Widget _buildTopicTitleNavigation() {
+    final menuDirection = MenuLanguageScope.of(context).direction;
+    final isRtl = menuDirection == TextDirection.rtl;
+    final title = _topicToolbarTitle;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 860;
+        final titleReserve = compact ? 104.0 : 300.0;
+        final availableTitleWidth = constraints.maxWidth.isFinite
+            ? math.max(120.0, constraints.maxWidth - titleReserve)
+            : 520.0;
+        final titleMaxWidth = math.min(
+          compact ? availableTitleWidth : 520.0,
+          availableTitleWidth,
+        );
+        final previous = _buildTopicNavigationButton(
+          isPrevious: true,
+          enabled: _hasPreviousTopic,
+          compact: compact,
+        );
+        final next = _buildTopicNavigationButton(
+          isPrevious: false,
+          enabled: _hasNextTopic,
+          compact: compact,
+        );
+        final leftButton = isRtl ? next : previous;
+        final rightButton = isRtl ? previous : next;
+        return Center(
+          child: Wrap(
+            textDirection: TextDirection.ltr,
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: compact ? 6 : 10,
+            runSpacing: 4,
+            children: [
+              leftButton,
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: titleMaxWidth),
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  maxLines: compact ? 2 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              rightButton,
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   String _entryComparisonKey(LanguageOption option, String version) {
     return '${option.code}|${version.toLowerCase()}';
   }
 
-  void _showTopicMultiComparisonPicker(List<GospelReference> references) {
-    if (_supportedLanguages.isEmpty) {
+  _ComparisonPassage _comparisonTemplateFrom(
+    _ComparisonPassage source, {
+    bool includeRuntimeState = false,
+  }) {
+    final entry = _ComparisonPassage(
+      language: source.language,
+      version: _sanitizeVersionForLanguage(source.language, source.version),
+      scopeMode: source.scopeMode,
+      scopeStartVerse: source.scopeStartVerse,
+      scopeEndVerse: source.scopeEndVerse,
+      withDiacritics: source.withDiacritics,
+    );
+    if (includeRuntimeState) {
+      entry
+        ..verses = source.verses
+        ..error = source.error
+        ..loading = source.loading;
+    }
+    return entry;
+  }
+
+  String _encodeTopicComparisonState() {
+    if (_comparisonTemplates.isEmpty) {
+      return '';
+    }
+    final payload = _comparisonTemplates
+        .map(
+          (entry) => {
+            'language': entry.language.apiLanguage,
+            'version': entry.version,
+            'withDiacritics': entry.withDiacritics,
+          },
+        )
+        .toList();
+    return base64Url.encode(utf8.encode(jsonEncode(payload)));
+  }
+
+  void _hydrateTopicComparisonsFromRoute() {
+    final encoded = widget.comparisonState.trim();
+    if (encoded.isEmpty) {
       return;
     }
-    final labels = _languageOption.ui;
+    try {
+      final decoded = utf8.decode(base64Url.decode(encoded));
+      final raw = jsonDecode(decoded);
+      if (raw is! List) {
+        return;
+      }
+      final parsed = <_ComparisonPassage>[];
+      final seen = <String>{};
+      for (final item in raw) {
+        if (item is! Map) {
+          continue;
+        }
+        final mapItem = Map<String, dynamic>.from(item);
+        final language = _languageOptionForApiLanguage(
+          (mapItem['language'] ?? '').toString(),
+        );
+        if (language == null) {
+          continue;
+        }
+        final version = _sanitizeVersionForLanguage(
+          language,
+          (mapItem['version'] ?? '').toString(),
+        );
+        final key = _entryComparisonKey(language, version);
+        if (seen.contains(key)) {
+          continue;
+        }
+        seen.add(key);
+        parsed.add(
+          _ComparisonPassage(
+            language: language,
+            version: version,
+            withDiacritics: mapItem['withDiacritics'] is bool
+                ? mapItem['withDiacritics'] as bool
+                : language.code != 'arabic',
+          ),
+        );
+      }
+      _comparisonTemplates
+        ..clear()
+        ..addAll(parsed);
+    } catch (_) {
+      // Ignore invalid URL payloads.
+    }
+  }
+
+  void _syncComparisonTemplatesToVisibleReferences({
+    bool reloadMissing = false,
+    bool reloadAll = false,
+  }) {
+    final references = _visibleReferences;
+    final visibleKeys = references.map(_entryKey).toSet();
+    final loads = <MapEntry<GospelReference, _ComparisonPassage>>[];
+
+    setState(() {
+      _entryComparisons.removeWhere((key, _) => !visibleKeys.contains(key));
+
+      if (_comparisonTemplates.isEmpty) {
+        _entryComparisons.clear();
+        _interlinearView = false;
+        return;
+      }
+
+      for (final reference in references) {
+        final entryKey = _entryKey(reference);
+        final existing = _entryComparisons[entryKey] ?? const [];
+        final nextEntries = <_ComparisonPassage>[];
+
+        for (final template in _comparisonTemplates) {
+          final templateKey = _entryComparisonKey(
+            template.language,
+            template.version,
+          );
+          final existingIndex = existing.indexWhere(
+            (entry) =>
+                _entryComparisonKey(entry.language, entry.version) ==
+                templateKey,
+          );
+          if (existingIndex == -1) {
+            final created = _comparisonTemplateFrom(template);
+            nextEntries.add(created);
+            if (reloadMissing || reloadAll) {
+              loads.add(MapEntry(reference, created));
+            }
+            continue;
+          }
+
+          final entry = existing[existingIndex];
+          final shouldReload =
+              entry.withDiacritics != template.withDiacritics ||
+              entry.language.code != template.language.code ||
+              entry.version != template.version;
+          entry
+            ..language = template.language
+            ..version = template.version
+            ..withDiacritics = template.withDiacritics;
+          nextEntries.add(entry);
+          if (reloadAll || shouldReload) {
+            loads.add(MapEntry(reference, entry));
+          }
+        }
+
+        if (nextEntries.isEmpty) {
+          _entryComparisons.remove(entryKey);
+        } else {
+          _entryComparisons[entryKey] = nextEntries;
+        }
+      }
+    });
+
+    for (final load in loads) {
+      _loadEntryComparison(load.key, load.value);
+    }
+  }
+
+  void _removeComparisonTemplate(_ComparisonPassage entry) {
+    final key = _entryComparisonKey(entry.language, entry.version);
+    setState(() {
+      _comparisonTemplates.removeWhere(
+        (template) =>
+            _entryComparisonKey(template.language, template.version) == key,
+      );
+      _entryComparisons.updateAll(
+        (_, entries) => entries
+            .where(
+              (candidate) =>
+                  _entryComparisonKey(candidate.language, candidate.version) !=
+                  key,
+            )
+            .toList(),
+      );
+      _entryComparisons.removeWhere((_, entries) => entries.isEmpty);
+      if (!_hasEntryComparisons) {
+        _interlinearView = false;
+      }
+    });
+  }
+
+  void _updateComparisonTemplateDiacritics(
+    _ComparisonPassage entry,
+    bool withDiacritics,
+  ) {
+    final key = _entryComparisonKey(entry.language, entry.version);
+    final loads = <MapEntry<GospelReference, _ComparisonPassage>>[];
+    setState(() {
+      for (final template in _comparisonTemplates) {
+        if (_entryComparisonKey(template.language, template.version) == key) {
+          template.withDiacritics = withDiacritics;
+        }
+      }
+      for (final textEntry in _texts.values.expand((entries) => entries)) {
+        final entryKey = _entryKey(textEntry.reference);
+        for (final comparison in _entryComparisons[entryKey] ?? const []) {
+          if (_entryComparisonKey(comparison.language, comparison.version) ==
+              key) {
+            comparison.withDiacritics = withDiacritics;
+            loads.add(MapEntry(textEntry.reference, comparison));
+          }
+        }
+      }
+    });
+    for (final load in loads) {
+      _loadEntryComparison(load.key, load.value);
+    }
+  }
+
+  void _showTopicMultiComparisonPicker(List<GospelReference> references) {
+    if (_supportedLanguages.isEmpty || references.isEmpty) {
+      return;
+    }
+    final labels = _labels;
     final mainLanguage = _languageOption;
     final mainVersion = _sanitizeVersionForLanguage(
       mainLanguage,
       _activeVersion,
     );
-    LanguageOption selectedLanguage = mainLanguage;
-    final selectedByLanguage = <String, Set<String>>{};
-
-    void addSelection(LanguageOption language, String version) {
-      final sanitized = _sanitizeVersionForLanguage(language, version);
-      selectedByLanguage
-          .putIfAbsent(language.code, () => <String>{})
-          .add(sanitized);
-    }
-
-    for (final entries in _entryComparisons.values) {
-      for (final entry in entries) {
-        addSelection(entry.language, entry.version);
-      }
-    }
+    LanguageOption selectedLanguage = _supportedLanguages.firstWhere(
+      (option) => option.code == mainLanguage.code,
+      orElse: () => _supportedLanguages.first,
+    );
+    String? selectedVersion;
+    final selectedTemplates = _comparisonTemplates
+        .map(_comparisonTemplateFrom)
+        .toList();
+    final versionFocusNode = FocusNode();
 
     List<_VersionChoice> buildChoices(LanguageOption language) {
       final choices = <String, _VersionChoice>{};
@@ -6745,18 +7133,97 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           label: version.label,
         );
       }
-      for (final selected in selectedByLanguage[language.code] ?? {}) {
-        choices.putIfAbsent(
-          _versionIdentityKey(language, selected),
-          () => _VersionChoice(
-            version: selected,
-            label: _versionLabel(language.code, selected),
-          ),
-        );
-      }
       final ordered = choices.values.toList()
         ..sort((a, b) => a.label.compareTo(b.label));
       return ordered;
+    }
+
+    bool isSelected(LanguageOption language, String version) {
+      final key = _entryComparisonKey(
+        language,
+        _sanitizeVersionForLanguage(language, version),
+      );
+      return selectedTemplates.any(
+        (entry) => _entryComparisonKey(entry.language, entry.version) == key,
+      );
+    }
+
+    void addSelectedTemplate(LanguageOption language, String version) {
+      final sanitized = _sanitizeVersionForLanguage(language, version);
+      if (sanitized.isEmpty ||
+          _isSameTranslation(language, sanitized, mainLanguage, mainVersion) ||
+          isSelected(language, sanitized)) {
+        return;
+      }
+      selectedTemplates.add(
+        _ComparisonPassage(
+          language: language,
+          version: sanitized,
+          withDiacritics: language.code != 'arabic',
+        ),
+      );
+    }
+
+    void moveSelectedTemplate(int index, int delta) {
+      final target = index + delta;
+      if (target < 0 || target >= selectedTemplates.length) {
+        return;
+      }
+      final item = selectedTemplates.removeAt(index);
+      selectedTemplates.insert(target, item);
+    }
+
+    Widget buildSelectedTemplateChip(
+      BuildContext context,
+      StateSetter setModalState,
+      int index,
+    ) {
+      final entry = selectedTemplates[index];
+      final versionLabel = _versionLabel(entry.language.code, entry.version);
+      final label = '${entry.language.label} · $versionLabel';
+      return Container(
+        padding: const EdgeInsetsDirectional.only(start: 10, end: 4),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Theme.of(context).dividerColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              onPressed: index == 0
+                  ? null
+                  : () => setModalState(() {
+                      moveSelectedTemplate(index, -1);
+                    }),
+              icon: const Icon(Icons.arrow_upward),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              onPressed: index == selectedTemplates.length - 1
+                  ? null
+                  : () => setModalState(() {
+                      moveSelectedTemplate(index, 1);
+                    }),
+              icon: const Icon(Icons.arrow_downward),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              tooltip: labels.removeComparison,
+              onPressed: () => setModalState(() {
+                selectedTemplates.removeAt(index);
+              }),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+      );
     }
 
     showDialog<void>(
@@ -6769,68 +7236,19 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           ),
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: math.min(720, MediaQuery.of(context).size.width * 0.92),
-              maxHeight: MediaQuery.of(context).size.height * 0.7,
+              maxWidth: math.min(760, MediaQuery.of(context).size.width * 0.92),
+              maxHeight: MediaQuery.of(context).size.height * 0.72,
             ),
             child: StatefulBuilder(
               builder: (context, setModalState) {
-                final currentSelections = selectedByLanguage.putIfAbsent(
-                  selectedLanguage.code,
-                  () => <String>{},
-                );
                 final choices = buildChoices(selectedLanguage);
-
-                Future<void> openVersionSelector() async {
-                  await showDialog<void>(
-                    context: context,
-                    builder: (context) {
-                      return StatefulBuilder(
-                        builder: (context, setDialogState) {
-                          return AlertDialog(
-                            title: Text(
-                              '${labels.selectVersions} (${selectedLanguage.label})',
-                            ),
-                            content: SizedBox(
-                              width: double.maxFinite,
-                              child: ListView(
-                                shrinkWrap: true,
-                                children: choices.map((choice) {
-                                  final isSelected = currentSelections.contains(
-                                    choice.version,
-                                  );
-                                  return CheckboxListTile(
-                                    value: isSelected,
-                                    onChanged: (value) {
-                                      setDialogState(() {
-                                        if (value == true) {
-                                          currentSelections.add(choice.version);
-                                        } else {
-                                          currentSelections.remove(
-                                            choice.version,
-                                          );
-                                        }
-                                      });
-                                      setModalState(() {});
-                                    },
-                                    title: Text(choice.label),
-                                    controlAffinity:
-                                        ListTileControlAffinity.leading,
-                                  );
-                                }).toList(),
-                              ),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: Text(labels.done),
-                              ),
-                            ],
-                          );
-                        },
-                      );
-                    },
-                  );
-                }
+                final currentDropdownValue =
+                    selectedVersion != null &&
+                        choices.any(
+                          (choice) => choice.version == selectedVersion,
+                        )
+                    ? selectedVersion
+                    : null;
 
                 return Padding(
                   padding: const EdgeInsets.all(20),
@@ -6844,7 +7262,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       ),
                       const SizedBox(height: 16),
                       DropdownButtonFormField<LanguageOption>(
-                        value: selectedLanguage,
+                        key: ValueKey(
+                          'topic-add-language-${selectedLanguage.code}',
+                        ),
+                        initialValue: selectedLanguage,
                         decoration: InputDecoration(labelText: labels.language),
                         items: _supportedLanguages
                             .map(
@@ -6856,62 +7277,92 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                             .toList(),
                         onChanged: (value) {
                           if (value == null) return;
+                          final nextChoices = buildChoices(value);
                           setModalState(() {
                             selectedLanguage = value;
+                            selectedVersion = null;
+                            if (nextChoices.length == 1) {
+                              addSelectedTemplate(
+                                value,
+                                nextChoices.first.version,
+                              );
+                            }
                           });
+                          if (nextChoices.length > 1) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              versionFocusNode.requestFocus();
+                            });
+                          }
                         },
                       ),
                       const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        key: ValueKey(
+                          'topic-add-version-${selectedLanguage.code}-$currentDropdownValue-${choices.length}',
+                        ),
+                        focusNode: versionFocusNode,
+                        initialValue: currentDropdownValue,
+                        decoration: InputDecoration(
+                          labelText:
+                              '${labels.selectVersions} (${selectedLanguage.label})',
+                        ),
+                        hint: Text(labels.selectVersion),
+                        items: choices
+                            .map(
+                              (choice) => DropdownMenuItem(
+                                value: choice.version,
+                                child: Text(choice.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: choices.isEmpty
+                            ? null
+                            : (value) {
+                                if (value == null) return;
+                                setModalState(() {
+                                  selectedVersion = value;
+                                  addSelectedTemplate(selectedLanguage, value);
+                                });
+                              },
+                      ),
+                      const SizedBox(height: 16),
                       Expanded(
                         child: SingleChildScrollView(
-                          child: InkWell(
-                            onTap: openVersionSelector,
-                            child: InputDecorator(
-                              decoration: InputDecoration(
-                                labelText: labels.versions,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 4,
-                                      children: currentSelections.isEmpty
-                                          ? [
-                                              Text(
-                                                labels.selectVersions,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodyMedium
-                                                    ?.copyWith(
-                                                      color: Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurfaceVariant,
-                                                    ),
-                                              ),
-                                            ]
-                                          : currentSelections.map((version) {
-                                              final label = _versionLabel(
-                                                selectedLanguage.code,
-                                                version,
-                                              );
-                                              return InputChip(
-                                                label: Text(label),
-                                                onDeleted: () {
-                                                  setModalState(() {
-                                                    currentSelections.remove(
-                                                      version,
-                                                    );
-                                                  });
-                                                },
-                                              );
-                                            }).toList(),
-                                    ),
-                                  ),
-                                  const Icon(Icons.arrow_drop_down),
-                                ],
-                              ),
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: labels.selected,
                             ),
+                            child: selectedTemplates.isEmpty
+                                ? Text(
+                                    labels.selectVersions,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  )
+                                : Wrap(
+                                    textDirection: MenuLanguageScope.of(
+                                      context,
+                                    ).direction,
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (
+                                        var index = 0;
+                                        index < selectedTemplates.length;
+                                        index++
+                                      )
+                                        buildSelectedTemplateChip(
+                                          context,
+                                          setModalState,
+                                          index,
+                                        ),
+                                    ],
+                                  ),
                           ),
                         ),
                       ),
@@ -6922,83 +7373,16 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                           FilledButton(
                             onPressed: () {
                               Navigator.of(context).pop();
-                              final desired = <String>{};
-                              selectedByLanguage.forEach((code, versions) {
-                                final language = _supportedLanguages.firstWhere(
-                                  (option) => option.code == code,
-                                  orElse: () => mainLanguage,
+                              _comparisonTemplates
+                                ..clear()
+                                ..addAll(
+                                  selectedTemplates.map(
+                                    _comparisonTemplateFrom,
+                                  ),
                                 );
-                                for (final version in versions) {
-                                  final key = _entryComparisonKey(
-                                    language,
-                                    version,
-                                  );
-                                  if (_isSameTranslation(
-                                    language,
-                                    version,
-                                    mainLanguage,
-                                    mainVersion,
-                                  )) {
-                                    continue;
-                                  }
-                                  desired.add(key);
-                                }
-                              });
-
-                              setState(() {
-                                for (final reference in references) {
-                                  final entryKey = _entryKey(reference);
-                                  final existing =
-                                      _entryComparisons[entryKey] ?? const [];
-                                  final remaining = existing.where((entry) {
-                                    final key = _entryComparisonKey(
-                                      entry.language,
-                                      entry.version,
-                                    );
-                                    return desired.contains(key);
-                                  }).toList();
-                                  if (remaining.isEmpty) {
-                                    _entryComparisons.remove(entryKey);
-                                  } else {
-                                    _entryComparisons[entryKey] = remaining;
-                                  }
-                                }
-                                if (!_hasEntryComparisons) {
-                                  _interlinearView = false;
-                                }
-                              });
-
-                              for (final reference in references) {
-                                final entryKey = _entryKey(reference);
-                                final existing =
-                                    _entryComparisons[entryKey] ?? const [];
-                                for (final key in desired) {
-                                  if (existing.any(
-                                    (entry) =>
-                                        _entryComparisonKey(
-                                          entry.language,
-                                          entry.version,
-                                        ) ==
-                                        key,
-                                  )) {
-                                    continue;
-                                  }
-                                  final parts = key.split('|');
-                                  if (parts.length != 2) {
-                                    continue;
-                                  }
-                                  final language = _supportedLanguages
-                                      .firstWhere(
-                                        (option) => option.code == parts[0],
-                                        orElse: () => mainLanguage,
-                                      );
-                                  _addEntryComparison(
-                                    reference,
-                                    language,
-                                    parts[1],
-                                  );
-                                }
-                              }
+                              _syncComparisonTemplatesToVisibleReferences(
+                                reloadMissing: true,
+                              );
                             },
                             child: Text(labels.done),
                           ),
@@ -7012,39 +7396,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           ),
         );
       },
-    );
-  }
-
-  void _addEntryComparison(
-    GospelReference reference,
-    LanguageOption option,
-    String version,
-  ) {
-    final sanitized = _sanitizeVersionForLanguage(option, version);
-    final key = _entryKey(reference);
-    final comparisons = _entryComparisons[key] ?? <_ComparisonPassage>[];
-    final existingIndex = comparisons.indexWhere(
-      (entry) =>
-          entry.language.code == option.code &&
-          entry.version.toLowerCase() == sanitized.toLowerCase(),
-    );
-    if (existingIndex != -1) {
-      _loadEntryComparison(reference, comparisons[existingIndex]);
-      return;
-    }
-
-    final entry = _ComparisonPassage(
-      language: option,
-      version: sanitized,
-      withDiacritics: option.code == 'arabic'
-          ? _withDiacritics
-          : !_isArabicWithoutDiacritics(sanitized),
-    );
-    setState(() {
-      _entryComparisons[key] = List<_ComparisonPassage>.from(comparisons)
-        ..add(entry);
-    });
-    _loadEntryComparison(reference, entry);
+    ).whenComplete(versionFocusNode.dispose);
   }
 
   Future<void> _loadEntryComparison(
@@ -7089,7 +7441,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerseLines(response.body);
+      final verses = _normalizeVerseLinesForDisplay(
+        _parseVerseLines(response.body),
+        language: entry.language,
+        withDiacritics: entry.withDiacritics,
+      );
       if (!mounted) {
         return;
       }
@@ -7112,22 +7468,32 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     GospelReference reference,
     _ComparisonPassage entry,
   ) {
-    final key = _entryKey(reference);
-    final existing = _entryComparisons[key];
-    if (existing == null) {
+    _removeComparisonTemplate(entry);
+  }
+
+  void _toggleEntryComparisonDiacritics(
+    GospelReference reference,
+    _ComparisonPassage entry,
+  ) {
+    if (entry.language.code != 'arabic') {
       return;
     }
-    setState(() {
-      final updated = List<_ComparisonPassage>.from(existing)..remove(entry);
-      if (updated.isEmpty) {
-        _entryComparisons.remove(key);
-      } else {
-        _entryComparisons[key] = updated;
-      }
-      if (!_hasEntryComparisons) {
-        _interlinearView = false;
-      }
-    });
+    _updateComparisonTemplateDiacritics(entry, !entry.withDiacritics);
+  }
+
+  Widget _buildEntryComparisonDiacriticsToggle(
+    GospelReference reference,
+    _ComparisonPassage entry,
+  ) {
+    if (entry.language.code != 'arabic') {
+      return const SizedBox.shrink();
+    }
+    return _compactDiacriticsButton(
+      context: context,
+      withDiacritics: entry.withDiacritics,
+      labels: _labels,
+      onPressed: () => _toggleEntryComparisonDiacritics(reference, entry),
+    );
   }
 
   Widget _buildEntryComparisonCard(
@@ -7163,10 +7529,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       ),
                     ),
                   ),
+                  if (entry.language.code == 'arabic')
+                    _buildEntryComparisonDiacriticsToggle(reference, entry),
                   IconButton(
                     onPressed: () => _removeEntryComparison(reference, entry),
                     icon: const Icon(Icons.close),
-                    tooltip: _languageOption.ui.removeComparison,
+                    tooltip: _labels.removeComparison,
                   ),
                 ],
               ),
@@ -7183,15 +7551,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                 ),
               ] else if (entry.verses.isEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
-                  _languageOption.ui.noPassageText,
-                  style: theme.textTheme.bodyMedium,
-                ),
+                Text(_labels.noPassageText, style: theme.textTheme.bodyMedium),
               ] else ...[
                 const SizedBox(height: 8),
-                ...entry.verses
-                    .map((verse) => _buildComparisonVerse(verse, theme))
-                    .toList(),
+                ...entry.verses.map(
+                  (verse) => _buildComparisonVerse(verse, theme),
+                ),
               ],
             ],
           ),
@@ -7225,24 +7590,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 
-  Widget _buildDiacriticsToggle(LanguageOption option) {
-    if (option.code != 'arabic') {
-      return const SizedBox.shrink();
-    }
-    final label = _withDiacritics
-        ? option.ui.removeDiacritics
-        : option.ui.addDiacritics;
-    final icon = _withDiacritics
-        ? Icons.remove_circle_outline
-        : Icons.add_circle_outline;
-    return OutlinedButton.icon(
-      onPressed: _toggleArabicDiacritics,
-      style: _toolbarOutlinedStyle(context),
-      icon: Icon(icon),
-      label: Text(label),
-    );
-  }
-
   void _toggleInterlinearView() {
     setState(() {
       _interlinearView = !_interlinearView;
@@ -7250,14 +7597,16 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   }
 
   void _setTextScale(double value) {
+    final next = value.clamp(_minTextScale, _maxTextScale).toDouble();
+    ZoomController.instance.update(next);
     setState(() {
-      _textScale = value.clamp(_minTextScale, _maxTextScale).toDouble();
+      _textScale = next;
     });
   }
 
   Widget _buildZoomControl() => _buildToolbarZoomButton(
     context: context,
-    language: _languageOption,
+    menuLanguage: MenuLanguageScope.of(context),
     value: _textScale,
     onSelected: _setTextScale,
   );
@@ -7277,7 +7626,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       icon: Icon(
         _interlinearView ? Icons.view_agenda : Icons.view_agenda_outlined,
       ),
-      label: Text(_languageOption.ui.interlinearView),
+      label: Text(_labels.interlinearView),
     );
   }
 
@@ -7331,7 +7680,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       if (comparison.verses.isEmpty) {
         statusWidgets.addAll([
           Text(
-            '$label: ${_languageOption.ui.noPassageText}',
+            '$label: ${_labels.noPassageText}',
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 8),
@@ -7348,10 +7697,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     }
     final verseKeys = _sortedVerseKeys(translations.map((t) => t.verses));
     if (verseKeys.isEmpty) {
-      return Text(
-        _languageOption.ui.noPassageText,
-        style: theme.textTheme.bodyMedium,
-      );
+      return Text(_labels.noPassageText, style: theme.textTheme.bodyMedium);
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -7374,23 +7720,201 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 
+  Widget _buildAuthorEntryBlock(
+    _AuthorTextEntry entry,
+    ThemeData theme,
+    LanguageOption option,
+  ) {
+    final headingStyle = theme.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final referenceLabel = entry.reference.formattedReference.trim();
+    final heading = referenceLabel.isEmpty
+        ? Text(entry.title, style: headingStyle)
+        : ReferenceHoverText(
+            key: ValueKey(
+              [
+                option.apiLanguage,
+                _activeVersion,
+                _topic.id,
+                entry.reference.bookId,
+                entry.reference.book,
+                entry.reference.chapter,
+                entry.reference.verses,
+              ].join('|'),
+            ),
+            reference: entry.reference,
+            textStyle: headingStyle,
+            textAlign: TextAlign.start,
+            textDirection: option.direction,
+            topicName: _topic.name,
+            topicId: _topic.id.isNotEmpty ? _topic.id : _topic.name,
+            sourceContext: 'harmony',
+            gospel: _normalizeGospelName(entry.reference.book),
+            language: option.apiLanguage,
+            version: _activeVersion,
+            tooltipMessage: _labels.clickToReadInChapter,
+            labelOverride: entry.title,
+            enableHoverPreview: false,
+          );
+    final comparisons =
+        _entryComparisons[_entryKey(entry.reference)] ??
+        const <_ComparisonPassage>[];
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          heading,
+          const SizedBox(height: 6),
+          if (_interlinearView)
+            _buildEntryInterlinearSection(entry, comparisons, theme)
+          else ...[
+            Text(entry.text),
+            if (comparisons.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ...comparisons.map(
+                (comparison) => _buildEntryComparisonCard(
+                  entry.reference,
+                  comparison,
+                  theme,
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAuthorGroupPanel(
+    String author,
+    ThemeData theme,
+    LanguageOption option,
+  ) {
+    final entries = _texts[author] ?? const <_AuthorTextEntry>[];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final entry in entries)
+              _buildAuthorEntryBlock(entry, theme, option),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopicContent(BuildContext context, LanguageOption option) {
+    final theme = Theme.of(context);
+    final selectedSorted = _selected.toList()..sort(_compareBooks);
+    final visibleAuthors = selectedSorted
+        .where((author) => (_texts[author]?.isNotEmpty ?? false))
+        .toList();
+
+    if (visibleAuthors.isEmpty) {
+      return Center(child: Text(_labels.noPassageText));
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.of(context).size.width;
+        final horizontalPadding = availableWidth >= 1000 ? 24.0 : 12.0;
+        final innerWidth = math.max(
+          0.0,
+          availableWidth - (horizontalPadding * 2),
+        );
+        final count = visibleAuthors.length;
+        final spacing = innerWidth >= 760 ? 14.0 : 10.0;
+        final columns = innerWidth < 720 || count == 1
+            ? 1
+            : (count == 4 && innerWidth < 1120 ? 2 : count);
+        final maxPanelWidth = switch (count) {
+          1 => 720.0,
+          2 => 560.0,
+          3 => 440.0,
+          _ => innerWidth,
+        };
+        final idealWidth =
+            (math.min(maxPanelWidth, innerWidth) * columns) +
+            (spacing * (columns - 1));
+        final contentWidth = count >= 4
+            ? innerWidth
+            : math.min(innerWidth, idealWidth);
+        final itemWidth = columns == 1
+            ? math.min(contentWidth, maxPanelWidth)
+            : (contentWidth - (spacing * (columns - 1))) / columns;
+
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            10,
+            horizontalPadding,
+            28,
+          ),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: contentWidth,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                runAlignment: WrapAlignment.center,
+                spacing: spacing,
+                runSpacing: spacing,
+                textDirection: option.direction,
+                children: [
+                  for (final author in visibleAuthors)
+                    SizedBox(
+                      width: itemWidth,
+                      child: _buildAuthorGroupPanel(author, theme, option),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final option = _languageOption;
+    final menuLanguage = MenuLanguageScope.of(context);
     return Directionality(
-      textDirection: option.direction,
+      textDirection: menuLanguage.direction,
       child: MainScaffold(
         title: '',
+        topNavigation: _buildGlobalTopNavigation(
+          context: context,
+          contentLanguage: option,
+          contentVersion: _activeVersion,
+          showBackToMainTable: true,
+        ),
+        settingsLabel: menuLanguage.ui.settings,
+        logoutLabel: menuLanguage.ui.logout,
+        accountTooltip: menuLanguage.ui.account,
         body: Column(
           children: [
             AppToolbar(
-              title: _topicToolbarTitle,
+              titleWidget: _buildTopicTitleNavigation(),
               language: option,
               version: _activeVersion,
               languages: _supportedLanguages,
               languagesLoading: _languagesLoading,
               onLanguageChanged: _handleToolbarLanguageChanged,
               onVersionChanged: _handleToolbarVersionChanged,
+              onTranslationChanged: _changeMainTranslation,
               primaryActions: [
                 FilledButton.icon(
                   onPressed: (_visibleReferences.isEmpty || _loading)
@@ -7398,169 +7922,53 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       : _showTopicComparisonPicker,
                   style: _toolbarFilledStyle(context),
                   icon: const Icon(Icons.library_add, size: 18),
-                  label: Text(option.ui.addTranslation),
+                  label: Text(_labels.addTranslation),
                 ),
                 _buildInterlinearToggleButton(),
                 _buildZoomControl(),
               ],
-              trailingActions: [_buildDiacriticsToggle(option)],
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               child: Wrap(
                 alignment: WrapAlignment.center,
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  ..._allAuthors
-                      .map(
-                        (author) => FilterChip(
-                          label: Text(_displayAuthorName(author)),
-                          selected: _selected.contains(author),
-                          onSelected: (val) {
-                            setState(() {
-                              if (val) {
-                                _selected.add(author);
-                              } else {
-                                _selected.remove(author);
-                              }
-                            });
-                            fetchTexts();
-                          },
-                        ),
-                      )
-                      .toList(),
+                  ..._allAuthors.map(
+                    (author) => FilterChip(
+                      label: Text(_displayAuthorName(author)),
+                      selected: _selected.contains(author),
+                      onSelected: (val) {
+                        setState(() {
+                          if (val) {
+                            _selected.add(author);
+                          } else {
+                            _selected.remove(author);
+                          }
+                        });
+                        fetchTexts(preserveComparisons: true);
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),
             const Divider(height: 0),
             Expanded(
-              child: _selected.isEmpty
-                  ? Center(child: Text(option.comparePrompt))
-                  : _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                  ? Center(child: Text(_error!))
-                  : _wrapWithTextScale(
-                      context,
-                      SingleChildScrollView(
-                        child: Builder(
-                          builder: (context) {
-                            final selectedSorted = _selected.toList()
-                              ..sort(_compareBooks);
-                            final width =
-                                MediaQuery.of(context).size.width /
-                                selectedSorted.length;
-                            final columnWidths = <int, TableColumnWidth>{
-                              for (int i = 0; i < selectedSorted.length; i++)
-                                i: FixedColumnWidth(width),
-                            };
-                            final maxLen = selectedSorted
-                                .map((a) => _texts[a]?.length ?? 0)
-                                .fold<int>(0, (prev, e) => e > prev ? e : prev);
-                            if (maxLen == 0) {
-                              return const SizedBox.shrink();
-                            }
-
-                            final rows = <TableRow>[];
-                            for (int i = 0; i < maxLen; i++) {
-                              rows.add(
-                                TableRow(
-                                  children: [
-                                    for (final a in selectedSorted)
-                                      Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: () {
-                                          final entries = _texts[a] ?? [];
-                                          if (i >= entries.length) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          final entry = entries[i];
-                                          final theme = Theme.of(context);
-                                          final headingStyle = theme
-                                              .textTheme
-                                              .titleSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w600,
-                                              );
-                                          final referenceLabel = entry
-                                              .reference
-                                              .formattedReference
-                                              .trim();
-                                          final heading = referenceLabel.isEmpty
-                                              ? Text(
-                                                  entry.title,
-                                                  style: headingStyle,
-                                                )
-                                              : ReferenceHoverText(
-                                                  reference: entry.reference,
-                                                  textStyle: headingStyle,
-                                                  textAlign: TextAlign.start,
-                                                  textDirection:
-                                                      option.direction,
-                                                  topicName: _topic.name,
-                                                  language: option.apiLanguage,
-                                                  version: _activeVersion,
-                                                  tooltipMessage: option
-                                                      .ui
-                                                      .clickToReadInChapter,
-                                                  labelOverride: entry.title,
-                                                  enableHoverPreview: false,
-                                                );
-                                          final comparisons =
-                                              _entryComparisons[_entryKey(
-                                                entry.reference,
-                                              )] ??
-                                              const <_ComparisonPassage>[];
-                                          return Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              heading,
-                                              const SizedBox(height: 4),
-                                              if (_interlinearView)
-                                                _buildEntryInterlinearSection(
-                                                  entry,
-                                                  comparisons,
-                                                  theme,
-                                                )
-                                              else ...[
-                                                Text(entry.text),
-                                                if (comparisons.isNotEmpty) ...[
-                                                  const SizedBox(height: 8),
-                                                  ...comparisons
-                                                      .map(
-                                                        (comparison) =>
-                                                            _buildEntryComparisonCard(
-                                                              entry.reference,
-                                                              comparison,
-                                                              theme,
-                                                            ),
-                                                      )
-                                                      .toList(),
-                                                ],
-                                              ],
-                                              const SizedBox(height: 8),
-                                            ],
-                                          );
-                                        }(),
-                                      ),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            return Table(
-                              columnWidths: columnWidths,
-                              border: TableBorder.symmetric(
-                                inside: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              children: rows,
-                            );
-                          },
-                        ),
+              child: Directionality(
+                textDirection: option.direction,
+                child: _selected.isEmpty
+                    ? Center(child: Text(_labels.comparePrompt))
+                    : _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                    ? Center(child: Text(_error!))
+                    : _wrapWithTextScale(
+                        context,
+                        _buildTopicContent(context, option),
                       ),
-                    ),
+              ),
             ),
           ],
         ),

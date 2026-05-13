@@ -1,5 +1,6 @@
 from flask import Flask, request, Response
 import json
+import os
 import re
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -12,7 +13,30 @@ db = firestore.client()
 
 app = Flask(__name__)
 
-CORS(app)
+
+def _cors_origins():
+    configured = os.environ.get("CORS_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+    # TODO: Replace the raw VPS IP with the production HTTPS domain once deployed.
+    return [
+        "http://localhost:8760",
+        "http://127.0.0.1:8760",
+        "http://164.68.108.181",
+        "http://164.68.108.181:8760",
+    ]
+
+
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": _cors_origins(),
+            "methods": ["GET", "OPTIONS"],
+        }
+    },
+)
 """
 @app.route('/<language>/<version>/topics', methods=['GET'])
 def get_topics(language, version):

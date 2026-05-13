@@ -7,18 +7,33 @@ import 'settings_screen.dart';
 class MainScaffold extends StatelessWidget {
   final String title;
   final Widget body;
+  final Widget? topNavigation;
+  final String settingsLabel;
+  final String logoutLabel;
+  final String accountTooltip;
 
-  const MainScaffold({super.key, required this.title, required this.body});
+  const MainScaffold({
+    super.key,
+    required this.title,
+    required this.body,
+    this.topNavigation,
+    this.settingsLabel = 'Settings',
+    this.logoutLabel = 'Logout',
+    this.accountTooltip = 'Account',
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(title),
+        automaticallyImplyLeading: false,
+        titleSpacing: 12,
+        title: topNavigation ?? Text(title),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 24.0),
+            padding: const EdgeInsetsDirectional.only(end: 12.0),
             child: PopupMenuButton<String>(
+              tooltip: accountTooltip,
               icon: const Icon(Icons.account_circle, size: 32),
               onSelected: (value) async {
                 if (value == 'logout') {
@@ -30,7 +45,7 @@ class MainScaffold extends StatelessWidget {
                   if (context.mounted) {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => const SettingsScreen(),
+                        builder: (_) => SettingsScreen(title: settingsLabel),
                       ),
                     );
                   }
@@ -46,20 +61,31 @@ class MainScaffold extends StatelessWidget {
                         .get(),
                     builder: (context, snapshot) {
                       final user = FirebaseAuth.instance.currentUser;
-                      final name = snapshot.data?.get('fullName') ??
-                          user?.email ?? 'User';
-                      return Text(name);
+                      final name =
+                          snapshot.data?.get('fullName') ??
+                          user?.email ??
+                          'User';
+                      return Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(name),
+                      );
                     },
                   ),
                 ),
                 const PopupMenuDivider(),
-                const PopupMenuItem<String>(
+                PopupMenuItem<String>(
                   value: 'settings',
-                  child: Text('Settings'),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(settingsLabel),
+                  ),
                 ),
-                const PopupMenuItem<String>(
+                PopupMenuItem<String>(
                   value: 'logout',
-                  child: Text('Logout'),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(logoutLabel),
+                  ),
                 ),
               ],
             ),

@@ -1,2 +1,65 @@
 # Synopsis-Project
 This repository contains the work for our Synopsis Project.
+
+## Running locally
+
+The Flutter web app reads Gospel topics and Bible text from the Flask backend.
+The backend URL is selected at Flutter build/run time with `API_BASE_URL`, so
+`gospel_frontend/lib/main.dart` does not need to be edited when switching
+between local development and VPS deployment.
+
+### Start Flask locally
+
+From the repository root:
+
+```sh
+python3 app.py
+```
+
+The local backend listens on:
+
+```text
+http://127.0.0.1:8000
+```
+
+`serviceAccountKey.json` must exist locally for Firebase Admin SDK access. It is
+ignored by git and should not be committed.
+
+### Run Flutter locally
+
+From the Flutter project directory:
+
+```sh
+cd gospel_frontend
+flutter run -d chrome --web-port 8760 --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+If `API_BASE_URL` is omitted, the app defaults to `http://127.0.0.1:8000`.
+
+## Building for VPS
+
+From the Flutter project directory:
+
+```sh
+cd gospel_frontend
+flutter build web --dart-define=API_BASE_URL=http://164.68.108.181:8000
+```
+
+Deploy the generated `gospel_frontend/build/web` files to the VPS frontend host.
+The Flask backend should keep serving the existing API routes:
+
+```text
+/topics
+/get_verse
+/get_chapter
+```
+
+## Backend CORS
+
+`app.py` allows the local Flutter web dev origin and the current VPS frontend
+origin by default. If the frontend moves to another host, set a comma-separated
+`CORS_ORIGINS` environment variable before starting Flask, for example:
+
+```sh
+CORS_ORIGINS=http://localhost:8760,http://164.68.108.181 python3 app.py
+```
