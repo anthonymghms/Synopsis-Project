@@ -19,7 +19,7 @@ python3 app.py
 The local backend listens on:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8010
 ```
 
 `serviceAccountKey.json` must exist locally for Firebase Admin SDK access. It is
@@ -31,10 +31,10 @@ From the Flutter project directory:
 
 ```sh
 cd gospel_frontend
-flutter run -d chrome --web-port 8760 --dart-define=API_BASE_URL=http://127.0.0.1:8000
+flutter run -d chrome --web-port 8760 --dart-define=API_BASE_URL=http://127.0.0.1:8010
 ```
 
-If `API_BASE_URL` is omitted, the app defaults to `http://127.0.0.1:8000`.
+If `API_BASE_URL` is omitted, the app defaults to `http://127.0.0.1:8010`.
 
 ## Building for VPS
 
@@ -42,7 +42,7 @@ From the Flutter project directory:
 
 ```sh
 cd gospel_frontend
-flutter build web --dart-define=API_BASE_URL=http://164.68.108.181:8000
+flutter build web --dart-define=API_BASE_URL=http://164.68.108.181:8010
 ```
 
 Deploy the generated `gospel_frontend/build/web` files to the VPS frontend host.

@@ -18,7 +18,7 @@ import 'package:url_launcher/link.dart';
 // ---- CONFIGURATION ----
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8000',
+  defaultValue: 'http://127.0.0.1:8010',
 );
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
