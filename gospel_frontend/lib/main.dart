@@ -2927,6 +2927,10 @@ class _HarmonyTableState extends State<HarmonyTable> {
       align,
       widget.languageOption.direction,
     );
+    final tooltipMessage = MenuLanguageScope.of(
+      context,
+    ).ui.clickToReadInChapter;
+    final useCombinedHoverPreview = filteredRefs.length > 1;
     final children = filteredRefs
         .map(
           (ref) => ReferenceHoverText(
@@ -2951,14 +2955,13 @@ class _HarmonyTableState extends State<HarmonyTable> {
             gospel: gospel,
             language: widget.languageOption.apiLanguage,
             version: widget.apiVersion,
-            tooltipMessage: MenuLanguageScope.of(
-              context,
-            ).ui.clickToReadInChapter,
+            tooltipMessage: tooltipMessage,
+            enableHoverPreview: !useCombinedHoverPreview,
           ),
         )
         .toList();
 
-    return Padding(
+    final cellContent = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
       child: Align(
         alignment: cellAlignment,
@@ -2972,6 +2975,35 @@ class _HarmonyTableState extends State<HarmonyTable> {
           children: children,
         ),
       ),
+    );
+
+    if (!useCombinedHoverPreview) {
+      return cellContent;
+    }
+
+    return ReferenceCellHoverPreview(
+      key: ValueKey(
+        [
+          'cell-preview',
+          widget.languageOption.apiLanguage,
+          widget.apiVersion,
+          topic.id,
+          gospel,
+          ...filteredRefs.map(
+            (ref) => [ref.bookId, ref.book, ref.chapter, ref.verses].join(':'),
+          ),
+        ].join('|'),
+      ),
+      references: filteredRefs,
+      textDirection: widget.languageOption.direction,
+      topicName: topic.name,
+      topicId: topic.id.isNotEmpty ? topic.id : topic.name,
+      sourceContext: 'harmony',
+      gospel: gospel,
+      language: widget.languageOption.apiLanguage,
+      version: widget.apiVersion,
+      tooltipMessage: tooltipMessage,
+      child: SizedBox(width: double.infinity, child: cellContent),
     );
   }
 
@@ -3824,6 +3856,652 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       message: helperText,
       waitDuration: const Duration(milliseconds: 400),
       child: link,
+    );
+  }
+}
+
+class ReferenceCellHoverPreview extends StatefulWidget {
+  const ReferenceCellHoverPreview({
+    super.key,
+    required this.references,
+    required this.child,
+    this.textDirection = TextDirection.ltr,
+    this.topicName = '',
+    this.language = defaultLanguage,
+    this.version = defaultVersion,
+    this.tooltipMessage = 'Click to read in chapter',
+    this.topicId = '',
+    this.sourceContext = '',
+    this.gospel = '',
+  });
+
+  final List<GospelReference> references;
+  final Widget child;
+  final TextDirection textDirection;
+  final String topicName;
+  final String language;
+  final String version;
+  final String tooltipMessage;
+  final String topicId;
+  final String sourceContext;
+  final String gospel;
+
+  @override
+  State<ReferenceCellHoverPreview> createState() =>
+      _ReferenceCellHoverPreviewState();
+}
+
+class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
+    with WidgetsBindingObserver {
+  static const double _previewGap = 8;
+  static const double _previewViewportPadding = 8;
+
+  bool _loadingPreview = false;
+  bool _previewLoaded = false;
+  bool _isTriggerHovered = false;
+  bool _isPreviewHovered = false;
+  OverlayEntry? _previewEntry;
+  Timer? _hidePreviewTimer;
+  Timer? _repositionPreviewTimer;
+  final GlobalKey _anchorKey = GlobalKey();
+  final GlobalKey _previewKey = GlobalKey();
+  Size _previewSize = const Size(320, 260);
+  bool _pendingPreviewMeasurement = false;
+  Map<String, _ReferencePreviewCache> _previewResults =
+      const <String, _ReferencePreviewCache>{};
+
+  String _bookParam(GospelReference reference) {
+    return reference.bookId.trim().isNotEmpty
+        ? reference.bookId.trim()
+        : reference.book.trim();
+  }
+
+  Uri? _buildReferenceUri(GospelReference reference) {
+    final displayBook = reference.book.trim();
+    final bookParam = _bookParam(reference);
+    if (bookParam.isEmpty || reference.chapter <= 0) {
+      return null;
+    }
+
+    final queryParameters = <String, String>{
+      'book': bookParam,
+      'bookDisplay': displayBook,
+      'chapter': reference.chapter.toString(),
+      'language': widget.language,
+      'version': widget.version,
+      'label': reference.formattedReference,
+    };
+
+    final verses = reference.verses.trim();
+    if (verses.isNotEmpty) {
+      queryParameters['verses'] = verses;
+    }
+
+    if (widget.topicName.trim().isNotEmpty) {
+      queryParameters['topic'] = widget.topicName.trim();
+    }
+    if (widget.topicId.trim().isNotEmpty) {
+      queryParameters['topicId'] = widget.topicId.trim();
+    }
+    if (widget.sourceContext.trim().isNotEmpty) {
+      queryParameters['source'] = widget.sourceContext.trim();
+    }
+    if (widget.gospel.trim().isNotEmpty) {
+      queryParameters['gospel'] = widget.gospel.trim();
+    }
+
+    return Uri(path: '/reference', queryParameters: queryParameters);
+  }
+
+  LanguageOption _previewLanguageOption() {
+    return _languageOptionForApiLanguage(widget.language) ??
+        _languageOptionForCode(defaultLanguage);
+  }
+
+  String _previewVersionForRequest() {
+    final option = _previewLanguageOption();
+    if (option.code == 'arabic') {
+      return _resolveArabicVersion(
+            option,
+            withDiacritics: false,
+            preferredVersion: widget.version,
+          ) ??
+          widget.version;
+    }
+    return widget.version;
+  }
+
+  String _previewCacheKey(GospelReference reference) {
+    return '${widget.language}|${_previewVersionForRequest()}|${_bookParam(reference)}|${reference.chapter}|${reference.verses.trim()}';
+  }
+
+  String _previewHeading(GospelReference reference) {
+    final languageOption = _languageOptionForApiLanguage(widget.language);
+    final book = _displayGospelName(
+      reference.book,
+      languageOption ?? _languageOptionForCode(defaultLanguage),
+    ).trim();
+    if (book.isEmpty || reference.chapter <= 0) {
+      return _formatReferenceForLanguage(
+        reference.formattedReference,
+        widget.textDirection,
+        isArabic: _isArabicLanguage(widget.language),
+      );
+    }
+    final verses = reference.verses.trim();
+    final formattedReference = verses.isEmpty
+        ? '${reference.chapter}'
+        : '${reference.chapter}:$verses';
+    return _combineBookAndReference(
+      book,
+      formattedReference,
+      widget.textDirection,
+      isArabic: _isArabicLanguage(widget.language),
+    );
+  }
+
+  List<GospelReference> _previewReferences() {
+    final seen = <String>{};
+    final references = <GospelReference>[];
+    for (final reference in widget.references) {
+      if (reference.formattedReference.trim().isEmpty ||
+          reference.chapter <= 0 ||
+          _bookParam(reference).isEmpty) {
+        continue;
+      }
+      final key = _previewCacheKey(reference);
+      if (seen.add(key)) {
+        references.add(reference);
+      }
+    }
+    return references;
+  }
+
+  void _cancelHideTimer() {
+    _hidePreviewTimer?.cancel();
+    _hidePreviewTimer = null;
+  }
+
+  void _schedulePreviewHide() {
+    _cancelHideTimer();
+    _hidePreviewTimer = Timer(const Duration(milliseconds: 160), () {
+      if (!_isTriggerHovered && !_isPreviewHovered) {
+        _hidePreview();
+      }
+    });
+  }
+
+  Offset _previewOffset(Rect target, Size viewportSize, Size previewSize) {
+    final maxLeft = math.max(
+      _previewViewportPadding,
+      viewportSize.width - previewSize.width - _previewViewportPadding,
+    );
+    final maxTop = math.max(
+      _previewViewportPadding,
+      viewportSize.height - previewSize.height - _previewViewportPadding,
+    );
+
+    final topBottom = target.bottom + _previewGap;
+    final fitsBottom =
+        topBottom + previewSize.height + _previewViewportPadding <=
+        viewportSize.height;
+    final topTop = target.top - _previewGap - previewSize.height;
+    final fitsTop = topTop >= _previewViewportPadding;
+
+    final top = fitsBottom
+        ? topBottom
+        : fitsTop
+        ? topTop
+        : topBottom.clamp(_previewViewportPadding, maxTop).toDouble();
+
+    final anchorCenterX = target.left + target.width / 2;
+    final left = (anchorCenterX - previewSize.width / 2)
+        .clamp(_previewViewportPadding, maxLeft)
+        .toDouble();
+
+    return Offset(left, top);
+  }
+
+  void _markPreviewNeedsBuild() {
+    _previewEntry?.markNeedsBuild();
+  }
+
+  void _schedulePreviewMeasurement() {
+    if (_pendingPreviewMeasurement) {
+      return;
+    }
+    _pendingPreviewMeasurement = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingPreviewMeasurement = false;
+      final context = _previewKey.currentContext;
+      final renderBox = context?.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.hasSize) {
+        return;
+      }
+      final measured = renderBox.size;
+      final widthDelta = (_previewSize.width - measured.width).abs();
+      final heightDelta = (_previewSize.height - measured.height).abs();
+      if (widthDelta <= 1 && heightDelta <= 1) {
+        return;
+      }
+      _previewSize = measured;
+      _markPreviewNeedsBuild();
+    });
+  }
+
+  void _startRepositionListener() {
+    _repositionPreviewTimer?.cancel();
+    _repositionPreviewTimer = Timer.periodic(const Duration(milliseconds: 16), (
+      _,
+    ) {
+      _markPreviewNeedsBuild();
+    });
+  }
+
+  void _stopRepositionListener() {
+    _repositionPreviewTimer?.cancel();
+    _repositionPreviewTimer = null;
+  }
+
+  Future<MapEntry<String, _ReferencePreviewCache>> _fetchPreview(
+    GospelReference reference,
+  ) async {
+    final cacheKey = _previewCacheKey(reference);
+    final verseParam = reference.verses.trim().isEmpty
+        ? '1'
+        : reference.verses.trim();
+
+    try {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
+        queryParameters: {
+          'language': widget.language,
+          'version': _previewVersionForRequest(),
+          'book': _bookParam(reference),
+          'chapter': reference.chapter.toString(),
+          'verse': verseParam,
+        },
+      );
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final cache = _ReferencePreviewCache(
+        verses: _normalizeVerseLinesForDisplay(
+          _parseVerseLines(response.body),
+          language: _previewLanguageOption(),
+          withDiacritics: false,
+        ),
+        error: null,
+      );
+      _ReferenceHoverTextState._previewCache[cacheKey] = cache;
+      return MapEntry(cacheKey, cache);
+    } catch (_) {
+      const cache = _ReferencePreviewCache(
+        verses: <_VerseLine>[],
+        error: 'Failed to load preview.',
+      );
+      _ReferenceHoverTextState._previewCache[cacheKey] = cache;
+      return MapEntry(cacheKey, cache);
+    }
+  }
+
+  Future<void> _loadPreview() async {
+    if (_loadingPreview || _previewLoaded) {
+      return;
+    }
+
+    final references = _previewReferences();
+    if (references.isEmpty) {
+      return;
+    }
+
+    final cachedResults = <String, _ReferencePreviewCache>{};
+    final missingReferences = <GospelReference>[];
+    for (final reference in references) {
+      final cacheKey = _previewCacheKey(reference);
+      final cached = _ReferenceHoverTextState._previewCache[cacheKey];
+      if (cached == null) {
+        missingReferences.add(reference);
+      } else {
+        cachedResults[cacheKey] = cached;
+      }
+    }
+
+    if (missingReferences.isEmpty) {
+      setState(() {
+        _previewLoaded = true;
+        _previewResults = cachedResults;
+      });
+      _markPreviewNeedsBuild();
+      return;
+    }
+
+    setState(() {
+      _loadingPreview = true;
+      _previewResults = cachedResults;
+    });
+    _markPreviewNeedsBuild();
+
+    final loadedResults = await Future.wait(
+      missingReferences.map(_fetchPreview),
+    );
+    if (!mounted) {
+      return;
+    }
+
+    final results = <String, _ReferencePreviewCache>{...cachedResults};
+    for (final entry in loadedResults) {
+      results[entry.key] = entry.value;
+    }
+
+    setState(() {
+      _previewLoaded = true;
+      _loadingPreview = false;
+      _previewResults = results;
+    });
+    _markPreviewNeedsBuild();
+  }
+
+  void _showPreview() {
+    if (_previewEntry != null) {
+      return;
+    }
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _previewEntry = OverlayEntry(
+      builder: (overlayContext) {
+        final renderBox =
+            _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+        if (renderBox == null || !renderBox.hasSize) {
+          return const SizedBox.shrink();
+        }
+        final target = renderBox.localToGlobal(Offset.zero) & renderBox.size;
+        final viewportSize = MediaQuery.of(overlayContext).size;
+        final maxWidth = math.min(
+          380.0,
+          viewportSize.width - (_previewViewportPadding * 2),
+        );
+        final maxHeight = math.min(
+          520.0,
+          viewportSize.height - (_previewViewportPadding * 2),
+        );
+        final estimatedWidth = _previewSize.width
+            .clamp(240.0, maxWidth)
+            .toDouble();
+        final estimatedHeight = _previewSize.height
+            .clamp(180.0, maxHeight)
+            .toDouble();
+        final offset = _previewOffset(
+          target,
+          viewportSize,
+          Size(estimatedWidth, estimatedHeight),
+        );
+        final theme = Theme.of(overlayContext);
+        _schedulePreviewMeasurement();
+
+        return Positioned(
+          left: offset.dx,
+          top: offset.dy,
+          child: MouseRegion(
+            onEnter: (_) {
+              _cancelHideTimer();
+              _isPreviewHovered = true;
+            },
+            onExit: (_) {
+              _isPreviewHovered = false;
+              _schedulePreviewHide();
+            },
+            child: Material(
+              key: _previewKey,
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              clipBehavior: Clip.antiAlias,
+              color: theme.colorScheme.surface,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: 240,
+                  maxWidth: maxWidth,
+                  minHeight: 180,
+                  maxHeight: maxHeight,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Directionality(
+                    textDirection: widget.textDirection,
+                    child: _buildPreviewContent(theme),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    overlay.insert(_previewEntry!);
+    _startRepositionListener();
+  }
+
+  void _hidePreview() {
+    _stopRepositionListener();
+    _previewEntry?.remove();
+    _previewEntry = null;
+  }
+
+  @override
+  void didChangeMetrics() {
+    _markPreviewNeedsBuild();
+  }
+
+  bool _previewIdentityChanged(ReferenceCellHoverPreview oldWidget) {
+    if (oldWidget.language != widget.language ||
+        oldWidget.version != widget.version ||
+        oldWidget.references.length != widget.references.length) {
+      return true;
+    }
+    for (var i = 0; i < widget.references.length; i++) {
+      final oldReference = oldWidget.references[i];
+      final reference = widget.references[i];
+      if (oldReference.book != reference.book ||
+          oldReference.bookId != reference.bookId ||
+          oldReference.chapter != reference.chapter ||
+          oldReference.verses != reference.verses) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didUpdateWidget(covariant ReferenceCellHoverPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_previewIdentityChanged(oldWidget)) {
+      return;
+    }
+    _hidePreview();
+    _cancelHideTimer();
+    _isTriggerHovered = false;
+    _isPreviewHovered = false;
+    _loadingPreview = false;
+    _previewLoaded = false;
+    _previewResults = const <String, _ReferencePreviewCache>{};
+  }
+
+  Widget _buildPreviewHeader(ThemeData theme, GospelReference reference) {
+    final headingStyle = theme.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final helperText = widget.tooltipMessage.trim();
+    final helperStyle = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.primary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: theme.colorScheme.primary,
+    );
+    final uri = _buildReferenceUri(reference);
+    return Row(
+      textDirection: widget.textDirection,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            _previewHeading(reference),
+            style: headingStyle,
+            textAlign: TextAlign.start,
+          ),
+        ),
+        if (helperText.isNotEmpty && uri != null) ...[
+          const SizedBox(width: 8),
+          Link(
+            uri: uri,
+            target: LinkTarget.self,
+            builder: (context, followLink) => InkWell(
+              onTap: followLink,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  helperText,
+                  style: helperStyle,
+                  textAlign: TextAlign.start,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPreviewVerse(
+    _VerseLine verse,
+    ThemeData theme,
+    TextStyle? bodyStyle,
+    TextStyle? numberStyle,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: RichText(
+        textScaler: TextScaler.linear(ZoomController.instance.textScale),
+        text: TextSpan(
+          style: bodyStyle,
+          children: [
+            if (verse.number != null && verse.number! > 0)
+              TextSpan(
+                text:
+                    '${formatVerseMarker(verse.number!, language: widget.language, version: widget.version)}. ',
+                style: numberStyle,
+              ),
+            TextSpan(text: verse.text),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewSection(
+    ThemeData theme,
+    GospelReference reference,
+    int index,
+  ) {
+    final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
+    final numberStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w600);
+    final cache = _previewResults[_previewCacheKey(reference)];
+    final error = cache?.error;
+    final verses = cache?.verses ?? const <_VerseLine>[];
+    final noPassageText = _previewLanguageOption().ui.noPassageText;
+
+    return Padding(
+      padding: EdgeInsets.only(top: index == 0 ? 0 : 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (index > 0) ...[
+            Divider(
+              height: 14,
+              thickness: 0.8,
+              color: theme.dividerColor.withValues(alpha: 0.65),
+            ),
+          ],
+          _buildPreviewHeader(theme, reference),
+          const SizedBox(height: 8),
+          if (error != null)
+            Text(
+              error,
+              style: bodyStyle?.copyWith(color: theme.colorScheme.error),
+            )
+          else if (verses.isEmpty)
+            Text(noPassageText, style: bodyStyle)
+          else
+            ...verses.map(
+              (verse) =>
+                  _buildPreviewVerse(verse, theme, bodyStyle, numberStyle),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreviewContent(ThemeData theme) {
+    final references = _previewReferences();
+    final bodyStyle = theme.textTheme.bodySmall?.copyWith(height: 1.4);
+    if (references.isEmpty) {
+      return Text(_previewLanguageOption().ui.noPassageText, style: bodyStyle);
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_loadingPreview)
+          const Center(child: CircularProgressIndicator())
+        else
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < references.length; i++)
+                    _buildPreviewSection(theme, references[i], i),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _cancelHideTimer();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopRepositionListener();
+    _hidePreview();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: MouseCursor.defer,
+      hitTestBehavior: HitTestBehavior.opaque,
+      onEnter: (_) {
+        _isTriggerHovered = true;
+        _cancelHideTimer();
+        _showPreview();
+        _loadPreview();
+      },
+      onExit: (_) {
+        _isTriggerHovered = false;
+        _schedulePreviewHide();
+      },
+      child: KeyedSubtree(key: _anchorKey, child: widget.child),
     );
   }
 }
