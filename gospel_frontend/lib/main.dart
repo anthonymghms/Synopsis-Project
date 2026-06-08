@@ -664,7 +664,9 @@ Future<void> _collectVersionManifestDocs(
 }
 
 Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
-  final docRef = FirebaseFirestore.instance.collection('bibles').doc(languageId);
+  final docRef = FirebaseFirestore.instance
+      .collection('bibles')
+      .doc(languageId);
   final Set<String> versionIds = {};
 
   try {
@@ -869,50 +871,94 @@ String _normalizeArabicBaseVersion(String version) {
   return normalized;
 }
 
+BibleVersion? _findArabicVersionForBase(
+  LanguageOption option,
+  String baseVersion, {
+  required bool withDiacritics,
+}) {
+  final normalizedBase = _normalizeArabicBaseVersion(baseVersion);
+  if (normalizedBase.isEmpty) {
+    return null;
+  }
+
+  for (final version in option.versions) {
+    if (_normalizeArabicBaseVersion(version.id) != normalizedBase) {
+      continue;
+    }
+    if (_isArabicWithoutDiacritics(version.id) == !withDiacritics) {
+      return version;
+    }
+  }
+  return null;
+}
+
+bool _canDisplayArabicDiacritics(LanguageOption option, String version) {
+  if (option.code != 'arabic') {
+    return false;
+  }
+
+  final preferred = version.trim().isNotEmpty
+      ? version.trim()
+      : option.apiVersion;
+  if (preferred.isNotEmpty && !_isArabicWithoutDiacritics(preferred)) {
+    return true;
+  }
+
+  return _findArabicVersionForBase(option, preferred, withDiacritics: true) !=
+      null;
+}
+
 String? _resolveArabicVersion(
   LanguageOption option, {
   required bool withDiacritics,
   String? preferredVersion,
 }) {
-  final preferredBase =
-      preferredVersion != null && preferredVersion.trim().isNotEmpty
-      ? _normalizeArabicBaseVersion(preferredVersion)
-      : null;
+  final preferred = preferredVersion?.trim() ?? '';
+  final fallbackSource = preferred.isNotEmpty ? preferred : option.apiVersion;
+  final matching = _findArabicVersionForBase(
+    option,
+    fallbackSource,
+    withDiacritics: withDiacritics,
+  );
+  if (matching != null) {
+    return matching.id;
+  }
 
-  BibleVersion? fallback;
-  for (final version in option.versions) {
-    final matchesDiacritics =
-        _isArabicWithoutDiacritics(version.id) == !withDiacritics;
-    if (!matchesDiacritics) {
-      continue;
+  if (!withDiacritics) {
+    final diacritizedSource = _findArabicVersionForBase(
+      option,
+      fallbackSource,
+      withDiacritics: true,
+    );
+    if (diacritizedSource != null) {
+      return diacritizedSource.id;
     }
-    fallback ??= version;
-    if (preferredBase != null &&
-        _normalizeArabicBaseVersion(version.id) == preferredBase) {
+    if (preferred.isNotEmpty) {
+      return preferred;
+    }
+  }
+
+  if (withDiacritics &&
+      preferred.isNotEmpty &&
+      !_isArabicWithoutDiacritics(preferred)) {
+    return preferred;
+  }
+
+  for (final version in option.versions) {
+    if (_isArabicWithoutDiacritics(version.id) == !withDiacritics) {
       return version.id;
     }
   }
 
-  if (preferredVersion != null && preferredVersion.trim().isNotEmpty) {
-    if (fallback != null) {
-      return fallback.id;
-    }
-    final normalizedPreferred = preferredVersion.trim();
-    if (withDiacritics && _isArabicWithoutDiacritics(normalizedPreferred)) {
-      return normalizedPreferred.endsWith('-')
-          ? normalizedPreferred.substring(0, normalizedPreferred.length - 1)
-          : normalizedPreferred;
-    }
-    if (!withDiacritics && !_isArabicWithoutDiacritics(normalizedPreferred)) {
-      return '$normalizedPreferred-';
-    }
-    return normalizedPreferred;
+  if (preferred.isNotEmpty) {
+    return preferred;
   }
 
-  return fallback?.id ??
-      (withDiacritics
-          ? arabicVersionWithDiacritics
-          : arabicVersionWithoutDiacritics);
+  return option.apiVersion.trim().isNotEmpty
+      ? option.apiVersion
+      : (withDiacritics
+            ? arabicVersionWithDiacritics
+            : arabicVersionWithoutDiacritics);
 }
 
 String _sanitizeVersionForLanguage(LanguageOption option, String rawVersion) {
@@ -957,6 +1003,26 @@ String _stripArabicDiacritics(String text) {
     return text;
   }
   return text.replaceAll(_arabicDiacriticsPattern, '');
+}
+
+Future<bool> _loadArabicDiacriticsPreference({
+  bool defaultValue = false,
+}) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('arabic_with_diacritics') ?? defaultValue;
+  } catch (_) {
+    return defaultValue;
+  }
+}
+
+Future<void> _persistArabicDiacriticsPreference(bool withDiacritics) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('arabic_with_diacritics', withDiacritics);
+  } catch (_) {
+    // Persistence is a convenience, not a blocker for reading.
+  }
 }
 
 List<_VerseLine> _normalizeVerseLinesForDisplay(
@@ -1237,29 +1303,24 @@ ButtonStyle _toolbarFilledStyle(BuildContext context) {
   );
 }
 
-Widget _compactDiacriticsButton({
+Widget _buildToolbarDiacriticsButton({
   required BuildContext context,
+  required LanguageOption menuLanguage,
   required bool withDiacritics,
-  required LocalizedUiLabels labels,
-  required VoidCallback onPressed,
+  required VoidCallback? onPressed,
+  bool enabled = true,
 }) {
-  final label = withDiacritics ? labels.removeDiacritics : labels.addDiacritics;
+  final label = withDiacritics
+      ? menuLanguage.ui.removeDiacritics
+      : menuLanguage.ui.addDiacritics;
   final icon = withDiacritics
       ? Icons.remove_circle_outline
       : Icons.add_circle_outline;
   return Tooltip(
     message: label,
-    child: TextButton.icon(
-      onPressed: onPressed,
-      style: TextButton.styleFrom(
-        minimumSize: const Size(0, 32),
-        padding: const EdgeInsetsDirectional.symmetric(
-          horizontal: 8,
-          vertical: 6,
-        ),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: VisualDensity.compact,
-      ),
+    child: OutlinedButton.icon(
+      onPressed: enabled ? onPressed : null,
+      style: _toolbarOutlinedStyle(context),
       icon: Icon(icon, size: 18),
       label: Text(label, overflow: TextOverflow.ellipsis),
     ),
@@ -1501,6 +1562,10 @@ class AppToolbar extends StatefulWidget {
     this.trailingActions = const <Widget>[],
     this.showVersionSelector = true,
     this.showLanguageSelector = true,
+    this.showDiacriticsToggle = false,
+    this.withDiacritics = false,
+    this.diacriticsToggleEnabled = true,
+    this.onDiacriticsToggled,
     this.onTranslationChanged,
   });
 
@@ -1516,6 +1581,10 @@ class AppToolbar extends StatefulWidget {
   final List<Widget> trailingActions;
   final bool showVersionSelector;
   final bool showLanguageSelector;
+  final bool showDiacriticsToggle;
+  final bool withDiacritics;
+  final bool diacriticsToggleEnabled;
+  final VoidCallback? onDiacriticsToggled;
   final ToolbarTranslationChanged? onTranslationChanged;
 
   @override
@@ -1639,6 +1708,16 @@ class _AppToolbarState extends State<AppToolbar> {
           onSelected: _handleVersionSelected,
           popupKey: _versionMenuKey,
           onCanceled: _clearVersionGuidance,
+        ),
+      if (widget.showDiacriticsToggle)
+        _buildToolbarDiacriticsButton(
+          context: context,
+          menuLanguage: menuLanguage,
+          withDiacritics: widget.withDiacritics,
+          enabled:
+              widget.diacriticsToggleEnabled &&
+              widget.onDiacriticsToggled != null,
+          onPressed: widget.onDiacriticsToggled,
         ),
       ...widget.primaryActions,
       ...widget.trailingActions,
@@ -2307,10 +2386,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (mounted) {
       setState(() {
         _selectedVersions.addAll(updates);
-        final normalizedArabic = _selectedVersions['arabic'];
-        if (normalizedArabic != null && normalizedArabic.trim().isNotEmpty) {
-          _arabicWithDiacritics = !_isArabicWithoutDiacritics(normalizedArabic);
-        }
       });
     }
 
@@ -2336,7 +2411,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
       }
       setState(() {
         _prefs = prefs;
-        _arabicWithDiacritics = false;
+        _arabicWithDiacritics =
+            prefs.getBool('arabic_with_diacritics') ?? false;
         for (final entry in versionSelections.entries) {
           final routeOwnsCurrentSelection =
               _routeProvidedInitialVersion &&
@@ -2403,7 +2479,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     final normalized = option.code == 'arabic'
         ? (_resolveArabicVersion(
                 option,
-                withDiacritics: false,
+                withDiacritics: _arabicWithDiacritics,
                 preferredVersion: versionId,
               ) ??
               _sanitizeVersionForLanguage(option, versionId))
@@ -2411,13 +2487,12 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (normalized.isEmpty) {
       return;
     }
-    final arabicWithDiacritics = false;
     try {
       final prefs = _prefs ?? await SharedPreferences.getInstance();
       _prefs = prefs;
       await prefs.setString('selected_version_${option.code}', normalized);
       if (option.code == 'arabic') {
-        await prefs.setBool('arabic_with_diacritics', arabicWithDiacritics);
+        await prefs.setBool('arabic_with_diacritics', _arabicWithDiacritics);
       }
     } catch (_) {
       // Ignore persistence errors to keep UX smooth.
@@ -2433,9 +2508,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
     setState(() {
       _selectedVersions[option.code] = normalized;
-      if (option.code == 'arabic') {
-        _arabicWithDiacritics = arabicWithDiacritics;
-      }
     });
   }
 
@@ -2446,7 +2518,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     final normalized = option.code == 'arabic'
         ? (_resolveArabicVersion(
                 option,
-                withDiacritics: false,
+                withDiacritics: _arabicWithDiacritics,
                 preferredVersion: versionId,
               ) ??
               _sanitizeVersionForLanguage(option, versionId))
@@ -2457,7 +2529,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     await _persistLanguageVersion(
       option,
       normalized,
-      withDiacritics: option.code == 'arabic' ? false : null,
+      withDiacritics: option.code == 'arabic' ? _arabicWithDiacritics : null,
     );
     if (!mounted) {
       return;
@@ -2955,6 +3027,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
             gospel: gospel,
             language: widget.languageOption.apiLanguage,
             version: widget.apiVersion,
+            withDiacritics: widget.languageOption.code == 'arabic'
+                ? !_isArabicWithoutDiacritics(widget.apiVersion)
+                : null,
             tooltipMessage: tooltipMessage,
             enableHoverPreview: !useCombinedHoverPreview,
           ),
@@ -2987,6 +3062,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
           'cell-preview',
           widget.languageOption.apiLanguage,
           widget.apiVersion,
+          widget.languageOption.code == 'arabic'
+              ? !_isArabicWithoutDiacritics(widget.apiVersion)
+              : '',
           topic.id,
           gospel,
           ...filteredRefs.map(
@@ -3002,6 +3080,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
       gospel: gospel,
       language: widget.languageOption.apiLanguage,
       version: widget.apiVersion,
+      withDiacritics: widget.languageOption.code == 'arabic'
+          ? !_isArabicWithoutDiacritics(widget.apiVersion)
+          : null,
       tooltipMessage: tooltipMessage,
       child: SizedBox(width: double.infinity, child: cellContent),
     );
@@ -3211,6 +3292,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.tooltipMessage = 'Click to read in chapter',
     this.labelOverride = '',
     this.enableHoverPreview = true,
+    this.withDiacritics,
     this.topicId = '',
     this.sourceContext = '',
     this.gospel = '',
@@ -3226,6 +3308,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String tooltipMessage;
   final String labelOverride;
   final bool enableHoverPreview;
+  final bool? withDiacritics;
   final String topicId;
   final String sourceContext;
   final String gospel;
@@ -3338,7 +3421,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final bookParam = reference.bookId.trim().isNotEmpty
         ? reference.bookId.trim()
         : reference.book.trim();
-    return '${widget.language}|${_previewVersionForRequest()}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
+    return '${widget.language}|${_previewVersionForRequest()}|${_previewWithDiacritics()}|$bookParam|${reference.chapter}|${reference.verses.trim()}';
   }
 
   LanguageOption _previewLanguageOption() {
@@ -3346,12 +3429,20 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         _languageOptionForCode(defaultLanguage);
   }
 
+  bool _previewWithDiacritics() {
+    final option = _previewLanguageOption();
+    if (option.code != 'arabic') {
+      return true;
+    }
+    return widget.withDiacritics ?? !_isArabicWithoutDiacritics(widget.version);
+  }
+
   String _previewVersionForRequest() {
     final option = _previewLanguageOption();
     if (option.code == 'arabic') {
       return _resolveArabicVersion(
             option,
-            withDiacritics: false,
+            withDiacritics: _previewWithDiacritics(),
             preferredVersion: widget.version,
           ) ??
           widget.version;
@@ -3509,7 +3600,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       final verses = _normalizeVerseLinesForDisplay(
         _parseVerseLines(response.body),
         language: _previewLanguageOption(),
-        withDiacritics: false,
+        withDiacritics: _previewWithDiacritics(),
       );
       if (!mounted) {
         return;
@@ -3635,6 +3726,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final reference = widget.reference;
     return oldWidget.language != widget.language ||
         oldWidget.version != widget.version ||
+        oldWidget.withDiacritics != widget.withDiacritics ||
         oldReference.book != reference.book ||
         oldReference.bookId != reference.bookId ||
         oldReference.chapter != reference.chapter ||
@@ -3870,6 +3962,7 @@ class ReferenceCellHoverPreview extends StatefulWidget {
     this.language = defaultLanguage,
     this.version = defaultVersion,
     this.tooltipMessage = 'Click to read in chapter',
+    this.withDiacritics,
     this.topicId = '',
     this.sourceContext = '',
     this.gospel = '',
@@ -3882,6 +3975,7 @@ class ReferenceCellHoverPreview extends StatefulWidget {
   final String language;
   final String version;
   final String tooltipMessage;
+  final bool? withDiacritics;
   final String topicId;
   final String sourceContext;
   final String gospel;
@@ -3958,12 +4052,20 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         _languageOptionForCode(defaultLanguage);
   }
 
+  bool _previewWithDiacritics() {
+    final option = _previewLanguageOption();
+    if (option.code != 'arabic') {
+      return true;
+    }
+    return widget.withDiacritics ?? !_isArabicWithoutDiacritics(widget.version);
+  }
+
   String _previewVersionForRequest() {
     final option = _previewLanguageOption();
     if (option.code == 'arabic') {
       return _resolveArabicVersion(
             option,
-            withDiacritics: false,
+            withDiacritics: _previewWithDiacritics(),
             preferredVersion: widget.version,
           ) ??
           widget.version;
@@ -3972,7 +4074,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   }
 
   String _previewCacheKey(GospelReference reference) {
-    return '${widget.language}|${_previewVersionForRequest()}|${_bookParam(reference)}|${reference.chapter}|${reference.verses.trim()}';
+    return '${widget.language}|${_previewVersionForRequest()}|${_previewWithDiacritics()}|${_bookParam(reference)}|${reference.chapter}|${reference.verses.trim()}';
   }
 
   String _previewHeading(GospelReference reference) {
@@ -4129,7 +4231,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         verses: _normalizeVerseLinesForDisplay(
           _parseVerseLines(response.body),
           language: _previewLanguageOption(),
-          withDiacritics: false,
+          withDiacritics: _previewWithDiacritics(),
         ),
         error: null,
       );
@@ -4294,6 +4396,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   bool _previewIdentityChanged(ReferenceCellHoverPreview oldWidget) {
     if (oldWidget.language != widget.language ||
         oldWidget.version != widget.version ||
+        oldWidget.withDiacritics != widget.withDiacritics ||
         oldWidget.references.length != widget.references.length) {
       return true;
     }
@@ -4759,16 +4862,26 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             preferredVersion: _selectedVersion,
           ) ??
           _selectedVersion;
-      _withDiacritics = false;
-    } else {
-      _withDiacritics = !_isArabicWithoutDiacritics(_selectedVersion);
     }
     _hydrateComparisonsFromRoute();
-    _loadChapter();
-    if (_isHarmonySource) {
-      _loadHarmonyTopics();
-    }
+    _syncComparisonDiacriticsWithGlobal();
+    _initializeDiacriticsPreferenceAndLoad();
     _refreshLanguagesForToolbar();
+  }
+
+  Future<void> _initializeDiacriticsPreferenceAndLoad() async {
+    final withDiacritics = await _loadArabicDiacriticsPreference();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _withDiacritics = withDiacritics;
+      _syncComparisonDiacriticsWithGlobal();
+    });
+    await _loadChapter();
+    if (_isHarmonySource) {
+      await _loadHarmonyTopics();
+    }
   }
 
   Future<void> _refreshLanguagesForToolbar() async {
@@ -4837,6 +4950,30 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return normalized;
     }
     return option.apiVersion;
+  }
+
+  void _syncComparisonDiacriticsWithGlobal() {
+    for (final entry in _comparisons) {
+      if (entry.language.code == 'arabic') {
+        entry.withDiacritics = _withDiacritics;
+      }
+    }
+  }
+
+  bool get _hasArabicTextInvolved =>
+      _languageOption.code == 'arabic' ||
+      _comparisons.any((entry) => entry.language.code == 'arabic');
+
+  bool get _canDisplayDiacriticsForVisibleArabicText {
+    if (_languageOption.code == 'arabic' &&
+        _canDisplayArabicDiacritics(_languageOption, _selectedVersion)) {
+      return true;
+    }
+    return _comparisons.any(
+      (entry) =>
+          entry.language.code == 'arabic' &&
+          _canDisplayArabicDiacritics(entry.language, entry.version),
+    );
   }
 
   bool get _isHarmonySource => widget.source.trim().toLowerCase() == 'harmony';
@@ -5050,7 +5187,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             : int.tryParse((mapItem['scopeEndVerse'] ?? '').toString()) ?? 1;
         final withDiacritics = mapItem['withDiacritics'] is bool
             ? mapItem['withDiacritics'] as bool
-            : language.code != 'arabic';
+            : (language.code == 'arabic' ? _withDiacritics : true);
         parsed.add(
           _ComparisonPassage(
             language: language,
@@ -5058,7 +5195,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             scopeMode: scopeMode,
             scopeStartVerse: scopeStartVerse,
             scopeEndVerse: scopeEndVerse,
-            withDiacritics: withDiacritics,
+            withDiacritics: language.code == 'arabic'
+                ? _withDiacritics
+                : withDiacritics,
           ),
         );
       }
@@ -5332,13 +5471,22 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _toggleReferenceDiacritics() async {
-    if (_languageOption.code != 'arabic') {
+    if (!_hasArabicTextInvolved) {
+      return;
+    }
+    final next = !_withDiacritics;
+    if (next && !_canDisplayDiacriticsForVisibleArabicText) {
       return;
     }
     setState(() {
-      _withDiacritics = !_withDiacritics;
+      _withDiacritics = next;
+      _syncComparisonDiacriticsWithGlobal();
     });
+    await _persistArabicDiacriticsPreference(next);
     await _loadChapter();
+    if (_isHarmonySource) {
+      await _loadHarmonyTopics();
+    }
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
@@ -5352,14 +5500,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final sanitized = language.code == 'arabic'
         ? (_resolveArabicVersion(
                 language,
-                withDiacritics: false,
+                withDiacritics: _withDiacritics,
                 preferredVersion: versionId,
               ) ??
               _sanitizeVersionForLanguage(language, versionId))
         : _sanitizeVersionForLanguage(language, versionId);
-    if (language.code == _languageOption.code &&
-        sanitized == _selectedVersion &&
-        (language.code != 'arabic' || !_withDiacritics)) {
+    if (language.code == _languageOption.code && sanitized == _activeVersion) {
       return;
     }
 
@@ -5367,7 +5513,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       await _persistLanguageVersion(
         language,
         sanitized,
-        withDiacritics: language.code == 'arabic' ? false : null,
+        withDiacritics: language.code == 'arabic' ? _withDiacritics : null,
       );
     } catch (_) {}
 
@@ -5648,18 +5794,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         const SizedBox(height: 12),
         _buildChapterNavigation(),
       ],
-    );
-  }
-
-  Widget _buildArabicReferenceToggleButton() {
-    if (_languageOption.code != 'arabic') {
-      return const SizedBox.shrink();
-    }
-    return _compactDiacriticsButton(
-      context: context,
-      withDiacritics: _withDiacritics,
-      labels: _labels,
-      onPressed: _toggleReferenceDiacritics,
     );
   }
 
@@ -6068,8 +6202,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final entry = _ComparisonPassage(
       language: option,
       version: sanitized,
-      withDiacritics:
-          option.code != 'arabic' && !_isArabicWithoutDiacritics(sanitized),
+      withDiacritics: option.code == 'arabic' ? _withDiacritics : true,
       scopeMode: scopeMode,
       scopeStartVerse: scopeStartVerse,
       scopeEndVerse: scopeEndVerse,
@@ -6112,7 +6245,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (response.statusCode != 200) {
         throw Exception('Error ${response.statusCode}');
       }
-      final verses = _parseVerseLines(response.body);
+      final verses = _normalizeVerseLinesForDisplay(
+        _parseVerseLines(response.body),
+        language: entry.language,
+        withDiacritics: entry.withDiacritics,
+      );
       if (!mounted) {
         return;
       }
@@ -6220,7 +6357,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         selectedLanguage,
                         selectedVersion,
                       );
-                      entry.withDiacritics = selectedLanguage.code != 'arabic';
+                      entry.withDiacritics = selectedLanguage.code == 'arabic'
+                          ? _withDiacritics
+                          : true;
                     });
                     _loadComparisonPassage(entry);
                   },
@@ -6291,10 +6430,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     final headerControls = <Widget>[
-      if (language.code == 'arabic')
-        isMain
-            ? _buildArabicReferenceToggleButton()
-            : _buildComparisonDiacriticsToggle(entry!),
       TextButton(
         onPressed: isMain
             ? _showVersionPicker
@@ -6578,28 +6713,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
-  void _toggleComparisonDiacritics(_ComparisonPassage entry) {
-    if (entry.language.code != 'arabic') {
-      return;
-    }
-    setState(() {
-      entry.withDiacritics = !entry.withDiacritics;
-    });
-    _loadComparisonPassage(entry);
-  }
-
-  Widget _buildComparisonDiacriticsToggle(_ComparisonPassage entry) {
-    if (entry.language.code != 'arabic') {
-      return const SizedBox.shrink();
-    }
-    return _compactDiacriticsButton(
-      context: context,
-      withDiacritics: entry.withDiacritics,
-      labels: _labels,
-      onPressed: () => _toggleComparisonDiacritics(entry),
-    );
-  }
-
   String get _harmonyAppBarTitle {
     final book = _displayBookLabel.isNotEmpty
         ? _displayBookLabel
@@ -6661,6 +6774,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               onLanguageChanged: _updateReferenceLanguage,
               onVersionChanged: _updateSelectedVersion,
               onTranslationChanged: _updateReferenceTranslation,
+              showDiacriticsToggle: _hasArabicTextInvolved,
+              withDiacritics: _withDiacritics,
+              diacriticsToggleEnabled:
+                  _withDiacritics || _canDisplayDiacriticsForVisibleArabicText,
+              onDiacriticsToggled: _toggleReferenceDiacritics,
               primaryActions: primaryActions,
             ),
           ),
@@ -7141,7 +7259,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   final List<_ComparisonPassage> _comparisonTemplates = [];
   String? _error;
   bool _loading = true;
-  bool _withDiacritics = true;
+  bool _withDiacritics = false;
   bool _interlinearView = false;
   double _textScale = 1.0;
   late LanguageOption _languageOption;
@@ -7211,6 +7329,46 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return option.apiVersion;
   }
 
+  void _syncTopicComparisonDiacriticsWithGlobal() {
+    for (final template in _comparisonTemplates) {
+      if (template.language.code == 'arabic') {
+        template.withDiacritics = _withDiacritics;
+      }
+    }
+    for (final entry in _entryComparisons.values.expand((entries) => entries)) {
+      if (entry.language.code == 'arabic') {
+        entry.withDiacritics = _withDiacritics;
+      }
+    }
+  }
+
+  bool get _hasArabicTextInvolved =>
+      _languageOption.code == 'arabic' ||
+      _comparisonTemplates.any((entry) => entry.language.code == 'arabic') ||
+      _entryComparisons.values
+          .expand((entries) => entries)
+          .any((entry) => entry.language.code == 'arabic');
+
+  bool get _canDisplayDiacriticsForVisibleArabicText {
+    if (_languageOption.code == 'arabic' &&
+        _canDisplayArabicDiacritics(_languageOption, _apiVersion)) {
+      return true;
+    }
+    for (final entry in _comparisonTemplates) {
+      if (entry.language.code == 'arabic' &&
+          _canDisplayArabicDiacritics(entry.language, entry.version)) {
+        return true;
+      }
+    }
+    for (final entry in _entryComparisons.values.expand((entries) => entries)) {
+      if (entry.language.code == 'arabic' &&
+          _canDisplayArabicDiacritics(entry.language, entry.version)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   String get _languageVersionSummary {
     final option = _languageOption;
     final versionLabel = _versionLabel(option.code, _activeVersion);
@@ -7240,9 +7398,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             preferredVersion: _apiVersion,
           ) ??
           _apiVersion;
-      _withDiacritics = false;
-    } else {
-      _withDiacritics = !_isArabicWithoutDiacritics(_apiVersion);
     }
     LanguageSelectionController.instance.update(_languageOption.code);
     _topic = widget.topic;
@@ -7254,8 +7409,21 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           ..sort(_compareBooks);
     _selected = widget.initialAuthors.map(_normalizeGospelName).toSet();
     _hydrateTopicComparisonsFromRoute();
-    fetchTexts(preserveComparisons: true);
+    _syncTopicComparisonDiacriticsWithGlobal();
+    _initializeDiacriticsPreferenceAndFetchTexts();
     _refreshLanguagesForToolbar();
+  }
+
+  Future<void> _initializeDiacriticsPreferenceAndFetchTexts() async {
+    final withDiacritics = await _loadArabicDiacriticsPreference();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _withDiacritics = withDiacritics;
+      _syncTopicComparisonDiacriticsWithGlobal();
+    });
+    await fetchTexts(preserveComparisons: true);
   }
 
   bool get _hasEntryComparisons =>
@@ -7290,7 +7458,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     }
   }
 
-  Future<void> fetchTexts({bool preserveComparisons = false}) async {
+  Future<void> fetchTexts({
+    bool preserveComparisons = false,
+    bool reloadAllComparisons = false,
+  }) async {
     if (_selected.isEmpty) {
       setState(() {
         _texts = {};
@@ -7380,7 +7551,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _loading = false;
       });
       if (_comparisonTemplates.isNotEmpty) {
-        _syncComparisonTemplatesToVisibleReferences(reloadMissing: true);
+        _syncComparisonTemplatesToVisibleReferences(
+          reloadMissing: true,
+          reloadAll: reloadAllComparisons,
+        );
       }
     } catch (e) {
       setState(() {
@@ -7398,16 +7572,31 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     _showTopicMultiComparisonPicker(references);
   }
 
+  Future<void> _toggleTopicDiacritics() async {
+    if (!_hasArabicTextInvolved) {
+      return;
+    }
+    final next = !_withDiacritics;
+    if (next && !_canDisplayDiacriticsForVisibleArabicText) {
+      return;
+    }
+    setState(() {
+      _withDiacritics = next;
+      _syncTopicComparisonDiacriticsWithGlobal();
+    });
+    await _persistArabicDiacriticsPreference(next);
+    await fetchTexts(preserveComparisons: true, reloadAllComparisons: true);
+  }
+
   Future<void> _changeMainTranslation(
     LanguageOption language,
     String version,
   ) async {
     final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
-    final forceArabicWithoutDiacritics = language.code == 'arabic';
-    final nextVersion = forceArabicWithoutDiacritics
+    final nextVersion = language.code == 'arabic'
         ? (_resolveArabicVersion(
                 language,
-                withDiacritics: false,
+                withDiacritics: _withDiacritics,
                 preferredVersion: sanitizedVersion,
               ) ??
               sanitizedVersion)
@@ -7415,9 +7604,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     await _persistLanguageVersion(
       language,
       nextVersion,
-      withDiacritics: language.code == 'arabic'
-          ? !_isArabicWithoutDiacritics(nextVersion)
-          : null,
+      withDiacritics: language.code == 'arabic' ? _withDiacritics : null,
     );
     if (!mounted) {
       return;
@@ -7641,8 +7828,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             language: language,
             version: version,
             withDiacritics: mapItem['withDiacritics'] is bool
-                ? mapItem['withDiacritics'] as bool
-                : language.code != 'arabic',
+                ? (language.code == 'arabic'
+                      ? _withDiacritics
+                      : mapItem['withDiacritics'] as bool)
+                : (language.code == 'arabic' ? _withDiacritics : true),
           ),
         );
       }
@@ -7746,34 +7935,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
   }
 
-  void _updateComparisonTemplateDiacritics(
-    _ComparisonPassage entry,
-    bool withDiacritics,
-  ) {
-    final key = _entryComparisonKey(entry.language, entry.version);
-    final loads = <MapEntry<GospelReference, _ComparisonPassage>>[];
-    setState(() {
-      for (final template in _comparisonTemplates) {
-        if (_entryComparisonKey(template.language, template.version) == key) {
-          template.withDiacritics = withDiacritics;
-        }
-      }
-      for (final textEntry in _texts.values.expand((entries) => entries)) {
-        final entryKey = _entryKey(textEntry.reference);
-        for (final comparison in _entryComparisons[entryKey] ?? const []) {
-          if (_entryComparisonKey(comparison.language, comparison.version) ==
-              key) {
-            comparison.withDiacritics = withDiacritics;
-            loads.add(MapEntry(textEntry.reference, comparison));
-          }
-        }
-      }
-    });
-    for (final load in loads) {
-      _loadEntryComparison(load.key, load.value);
-    }
-  }
-
   void _showTopicMultiComparisonPicker(List<GospelReference> references) {
     if (_supportedLanguages.isEmpty || references.isEmpty) {
       return;
@@ -7837,7 +7998,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _ComparisonPassage(
           language: language,
           version: sanitized,
-          withDiacritics: language.code != 'arabic',
+          withDiacritics: language.code == 'arabic' ? _withDiacritics : true,
         ),
       );
     }
@@ -8149,31 +8310,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     _removeComparisonTemplate(entry);
   }
 
-  void _toggleEntryComparisonDiacritics(
-    GospelReference reference,
-    _ComparisonPassage entry,
-  ) {
-    if (entry.language.code != 'arabic') {
-      return;
-    }
-    _updateComparisonTemplateDiacritics(entry, !entry.withDiacritics);
-  }
-
-  Widget _buildEntryComparisonDiacriticsToggle(
-    GospelReference reference,
-    _ComparisonPassage entry,
-  ) {
-    if (entry.language.code != 'arabic') {
-      return const SizedBox.shrink();
-    }
-    return _compactDiacriticsButton(
-      context: context,
-      withDiacritics: entry.withDiacritics,
-      labels: _labels,
-      onPressed: () => _toggleEntryComparisonDiacritics(reference, entry),
-    );
-  }
-
   Widget _buildEntryComparisonCard(
     GospelReference reference,
     _ComparisonPassage entry,
@@ -8207,8 +8343,6 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       ),
                     ),
                   ),
-                  if (entry.language.code == 'arabic')
-                    _buildEntryComparisonDiacriticsToggle(reference, entry),
                   IconButton(
                     onPressed: () => _removeEntryComparison(reference, entry),
                     icon: const Icon(Icons.close),
@@ -8233,7 +8367,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               ] else ...[
                 const SizedBox(height: 8),
                 ...entry.verses.map(
-                  (verse) => _buildComparisonVerse(verse, theme),
+                  (verse) => _buildComparisonVerse(
+                    verse,
+                    theme,
+                    language: entry.language,
+                    version: resolvedVersion,
+                  ),
                 ),
               ],
             ],
@@ -8243,7 +8382,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 
-  Widget _buildComparisonVerse(_VerseLine verse, ThemeData theme) {
+  Widget _buildComparisonVerse(
+    _VerseLine verse,
+    ThemeData theme, {
+    LanguageOption? language,
+    String? version,
+  }) {
+    final markerLanguage = language ?? _languageOption;
+    final markerVersion = version ?? _activeVersion;
     final baseStyle =
         theme.textTheme.bodyMedium?.copyWith(height: 1.5) ??
         const TextStyle(fontSize: 15, height: 1.5);
@@ -8258,7 +8404,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             if (verse.number != null && verse.number! > 0)
               TextSpan(
                 text:
-                    '${formatVerseMarker(verse.number!, language: _languageOption.apiLanguage, version: _activeVersion)}. ',
+                    '${formatVerseMarker(verse.number!, language: markerLanguage.apiLanguage, version: markerVersion)}. ',
                 style: numberStyle,
               ),
             TextSpan(text: verse.text),
@@ -8431,6 +8577,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             gospel: _normalizeGospelName(entry.reference.book),
             language: option.apiLanguage,
             version: _activeVersion,
+            withDiacritics: option.code == 'arabic' ? _withDiacritics : null,
             tooltipMessage: _labels.clickToReadInChapter,
             labelOverride: entry.title,
             enableHoverPreview: false,
@@ -8593,6 +8740,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               onLanguageChanged: _handleToolbarLanguageChanged,
               onVersionChanged: _handleToolbarVersionChanged,
               onTranslationChanged: _changeMainTranslation,
+              showDiacriticsToggle: _hasArabicTextInvolved,
+              withDiacritics: _withDiacritics,
+              diacriticsToggleEnabled:
+                  _withDiacritics || _canDisplayDiacriticsForVisibleArabicText,
+              onDiacriticsToggled: _toggleTopicDiacritics,
               primaryActions: [
                 FilledButton.icon(
                   onPressed: (_visibleReferences.isEmpty || _loading)
