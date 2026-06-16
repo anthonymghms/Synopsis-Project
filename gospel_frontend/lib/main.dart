@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:gospel_frontend/auth_screen.dart';
 import 'package:gospel_frontend/main_scaffold.dart';
+import 'package:gospel_frontend/browser_find_text.dart';
+import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
@@ -13,7 +15,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:gospel_frontend/utils/format_verse_ref.dart';
 import 'package:gospel_frontend/widgets/verse_ref_text.dart';
-import 'package:url_launcher/link.dart';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = String.fromEnvironment(
@@ -2910,13 +2911,20 @@ class _HarmonyTableState extends State<HarmonyTable> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              topic.name,
+            child: BrowserFindText(
+              text: topic.name,
               style: textStyle,
               textAlign: textAlign,
+              textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              softWrap: false,
+              child: Text(
+                topic.name,
+                style: textStyle,
+                textAlign: textAlign,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+              ),
             ),
           ),
         ],
@@ -2927,7 +2935,13 @@ class _HarmonyTableState extends State<HarmonyTable> {
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-      child: Text(label, style: style, textAlign: align),
+      child: BrowserFindText(
+        text: label,
+        style: style,
+        textAlign: align,
+        maxLines: 1,
+        child: Text(label, style: style, textAlign: align),
+      ),
     );
   }
 
@@ -2978,7 +2992,13 @@ class _HarmonyTableState extends State<HarmonyTable> {
     if (filteredRefs.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Text('—', style: style, textAlign: align),
+        child: BrowserFindText(
+          text: '—',
+          style: style,
+          textAlign: align,
+          maxLines: 1,
+          child: Text('—', style: style, textAlign: align),
+        ),
       );
     }
 
@@ -3147,9 +3167,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 message:
                     '${labels.clickToReadAllReferences}\n${_numberedTopicTitle(topic, languageOption, zeroBasedIndex: i)}',
                 waitDuration: const Duration(milliseconds: 400),
-                child: Link(
+                child: BrowserRouteLink(
                   uri: _topicRouteUri(topic, i),
-                  target: LinkTarget.self,
                   builder: (context, followLink) => TableRowInkWell(
                     onTap: followLink,
                     child: Padding(
@@ -3781,9 +3800,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         ),
         if (helperText.isNotEmpty && uri != null) ...[
           const SizedBox(width: 8),
-          Link(
+          BrowserRouteLink(
             uri: uri,
-            target: LinkTarget.self,
             builder: (context, followLink) => InkWell(
               onTap: followLink,
               borderRadius: BorderRadius.circular(4),
@@ -3886,6 +3904,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final text = override.isNotEmpty
         ? override
         : widget.reference.formattedReference;
+    final browserFindText = formatVerseRef(text, widget.language);
     final alignment = _alignmentForTextAlign(widget.textAlign);
     final uri = _buildReferenceUri(widget.reference);
 
@@ -3914,9 +3933,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       },
       child: KeyedSubtree(
         key: _anchorKey,
-        child: Link(
+        child: BrowserRouteLink(
           uri: text.isEmpty ? null : uri,
-          target: LinkTarget.self,
           builder: (context, followLink) => GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: followLink,
@@ -3926,11 +3944,18 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
               heightFactor: 1,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: VerseRefText(
-                  value: text,
-                  lang: widget.language,
+                child: BrowserFindText(
+                  text: browserFindText.text,
                   style: _isHovered ? hoverStyle : baseStyle,
                   textAlign: widget.textAlign,
+                  textDirection: browserFindText.dir ?? widget.textDirection,
+                  maxLines: 1,
+                  child: VerseRefText(
+                    value: text,
+                    lang: widget.language,
+                    style: _isHovered ? hoverStyle : baseStyle,
+                    textAlign: widget.textAlign,
+                  ),
                 ),
               ),
             ),
@@ -4459,9 +4484,8 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         ),
         if (helperText.isNotEmpty && uri != null) ...[
           const SizedBox(width: 8),
-          Link(
+          BrowserRouteLink(
             uri: uri,
-            target: LinkTarget.self,
             builder: (context, followLink) => InkWell(
               onTap: followLink,
               borderRadius: BorderRadius.circular(4),
@@ -4688,9 +4712,8 @@ class ChapterNav extends StatelessWidget {
       required Uri? uri,
       required IconData icon,
     }) {
-      return Link(
+      return BrowserRouteLink(
         uri: uri,
-        target: LinkTarget.self,
         builder: (context, followLink) => IconButton(
           tooltip: tooltip,
           onPressed: uri == null ? null : followLink,
