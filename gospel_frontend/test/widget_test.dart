@@ -7,14 +7,20 @@ void main() {
     expect(true, isTrue);
   });
 
-  Widget harmonyTableFor(List<GospelReference> references) {
+  Widget harmonyTableFor(
+    List<GospelReference> references, {
+    double width = 1000,
+    double height = 500,
+    LanguageOption? languageOption,
+  }) {
+    final option = languageOption ?? kBaseLanguageOptions.first;
     return MaterialApp(
       home: Scaffold(
         body: MenuLanguageScope(
           notifier: ValueNotifier<String>('english'),
           child: SizedBox(
-            width: 1000,
-            height: 500,
+            width: width,
+            height: height,
             child: HarmonyTable(
               topics: [
                 Topic(
@@ -23,8 +29,8 @@ void main() {
                   references: references,
                 ),
               ],
-              languageOption: kBaseLanguageOptions.first,
-              apiVersion: 'kjv',
+              languageOption: option,
+              apiVersion: option.apiVersion,
             ),
           ),
         ),
@@ -67,5 +73,41 @@ void main() {
       referenceLinks.every((reference) => !reference.enableHoverPreview),
       isTrue,
     );
+  });
+
+  testWidgets('harmony table caps and centers on wide screens', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      harmonyTableFor(
+        const [GospelReference(book: 'Luke', chapter: 4, verses: '42-44')],
+        width: 1600,
+        height: 700,
+      ),
+    );
+
+    final headerTable = find.byType(Table).first;
+    expect(tester.getSize(headerTable).width, closeTo(1120, 0.1));
+    expect(tester.getTopLeft(headerTable).dx, closeTo(240, 0.1));
+  });
+
+  testWidgets('harmony table keeps a readable scroll width on narrow screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      harmonyTableFor(
+        const [GospelReference(book: 'Luke', chapter: 4, verses: '42-44')],
+        width: 390,
+        height: 600,
+      ),
+    );
+
+    final headerTable = find.byType(Table).first;
+    expect(tester.getSize(headerTable).width, closeTo(760, 0.1));
+    expect(tester.getTopLeft(headerTable).dx, closeTo(0, 0.1));
   });
 }

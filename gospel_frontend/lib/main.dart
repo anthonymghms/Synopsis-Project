@@ -39,6 +39,84 @@ const _versionFieldCandidates = [
 const double _zoomMin = 0.8;
 const double _zoomMax = 1.6;
 const double _zoomDefault = 1.0;
+const double _maxPageContentWidth = 1180.0;
+const double _maxReadingContentWidth = 860.0;
+const double _minHarmonyTableWidth = 760.0;
+const double _maxHarmonyTableWidth = 1120.0;
+
+double _responsiveHorizontalInset(double availableWidth) {
+  if (availableWidth < 640) {
+    return 14.0;
+  }
+  if (availableWidth < 1000) {
+    return 18.0;
+  }
+  return 24.0;
+}
+
+double _responsiveContentWidth(
+  double availableWidth, {
+  required double maxWidth,
+  double mediumScreenFraction = 0.96,
+  double largeScreenFraction = 0.92,
+}) {
+  if (!availableWidth.isFinite || availableWidth <= 0) {
+    return maxWidth;
+  }
+  if (availableWidth < 640) {
+    return availableWidth;
+  }
+  if (availableWidth < 1000) {
+    return math.min(availableWidth * mediumScreenFraction, maxWidth);
+  }
+  return math.min(availableWidth * largeScreenFraction, maxWidth);
+}
+
+class ResponsiveContentShell extends StatelessWidget {
+  const ResponsiveContentShell({
+    super.key,
+    required this.child,
+    this.maxWidth = _maxPageContentWidth,
+    this.padding,
+    this.alignment = Alignment.topCenter,
+  });
+
+  final Widget child;
+  final double maxWidth;
+  final EdgeInsetsGeometry? padding;
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final resolvedPadding =
+            padding ??
+            EdgeInsets.symmetric(
+              horizontal: _responsiveHorizontalInset(availableWidth),
+            );
+        final contentWidth = _responsiveContentWidth(
+          availableWidth,
+          maxWidth: maxWidth,
+        );
+
+        return Padding(
+          padding: resolvedPadding,
+          child: Align(
+            alignment: alignment,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: contentWidth),
+              child: child,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class LanguageSelectionController {
   LanguageSelectionController._();
@@ -1568,6 +1646,7 @@ class AppToolbar extends StatefulWidget {
     this.diacriticsToggleEnabled = true,
     this.onDiacriticsToggled,
     this.onTranslationChanged,
+    this.maxContentWidth = _maxPageContentWidth,
   });
 
   final String? title;
@@ -1587,6 +1666,7 @@ class AppToolbar extends StatefulWidget {
   final bool diacriticsToggleEnabled;
   final VoidCallback? onDiacriticsToggled;
   final ToolbarTranslationChanged? onTranslationChanged;
+  final double maxContentWidth;
 
   @override
   State<AppToolbar> createState() => _AppToolbarState();
@@ -1726,7 +1806,8 @@ class _AppToolbarState extends State<AppToolbar> {
 
     return Directionality(
       textDirection: menuLanguage.direction,
-      child: Padding(
+      child: ResponsiveContentShell(
+        maxWidth: widget.maxContentWidth,
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -2679,6 +2760,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AppToolbar(
+                    maxContentWidth: _maxHarmonyTableWidth,
                     language: languageOption,
                     version: _apiVersionFor(languageOption),
                     languages: _supportedLanguages,
@@ -2940,7 +3022,14 @@ class _HarmonyTableState extends State<HarmonyTable> {
         style: style,
         textAlign: align,
         maxLines: 1,
-        child: Text(label, style: style, textAlign: align),
+        child: Text(
+          label,
+          style: style,
+          textAlign: align,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+        ),
       ),
     );
   }
@@ -2952,6 +3041,30 @@ class _HarmonyTableState extends State<HarmonyTable> {
       version: widget.apiVersion,
       topicNumber: _topicNumberForDisplay(topic, zeroBasedIndex: index),
     );
+  }
+
+  double _harmonyTableWidthFor(double availableWidth) {
+    return math.max(
+      _minHarmonyTableWidth,
+      _responsiveContentWidth(availableWidth, maxWidth: _maxHarmonyTableWidth),
+    );
+  }
+
+  Map<int, TableColumnWidth> _harmonyColumnWidths(double tableWidth) {
+    final referenceWidth = switch (tableWidth) {
+      < 840 => 116.0,
+      < 1000 => 128.0,
+      _ => 136.0,
+    };
+    final subjectWidth = math.max(
+      280.0,
+      tableWidth - (referenceWidth * orderedGospels.length),
+    );
+    return {
+      0: FixedColumnWidth(subjectWidth),
+      for (var i = 0; i < orderedGospels.length; i++)
+        i + 1: FixedColumnWidth(referenceWidth),
+    };
   }
 
   WrapAlignment _wrapAlignmentForTextAlign(
@@ -3204,86 +3317,93 @@ class _HarmonyTableState extends State<HarmonyTable> {
       );
     }
 
-    final availableWidth = MediaQuery.sizeOf(context).width;
-    const minScrollableTableWidth = 760.0;
-    final tableWidth = math.max(availableWidth, minScrollableTableWidth);
-    final horizontalFrameWidth = tableWidth;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final tableWidth = _harmonyTableWidthFor(availableWidth);
+        final horizontalFrameWidth = math.max(availableWidth, tableWidth);
+        final columnWidths = _harmonyColumnWidths(tableWidth);
 
-    return Column(
-      children: [
-        SingleChildScrollView(
-          controller: _headerHorizontalController,
-          scrollDirection: Axis.horizontal,
-          child: SizedBox(
-            width: horizontalFrameWidth,
-            child: Center(
+        return Column(
+          children: [
+            SingleChildScrollView(
+              controller: _headerHorizontalController,
+              scrollDirection: Axis.horizontal,
               child: SizedBox(
-                width: tableWidth,
-                child: Table(
-                  border: TableBorder(
-                    verticalInside: BorderSide(color: borderColor, width: 0.6),
-                    top: BorderSide(color: borderColor, width: 0.8),
-                    bottom: BorderSide(color: borderColor, width: 0.6),
-                    left: BorderSide(color: borderColor, width: 0.8),
-                    right: BorderSide(color: borderColor, width: 0.8),
+                width: horizontalFrameWidth,
+                child: Center(
+                  child: SizedBox(
+                    width: tableWidth,
+                    child: Table(
+                      border: TableBorder(
+                        verticalInside: BorderSide(
+                          color: borderColor,
+                          width: 0.6,
+                        ),
+                        top: BorderSide(color: borderColor, width: 0.8),
+                        bottom: BorderSide(color: borderColor, width: 0.6),
+                        left: BorderSide(color: borderColor, width: 0.8),
+                        right: BorderSide(color: borderColor, width: 0.8),
+                      ),
+                      columnWidths: columnWidths,
+                      defaultVerticalAlignment:
+                          TableCellVerticalAlignment.middle,
+                      children: [headerRow],
+                    ),
                   ),
-                  columnWidths: const {
-                    0: FlexColumnWidth(2.6),
-                    1: FlexColumnWidth(1.4),
-                    2: FlexColumnWidth(1.4),
-                    3: FlexColumnWidth(1.4),
-                    4: FlexColumnWidth(1.4),
-                  },
-                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-                  children: [headerRow],
                 ),
               ),
             ),
-          ),
-        ),
-        Expanded(
-          child: Scrollbar(
-            controller: _verticalController,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _verticalController,
+            Expanded(
               child: Scrollbar(
-                controller: _bodyHorizontalController,
+                controller: _verticalController,
                 thumbVisibility: true,
-                notificationPredicate: (notification) =>
-                    notification.metrics.axis == Axis.horizontal,
                 child: SingleChildScrollView(
-                  controller: _bodyHorizontalController,
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(
-                    width: horizontalFrameWidth,
-                    child: Center(
+                  controller: _verticalController,
+                  child: Scrollbar(
+                    controller: _bodyHorizontalController,
+                    thumbVisibility: true,
+                    notificationPredicate: (notification) =>
+                        notification.metrics.axis == Axis.horizontal,
+                    child: SingleChildScrollView(
+                      controller: _bodyHorizontalController,
+                      scrollDirection: Axis.horizontal,
                       child: SizedBox(
-                        width: tableWidth,
-                        child: Table(
-                          border: TableBorder(
-                            horizontalInside: BorderSide(
-                              color: borderColor,
-                              width: 0.6,
+                        width: horizontalFrameWidth,
+                        child: Center(
+                          child: SizedBox(
+                            width: tableWidth,
+                            child: Table(
+                              border: TableBorder(
+                                horizontalInside: BorderSide(
+                                  color: borderColor,
+                                  width: 0.6,
+                                ),
+                                verticalInside: BorderSide(
+                                  color: borderColor,
+                                  width: 0.6,
+                                ),
+                                bottom: BorderSide(
+                                  color: borderColor,
+                                  width: 0.8,
+                                ),
+                                left: BorderSide(
+                                  color: borderColor,
+                                  width: 0.8,
+                                ),
+                                right: BorderSide(
+                                  color: borderColor,
+                                  width: 0.8,
+                                ),
+                              ),
+                              columnWidths: columnWidths,
+                              defaultVerticalAlignment:
+                                  TableCellVerticalAlignment.middle,
+                              children: bodyRows,
                             ),
-                            verticalInside: BorderSide(
-                              color: borderColor,
-                              width: 0.6,
-                            ),
-                            bottom: BorderSide(color: borderColor, width: 0.8),
-                            left: BorderSide(color: borderColor, width: 0.8),
-                            right: BorderSide(color: borderColor, width: 0.8),
                           ),
-                          columnWidths: const {
-                            0: FlexColumnWidth(2.6),
-                            1: FlexColumnWidth(1.4),
-                            2: FlexColumnWidth(1.4),
-                            3: FlexColumnWidth(1.4),
-                            4: FlexColumnWidth(1.4),
-                          },
-                          defaultVerticalAlignment:
-                              TableCellVerticalAlignment.middle,
-                          children: bodyRows,
                         ),
                       ),
                     ),
@@ -3291,9 +3411,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 ),
               ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -6808,29 +6928,45 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           const Divider(height: 0),
           Expanded(
             child: SingleChildScrollView(
-              padding: EdgeInsets.symmetric(
-                horizontal: MediaQuery.sizeOf(context).width < 640 ? 14 : 20,
-                vertical: 14,
-              ),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1280),
-                  child: Directionality(
-                    textDirection: _languageOption.direction,
-                    child: _wrapWithTextScale(
-                      context,
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_interlinearView && _comparisons.isNotEmpty) ...[
-                            _buildInterlinearReferenceSection(theme),
-                            const SizedBox(height: 24),
-                            _buildChapterSection(theme),
-                          ] else ...[
-                            _buildParallelComparisonSection(theme),
-                          ],
+              child: ResponsiveContentShell(
+                maxWidth: _maxPageContentWidth,
+                padding: EdgeInsets.symmetric(
+                  horizontal: _responsiveHorizontalInset(
+                    MediaQuery.sizeOf(context).width,
+                  ),
+                  vertical: 14,
+                ),
+                child: Directionality(
+                  textDirection: _languageOption.direction,
+                  child: _wrapWithTextScale(
+                    context,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_interlinearView && _comparisons.isNotEmpty) ...[
+                          Align(
+                            alignment: AlignmentDirectional.topCenter,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: _maxReadingContentWidth,
+                              ),
+                              child: _buildInterlinearReferenceSection(theme),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Align(
+                            alignment: AlignmentDirectional.topCenter,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: _maxReadingContentWidth,
+                              ),
+                              child: _buildChapterSection(theme),
+                            ),
+                          ),
+                        ] else ...[
+                          _buildParallelComparisonSection(theme),
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
@@ -8677,10 +8813,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         final availableWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : MediaQuery.of(context).size.width;
-        final horizontalPadding = availableWidth >= 1000 ? 24.0 : 12.0;
+        final horizontalPadding = _responsiveHorizontalInset(availableWidth);
+        final maxInnerWidth = _responsiveContentWidth(
+          availableWidth,
+          maxWidth: _maxPageContentWidth,
+        );
         final innerWidth = math.max(
           0.0,
-          availableWidth - (horizontalPadding * 2),
+          math.min(availableWidth - (horizontalPadding * 2), maxInnerWidth),
         );
         final count = visibleAuthors.length;
         final spacing = innerWidth >= 760 ? 14.0 : 10.0;
@@ -8781,7 +8921,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                 _buildZoomControl(),
               ],
             ),
-            Padding(
+            ResponsiveContentShell(
+              maxWidth: _maxPageContentWidth,
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               child: Wrap(
                 alignment: WrapAlignment.center,
