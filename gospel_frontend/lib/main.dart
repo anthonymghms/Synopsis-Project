@@ -832,9 +832,17 @@ Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
 }
 
 LanguageOption _languageOptionForCode(String code) {
+  final normalized = code.trim().toLowerCase();
+  LanguageOption fallback() {
+    return _supportedLanguages.firstWhere(
+      (option) => option.code.toLowerCase() == defaultLanguage,
+      orElse: () => _supportedLanguages.first,
+    );
+  }
+
   return _supportedLanguages.firstWhere(
-    (option) => option.code == code,
-    orElse: () => _supportedLanguages.first,
+    (option) => option.code.toLowerCase() == normalized,
+    orElse: fallback,
   );
 }
 
@@ -851,6 +859,92 @@ class MenuLanguageScope extends InheritedNotifier<ValueNotifier<String>> {
     final code =
         scope?.notifier?.value ?? MenuLanguageController.instance.languageCode;
     return _languageOptionForCode(code);
+  }
+}
+
+const List<String> _menuLanguageQueryKeys = [
+  'menuLanguage',
+  'menu_language',
+  'uiLanguage',
+  'ui_language',
+  'locale',
+];
+
+String? _menuLanguageQueryParameter(Uri uri) {
+  for (final key in _menuLanguageQueryKeys) {
+    final value = uri.queryParameters[key]?.trim();
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  }
+  return null;
+}
+
+String? _resolveMenuLanguageCode(String? rawLanguage) {
+  final trimmed = rawLanguage?.trim() ?? '';
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  final direct = _languageOptionForApiLanguage(trimmed);
+  if (direct != null) {
+    return direct.code;
+  }
+
+  final normalized = trimmed.toLowerCase();
+  for (final option in _supportedLanguages) {
+    if (option.code.toLowerCase() == normalized ||
+        option.label.toLowerCase() == normalized) {
+      return option.code;
+    }
+  }
+
+  final localeLanguage = normalized.split(RegExp(r'[-_]')).first;
+  if (localeLanguage != normalized) {
+    final localeOption = _languageOptionForApiLanguage(localeLanguage);
+    if (localeOption != null) {
+      return localeOption.code;
+    }
+    for (final option in _supportedLanguages) {
+      if (option.code.toLowerCase() == localeLanguage) {
+        return option.code;
+      }
+    }
+  }
+
+  return null;
+}
+
+void _syncMenuLanguageToContent(LanguageOption option) {
+  final code = option.code.trim();
+  MenuLanguageController.instance.update(
+    code.isNotEmpty ? code : defaultLanguage,
+  );
+}
+
+void _syncSelectedContentLanguage(
+  LanguageOption option, {
+  String? explicitMenuLanguage,
+  bool forceMenuLanguageSync = false,
+}) {
+  final previousCode = LanguageSelectionController.instance.languageCode
+      .trim()
+      .toLowerCase();
+  final nextCode = option.code.trim();
+  if (nextCode.isEmpty) {
+    return;
+  }
+
+  LanguageSelectionController.instance.update(nextCode);
+
+  final explicitMenuCode = _resolveMenuLanguageCode(explicitMenuLanguage);
+  if (explicitMenuCode != null) {
+    MenuLanguageController.instance.update(explicitMenuCode);
+    return;
+  }
+
+  if (forceMenuLanguageSync || previousCode != nextCode.toLowerCase()) {
+    _syncMenuLanguageToContent(option);
   }
 }
 
@@ -1928,8 +2022,9 @@ Future<void> _persistLanguageVersion(
   LanguageOption option,
   String version, {
   bool? withDiacritics,
+  bool syncMenuLanguage = false,
 }) async {
-  LanguageSelectionController.instance.update(option.code);
+  _syncSelectedContentLanguage(option, forceMenuLanguageSync: syncMenuLanguage);
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -2078,6 +2173,7 @@ class GospelApp extends StatelessWidget {
 
     final uri = Uri.parse(normalized);
     final path = uri.path.isEmpty ? '/' : uri.path;
+    final rawMenuLanguage = _menuLanguageQueryParameter(uri);
 
     if (path == '/') {
       final rawLanguage = uri.queryParameters['language'];
@@ -2088,6 +2184,7 @@ class GospelApp extends StatelessWidget {
           builder: (context) => TopicListScreen(
             initialLanguage: rawLanguage,
             initialVersion: rawVersion,
+            initialMenuLanguage: rawMenuLanguage,
           ),
         ),
       );
@@ -2132,6 +2229,7 @@ class GospelApp extends StatelessWidget {
             topicId: topicId,
             gospel: gospel,
             comparisonState: comparisons,
+            initialMenuLanguage: rawMenuLanguage,
           ),
         ),
       );
@@ -2163,6 +2261,7 @@ class GospelApp extends StatelessWidget {
             topicId: initialTopicId,
             topicNumber: initialTopicNumber,
             comparisonState: comparisons,
+            initialMenuLanguage: rawMenuLanguage,
           ),
         ),
       );
@@ -2170,7 +2269,10 @@ class GospelApp extends StatelessWidget {
 
     return MaterialPageRoute(
       settings: settings,
-      builder: (_) => AuthGate(builder: (context) => const TopicListScreen()),
+      builder: (_) => AuthGate(
+        builder: (context) =>
+            TopicListScreen(initialMenuLanguage: rawMenuLanguage),
+      ),
     );
   }
 }
@@ -2207,6 +2309,7 @@ class TopicDetailScreen extends StatefulWidget {
     required this.topicId,
     this.topicNumber = '',
     this.comparisonState = '',
+    this.initialMenuLanguage,
   });
 
   final LanguageOption languageOption;
@@ -2214,6 +2317,7 @@ class TopicDetailScreen extends StatefulWidget {
   final String topicId;
   final String topicNumber;
   final String comparisonState;
+  final String? initialMenuLanguage;
 
   @override
   State<TopicDetailScreen> createState() => _TopicDetailScreenState();
@@ -2229,7 +2333,10 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
   @override
   void initState() {
     super.initState();
-    LanguageSelectionController.instance.update(widget.languageOption.code);
+    _syncSelectedContentLanguage(
+      widget.languageOption,
+      explicitMenuLanguage: widget.initialMenuLanguage,
+    );
     _loadTopic();
   }
 
@@ -2355,6 +2462,7 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
           ? widget.topicNumber
           : _topicNumberForDisplay(topic, zeroBasedIndex: _topicIndex),
       comparisonState: widget.comparisonState,
+      initialMenuLanguage: widget.initialMenuLanguage,
     );
   }
 }
@@ -2365,11 +2473,13 @@ class TopicListScreen extends StatefulWidget {
     this.initialTopicId,
     this.initialLanguage,
     this.initialVersion,
+    this.initialMenuLanguage,
   });
 
   final String? initialTopicId;
   final String? initialLanguage;
   final String? initialVersion;
+  final String? initialMenuLanguage;
   @override
   State<TopicListScreen> createState() => _TopicListScreenState();
 }
@@ -2418,7 +2528,10 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _pendingTopicId = widget.initialTopicId?.trim().isNotEmpty == true
         ? widget.initialTopicId!.trim()
         : null;
-    LanguageSelectionController.instance.update(_selectedLanguageCode);
+    _syncSelectedContentLanguage(
+      _languageOption,
+      explicitMenuLanguage: widget.initialMenuLanguage,
+    );
     _initializePreferences();
     _refreshLanguagesFromFirestore();
     _loadAdminState();
@@ -2537,7 +2650,10 @@ class _TopicListScreenState extends State<TopicListScreen> {
         setState(() {
           _selectedLanguageCode = fallbackCode;
         });
-        LanguageSelectionController.instance.update(fallbackCode);
+        _syncSelectedContentLanguage(
+          _languageOptionForCode(fallbackCode),
+          forceMenuLanguageSync: true,
+        );
       }
     } catch (e) {
       if (!mounted) {
@@ -2608,10 +2724,12 @@ class _TopicListScreenState extends State<TopicListScreen> {
     if (normalized.isEmpty) {
       return;
     }
+    final languageChanged = option.code != _selectedLanguageCode;
     await _persistLanguageVersion(
       option,
       normalized,
       withDiacritics: option.code == 'arabic' ? _arabicWithDiacritics : null,
+      syncMenuLanguage: languageChanged,
     );
     if (!mounted) {
       return;
@@ -4775,6 +4893,7 @@ class ReferenceViewerPage extends StatefulWidget {
     this.topicId = '',
     this.gospel = '',
     this.comparisonState = '',
+    this.initialMenuLanguage,
   });
 
   final String displayBook;
@@ -4789,6 +4908,7 @@ class ReferenceViewerPage extends StatefulWidget {
   final String topicId;
   final String gospel;
   final String comparisonState;
+  final String? initialMenuLanguage;
 
   @override
   State<ReferenceViewerPage> createState() => _ReferenceViewerPageState();
@@ -4992,7 +5112,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   void initState() {
     super.initState();
     _textScale = ZoomController.instance.textScale;
-    LanguageSelectionController.instance.update(_languageOption.code);
+    _syncSelectedContentLanguage(
+      _languageOption,
+      explicitMenuLanguage: widget.initialMenuLanguage,
+    );
     _selectedVersion = _sanitizeVersionForLanguage(
       _languageOption,
       widget.version,
@@ -5653,10 +5776,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     try {
+      final languageChanged = language.code != _languageOption.code;
       await _persistLanguageVersion(
         language,
         sanitized,
         withDiacritics: language.code == 'arabic' ? _withDiacritics : null,
+        syncMenuLanguage: languageChanged,
       );
     } catch (_) {}
 
@@ -7376,6 +7501,7 @@ class AuthorComparisonScreen extends StatefulWidget {
   final List<Topic> topics;
   final int topicIndex;
   final String comparisonState;
+  final String? initialMenuLanguage;
   const AuthorComparisonScreen({
     super.key,
     required this.languageOption,
@@ -7386,6 +7512,7 @@ class AuthorComparisonScreen extends StatefulWidget {
     this.topics = const <Topic>[],
     this.topicIndex = -1,
     this.comparisonState = '',
+    this.initialMenuLanguage,
   });
 
   @override
@@ -7558,7 +7685,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           ) ??
           _apiVersion;
     }
-    LanguageSelectionController.instance.update(_languageOption.code);
+    _syncSelectedContentLanguage(
+      _languageOption,
+      explicitMenuLanguage: widget.initialMenuLanguage,
+    );
     _topic = widget.topic;
     _allAuthors =
         _topic.references
@@ -7760,10 +7890,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               ) ??
               sanitizedVersion)
         : sanitizedVersion;
+    final languageChanged = language.code != _languageOption.code;
     await _persistLanguageVersion(
       language,
       nextVersion,
       withDiacritics: language.code == 'arabic' ? _withDiacritics : null,
+      syncMenuLanguage: languageChanged,
     );
     if (!mounted) {
       return;
