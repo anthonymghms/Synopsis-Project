@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/main.dart';
 
 void main() {
   test('placeholder smoke test', () {
     expect(true, isTrue);
   });
+
+  Topic topicWith(String id, List<String> gospels) {
+    return Topic(
+      id: id,
+      name: 'Topic $id',
+      references: [
+        for (final gospel in gospels)
+          GospelReference(book: gospel, chapter: 1, verses: '1'),
+      ],
+    );
+  }
 
   Widget harmonyTableFor(
     List<GospelReference> references, {
@@ -37,6 +49,292 @@ void main() {
       ),
     );
   }
+
+  group('HarmonyFilterState', () {
+    final johnAndMark = topicWith('john-mark', ['John', 'Mark']);
+    final markLuke = topicWith('mark-luke', ['Mark', 'Luke']);
+    final matthewMarkLuke = topicWith('matthew-mark-luke', [
+      'Matthew',
+      'Mark',
+      'Luke',
+    ]);
+    final markLukeJohn = topicWith('mark-luke-john', ['Mark', 'Luke', 'John']);
+    final allFour = topicWith('all-four', ['Matthew', 'Mark', 'Luke', 'John']);
+
+    test('matches only John and Mark references', () {
+      final filter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.onlySelected,
+        selectedGospels: {'John', 'Mark'},
+      );
+
+      expect(matchesFilter(johnAndMark, filter), isTrue);
+      expect(matchesFilter(markLuke, filter), isFalse);
+      expect(matchesFilter(allFour, filter), isFalse);
+    });
+
+    test('matches Mark and Luke while excluding John', () {
+      final filter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.matchIndividualConditions,
+        requirements: {
+          'Mark': GospelReferenceRequirement.hasReference,
+          'Luke': GospelReferenceRequirement.hasReference,
+          'John': GospelReferenceRequirement.doesNotHaveReference,
+        },
+      );
+
+      expect(matchesFilter(markLuke, filter), isTrue);
+      expect(matchesFilter(matthewMarkLuke, filter), isTrue);
+      expect(matchesFilter(markLukeJohn, filter), isFalse);
+    });
+
+    test('stacks condition rows with AND and OR logic', () {
+      final andFilter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.matchIndividualConditions,
+        conditionMode: HarmonyFilterConditionMode.all,
+        conditions: const [
+          HarmonyFilterCondition(
+            gospel: 'Matthew',
+            requirement: GospelReferenceRequirement.hasReference,
+          ),
+          HarmonyFilterCondition(
+            gospel: 'Luke',
+            requirement: GospelReferenceRequirement.hasReference,
+          ),
+          HarmonyFilterCondition(
+            gospel: 'John',
+            requirement: GospelReferenceRequirement.doesNotHaveReference,
+          ),
+        ],
+      );
+
+      expect(matchesFilter(matthewMarkLuke, andFilter), isTrue);
+      expect(matchesFilter(markLuke, andFilter), isFalse);
+      expect(matchesFilter(allFour, andFilter), isFalse);
+
+      final orFilter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.matchIndividualConditions,
+        conditionMode: HarmonyFilterConditionMode.any,
+        conditions: const [
+          HarmonyFilterCondition(
+            gospel: 'Matthew',
+            requirement: GospelReferenceRequirement.hasReference,
+          ),
+          HarmonyFilterCondition(
+            gospel: 'John',
+            requirement: GospelReferenceRequirement.hasReference,
+          ),
+        ],
+      );
+
+      expect(matchesFilter(markLuke, orFilter), isFalse);
+      expect(matchesFilter(johnAndMark, orFilter), isTrue);
+      expect(matchesFilter(matthewMarkLuke, orFilter), isTrue);
+    });
+
+    test('matches any selected gospel references', () {
+      final filter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.includesAnySelected,
+        selectedGospels: {'Matthew', 'Luke'},
+      );
+
+      expect(matchesFilter(markLuke, filter), isTrue);
+      expect(matchesFilter(topicWith('john', ['John']), filter), isFalse);
+    });
+
+    test('matches all selected gospel references', () {
+      final filter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.includesAllSelected,
+        selectedGospels: {'Mark', 'Luke'},
+      );
+
+      expect(matchesFilter(markLuke, filter), isTrue);
+      expect(matchesFilter(johnAndMark, filter), isFalse);
+    });
+
+    test('excludes selected gospel references', () {
+      final filter = HarmonyFilterState.custom(
+        operator: HarmonyFilterOperator.excludesSelected,
+        selectedGospels: {'John'},
+      );
+
+      expect(matchesFilter(markLuke, filter), isTrue);
+      expect(matchesFilter(johnAndMark, filter), isFalse);
+    });
+
+    test('matches all four, exactly one, at least two, and clear filter', () {
+      expect(
+        matchesFilter(
+          allFour,
+          HarmonyFilterState.preset(HarmonyFilterPreset.allFourGospels),
+        ),
+        isTrue,
+      );
+      expect(
+        matchesFilter(
+          markLuke,
+          HarmonyFilterState.preset(HarmonyFilterPreset.allFourGospels),
+        ),
+        isFalse,
+      );
+
+      final exactlyOne = HarmonyFilterState.preset(
+        HarmonyFilterPreset.exactlyOneGospel,
+      );
+      expect(
+        matchesFilter(topicWith('only-luke', ['Luke']), exactlyOne),
+        isTrue,
+      );
+      expect(matchesFilter(markLuke, exactlyOne), isFalse);
+
+      final atLeastTwo = HarmonyFilterState.preset(
+        HarmonyFilterPreset.atLeastTwoGospels,
+      );
+      expect(matchesFilter(markLuke, atLeastTwo), isTrue);
+      expect(
+        matchesFilter(topicWith('only-john', ['John']), atLeastTwo),
+        isFalse,
+      );
+
+      expect(matchesFilter(markLuke, HarmonyFilterState.allTopics), isTrue);
+      expect(matchesFilter(allFour, HarmonyFilterState.allTopics), isTrue);
+    });
+
+    test('dash placeholders do not count as references', () {
+      final topic = Topic(
+        id: 'dash',
+        name: 'Dash',
+        references: const [
+          GospelReference(book: 'John', chapter: 0, verses: '—'),
+          GospelReference(book: 'Luke', chapter: 2, verses: ''),
+        ],
+      );
+
+      expect(hasReference(topic, 'John'), isFalse);
+      expect(hasReference(topic, 'Luke'), isTrue);
+      expect(getReferencedGospels(topic), {'Luke'});
+    });
+  });
+
+  testWidgets('filter button and dialog use Arabic UI labels', (tester) async {
+    final arabic = kBaseLanguageOptions.firstWhere(
+      (option) => option.code == 'arabic',
+    );
+    HarmonyFilterState? selected;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('arabic'),
+          child: Scaffold(
+            body: Center(
+              child: HarmonyFilterButton(
+                filterState: HarmonyFilterState.allTopics,
+                uiLanguage: arabic,
+                onChanged: (filter) {
+                  selected = filter;
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('تصفية'), findsOneWidget);
+    await tester.tap(find.text('تصفية'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('كل المواضيع'), findsOneWidget);
+    expect(find.text('إزالة التصفية'), findsOneWidget);
+    expect(find.text('تطبيق'), findsOneWidget);
+
+    await tester.tap(find.text('تطبيق'));
+    await tester.pumpAndSettle();
+
+    expect(selected, isNotNull);
+    expect(selected!.isActive, isFalse);
+  });
+
+  testWidgets('custom filter dialog supports adding stacked conditions', (
+    tester,
+  ) async {
+    HarmonyFilterState? selected;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('english'),
+          child: Scaffold(
+            body: Center(
+              child: HarmonyFilterButton(
+                filterState: HarmonyFilterState.custom(
+                  operator: HarmonyFilterOperator.matchIndividualConditions,
+                  conditions: const [
+                    HarmonyFilterCondition(
+                      gospel: 'Matthew',
+                      requirement: GospelReferenceRequirement.hasReference,
+                    ),
+                  ],
+                ),
+                uiLanguage: kBaseLanguageOptions.first,
+                onChanged: (filter) {
+                  selected = filter;
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Match all conditions'), findsOneWidget);
+    expect(find.text('Condition 1'), findsOneWidget);
+    expect(find.text('Add condition'), findsOneWidget);
+
+    await tester.tap(find.text('Add condition'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Condition 2'), findsOneWidget);
+
+    await tester.tap(find.text('Apply'));
+    await tester.pumpAndSettle();
+
+    expect(selected, isNotNull);
+    expect(selected!.operator, HarmonyFilterOperator.matchIndividualConditions);
+    expect(selected!.conditionMode, HarmonyFilterConditionMode.all);
+    expect(selected!.conditions, hasLength(2));
+  });
+
+  testWidgets('browser route links ignore taps while navigation is blocked', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {'/topic': (_) => const Scaffold(body: Text('Topic page'))},
+        home: Scaffold(
+          body: BrowserRouteLink(
+            uri: Uri(path: '/topic'),
+            builder: (context, followLink) => TextButton(
+              onPressed: followLink,
+              child: const Text('Open topic'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    BrowserRouteLinkNavigation.pushBlock();
+    addTearDown(BrowserRouteLinkNavigation.popBlock);
+
+    await tester.tap(find.text('Open topic'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Topic page'), findsNothing);
+    expect(find.text('Open topic'), findsOneWidget);
+  });
 
   testWidgets('single-reference harmony cells keep per-reference hover', (
     tester,

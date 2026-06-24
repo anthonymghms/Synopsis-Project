@@ -13,6 +13,36 @@ import 'package:flutter/widgets.dart';
 typedef BrowserRouteLinkBuilder =
     Widget Function(BuildContext context, VoidCallback? followLink);
 
+class BrowserRouteLinkNavigation {
+  static int _blockDepth = 0;
+  static int _blockedUntilMicros = 0;
+
+  static bool get isBlocked {
+    if (_blockDepth > 0) {
+      return true;
+    }
+    return DateTime.now().microsecondsSinceEpoch < _blockedUntilMicros;
+  }
+
+  static void pushBlock() {
+    _blockDepth++;
+  }
+
+  static void popBlock() {
+    if (_blockDepth > 0) {
+      _blockDepth--;
+    }
+  }
+
+  static void blockFor(Duration duration) {
+    final until =
+        DateTime.now().microsecondsSinceEpoch + duration.inMicroseconds;
+    if (until > _blockedUntilMicros) {
+      _blockedUntilMicros = until;
+    }
+  }
+}
+
 class BrowserRouteLink extends StatefulWidget {
   const BrowserRouteLink({super.key, required this.uri, required this.builder});
 
@@ -43,7 +73,10 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
 
   void _follow() {
     final target = widget.uri;
-    if (target == null || !mounted || _browserModifierPressed) {
+    if (target == null ||
+        !mounted ||
+        BrowserRouteLinkNavigation.isBlocked ||
+        _browserModifierPressed) {
       return;
     }
     final now = DateTime.now().microsecondsSinceEpoch;
@@ -77,6 +110,10 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
       ..cursor = 'inherit';
 
     _clickSubscription = anchor.onClick.listen((event) {
+      if (BrowserRouteLinkNavigation.isBlocked) {
+        event.preventDefault();
+        return;
+      }
       if (_shouldLetBrowserHandle(event)) {
         return;
       }
