@@ -37,6 +37,21 @@ CORS(
         }
     },
 )
+
+
+def _json_response(payload, status=200, cache_seconds=300):
+    response = Response(
+        json.dumps(payload, ensure_ascii=False),
+        status=status,
+        content_type="application/json; charset=utf-8",
+    )
+    if status == 200 and cache_seconds > 0:
+        response.headers["Cache-Control"] = f"public, max-age={cache_seconds}"
+    else:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 """
 @app.route('/<language>/<version>/topics', methods=['GET'])
 def get_topics(language, version):
@@ -60,18 +75,11 @@ def get_topic(language, version, topic_id):
     doc_ref = _topics_collection(language, version).document(topic_id)
     doc = doc_ref.get()
     if not doc.exists:
-        return Response(
-            json.dumps({"error": "Topic not found"}, ensure_ascii=False, indent=2),
-            status=404,
-            content_type="application/json; charset=utf-8",
-        )
+        return _json_response({"error": "Topic not found"}, status=404)
 
     data = doc.to_dict() or {}
     data["id"] = doc.id
-    return Response(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        content_type="application/json; charset=utf-8",
-    )
+    return _json_response(data)
 
 
 _ARABIC_INDIC_DIGIT_TRANSLATION = str.maketrans(
@@ -483,18 +491,13 @@ def get_verse():
     version = _select_bible_version(language, version)
 
     if not all([language, version, requested_book, chapter, verse]):
-        return Response(
-            json.dumps({"error": "Missing params"}),
-            status=400,
-            content_type="application/json",
-        )
+        return _json_response({"error": "Missing params"}, status=400)
 
     book = _resolve_book_document_id(language, version, requested_book)
     if not book:
-        return Response(
-            json.dumps({"error": f"Unknown book '{requested_book}'"}),
+        return _json_response(
+            {"error": f"Unknown book '{requested_book}'"},
             status=404,
-            content_type="application/json",
         )
 
     results = []
@@ -502,20 +505,13 @@ def get_verse():
         try:
             start, end = map(int, verse.split("-"))
         except ValueError:
-            return Response(
-                json.dumps({"error": "Invalid verse range"}),
-                status=400,
-                content_type="application/json",
-            )
+            return _json_response({"error": "Invalid verse range"}, status=400)
         for i in range(start, end + 1):
             results.append(_load_single_verse(language, version, book, chapter, i))
     else:
         results.append(_load_single_verse(language, version, book, chapter, verse))
 
-    return Response(
-        json.dumps(results, ensure_ascii=False, indent=2),
-        content_type="application/json; charset=utf-8",
-    )
+    return _json_response(results)
 
 
 @app.route("/get_chapter", methods=["GET"])
@@ -529,18 +525,13 @@ def get_chapter():
     version = _select_bible_version(language, version)
 
     if not all([language, version, requested_book, chapter]):
-        return Response(
-            json.dumps({"error": "Missing params"}),
-            status=400,
-            content_type="application/json",
-        )
+        return _json_response({"error": "Missing params"}, status=400)
 
     book = _resolve_book_document_id(language, version, requested_book)
     if not book:
-        return Response(
-            json.dumps({"error": f"Unknown book '{requested_book}'"}),
+        return _json_response(
+            {"error": f"Unknown book '{requested_book}'"},
             status=404,
-            content_type="application/json",
         )
 
     verses_collection = (
@@ -559,10 +550,7 @@ def get_chapter():
 
     verses.sort(key=lambda item: item["verse"] if isinstance(item["verse"], int) else 0)
 
-    return Response(
-        json.dumps(verses, ensure_ascii=False, indent=2),
-        content_type="application/json; charset=utf-8",
-    )
+    return _json_response(verses)
 
 
 def _topics_collection(language: str, version: str):
@@ -659,11 +647,12 @@ def get_topics():
         )
 
     topics.sort(key=lambda x: int(x["id"]) if x["id"].isdigit() else x["id"])
-    return Response(
-        json.dumps(topics, ensure_ascii=False, indent=2),
-        content_type="application/json; charset=utf-8",
-    )
+    return _json_response(topics)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8010, debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=8010,
+        debug=os.environ.get("FLASK_DEBUG", "").strip() == "1",
+    )

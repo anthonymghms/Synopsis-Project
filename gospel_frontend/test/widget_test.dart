@@ -54,6 +54,68 @@ void main() {
     expect(reference.enableHoverPreview, isTrue);
   });
 
+  testWidgets('topic hover tooltip only shows helper text', (tester) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+      ]),
+    );
+
+    final tooltipFinder = find.byWidgetPredicate(
+      (widget) =>
+          widget is Tooltip && widget.message == 'Click to read all references',
+    );
+
+    expect(tooltipFinder, findsOneWidget);
+    final tooltip = tester.widget<Tooltip>(tooltipFinder);
+    expect(tooltip.message, isNot(contains('Teaching and healings')));
+  });
+
+  testWidgets('version menu has no check while awaiting explicit choice', (
+    tester,
+  ) async {
+    LanguageOption? selectedLanguage;
+    String? selectedVersion;
+    MenuLanguageController.instance.notifier.value = 'english';
+
+    await tester.pumpWidget(
+      MenuLanguageScope(
+        notifier: MenuLanguageController.instance.notifier,
+        child: MaterialApp(
+          home: Scaffold(
+            body: AppToolbar(
+              language: kBaseLanguageOptions.first,
+              version: 'kjv',
+              languages: kBaseLanguageOptions,
+              onLanguageChanged: (_) {},
+              onVersionChanged: (_) {},
+              onTranslationChanged: (language, version) {
+                selectedLanguage = language;
+                selectedVersion = version;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Language: English'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('العربية').last);
+    await tester.pumpAndSettle();
+
+    expect(selectedLanguage, isNull);
+    expect(selectedVersion, isNull);
+    expect(find.text('الترجمة: اختر الترجمة'), findsOneWidget);
+    expect(find.byIcon(Icons.check), findsNothing);
+
+    await tester.tap(find.text('كتاب الحياة').last);
+    await tester.pumpAndSettle();
+
+    expect(selectedLanguage?.code, 'arabic');
+    expect(selectedVersion, 'New Arabic Version');
+  });
+
   testWidgets('multi-reference harmony cells use one combined hover target', (
     tester,
   ) async {

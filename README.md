@@ -42,7 +42,7 @@ From the Flutter project directory:
 
 ```sh
 cd gospel_frontend
-flutter build web --dart-define=API_BASE_URL=http://164.68.108.181:8010
+flutter build web --release --dart-define=API_BASE_URL=http://164.68.108.181:8010
 ```
 
 Deploy the generated `gospel_frontend/build/web` files to the VPS frontend host.
@@ -52,6 +52,41 @@ The Flask backend should keep serving the existing API routes:
 /topics
 /get_verse
 /get_chapter
+```
+
+Serve the Flutter build with Nginx or another static server rather than
+`flutter run`. Enable compression and long-lived caching for hashed Flutter
+assets:
+
+```nginx
+gzip on;
+gzip_types text/css application/javascript application/json application/wasm;
+
+location / {
+  try_files $uri $uri/ /index.html;
+}
+
+location ~* \.(?:js|css|wasm|png|jpg|jpeg|gif|svg|ico)$ {
+  expires 30d;
+  add_header Cache-Control "public, immutable";
+}
+
+location = /index.html {
+  add_header Cache-Control "no-cache";
+}
+```
+
+Run Flask behind a production WSGI server such as gunicorn, and keep debug mode
+off unless explicitly testing:
+
+```sh
+gunicorn -w 2 -b 0.0.0.0:8010 app:app
+```
+
+For local Flask debugging, opt in with:
+
+```sh
+FLASK_DEBUG=1 python3 app.py
 ```
 
 ## Backend CORS

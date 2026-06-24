@@ -619,6 +619,8 @@ List<LanguageOption> _supportedLanguages = List<LanguageOption>.from(
   kBaseLanguageOptions,
 );
 
+Future<List<LanguageOption>>? _languageOptionsLoadFuture;
+
 final Map<String, LanguageOption> _baseLanguageLookup = {
   for (final option in kBaseLanguageOptions) option.code.toLowerCase(): option,
 };
@@ -782,6 +784,24 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
 }
 
 Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
+  final cached = _languageOptionsLoadFuture;
+  if (cached != null) {
+    return cached;
+  }
+
+  final future = _loadLanguagesFromFirestoreUncached();
+  _languageOptionsLoadFuture = future;
+  try {
+    return await future;
+  } catch (_) {
+    if (identical(_languageOptionsLoadFuture, future)) {
+      _languageOptionsLoadFuture = null;
+    }
+    rethrow;
+  }
+}
+
+Future<List<LanguageOption>> _loadLanguagesFromFirestoreUncached() async {
   final snapshot = await FirebaseFirestore.instance.collection('bibles').get();
   if (snapshot.docs.isEmpty) {
     return kBaseLanguageOptions;
@@ -1553,9 +1573,9 @@ PopupMenuItem<T> _checkedMenuItem<T>({
             width: 24,
             child: selected ? const Icon(Icons.check, size: 18) : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 240),
+            constraints: const BoxConstraints(maxWidth: 200),
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
@@ -1623,7 +1643,7 @@ Widget _buildToolbarVersionButton({
   required BuildContext context,
   required LanguageOption language,
   required LanguageOption menuLanguage,
-  required String selectedVersion,
+  required String? selectedVersion,
   required ValueChanged<String> onSelected,
   Key? popupKey,
   VoidCallback? onCanceled,
@@ -1633,8 +1653,12 @@ Widget _buildToolbarVersionButton({
     return const SizedBox.shrink();
   }
 
-  final current = _selectionVersionValue(language, selectedVersion);
-  final currentLabel = _versionLabel(language.code, selectedVersion);
+  final current = selectedVersion == null
+      ? null
+      : _selectionVersionValue(language, selectedVersion);
+  final currentLabel = selectedVersion == null
+      ? menuLanguage.ui.selectVersion
+      : _versionLabel(language.code, selectedVersion);
   return _toolbarDropdownButton<String>(
     context: context,
     icon: Icons.menu_book_outlined,
@@ -1648,8 +1672,9 @@ Widget _buildToolbarVersionButton({
             value: version.id,
             label: version.label,
             selected:
+                current != null &&
                 _selectionVersionValue(language, version.id).toLowerCase() ==
-                current.toLowerCase(),
+                    current.toLowerCase(),
             textDirection: menuLanguage.direction,
           ),
         )
@@ -1774,29 +1799,19 @@ class _AppToolbarState extends State<AppToolbar> {
   LanguageOption get _versionLanguage =>
       _versionGuidanceLanguage ?? widget.language;
 
-  String get _versionValue {
+  String? get _versionValue {
     final guidanceLanguage = _versionGuidanceLanguage;
     if (guidanceLanguage == null) {
       return widget.version;
     }
-    return _defaultToolbarVersion(guidanceLanguage);
-  }
-
-  String _defaultToolbarVersion(LanguageOption language) {
-    if (language.code == widget.language.code) {
-      return widget.version;
-    }
-    final versions = _selectableVersions(language);
-    if (versions.isNotEmpty) {
-      return _sanitizeVersionForLanguage(language, versions.first.id);
-    }
-    return _sanitizeVersionForLanguage(language, language.apiVersion);
+    return null;
   }
 
   void _clearVersionGuidance() {
     if (_versionGuidanceLanguage == null || !mounted) {
       return;
     }
+    _syncSelectedContentLanguage(widget.language, forceMenuLanguageSync: true);
     setState(() {
       _versionGuidanceLanguage = null;
     });
@@ -1826,6 +1841,7 @@ class _AppToolbarState extends State<AppToolbar> {
     setState(() {
       _versionGuidanceLanguage = language;
     });
+    _syncSelectedContentLanguage(language, forceMenuLanguageSync: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -1850,6 +1866,15 @@ class _AppToolbarState extends State<AppToolbar> {
   }
 
   @override
+  void didUpdateWidget(covariant AppToolbar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.language.code != widget.language.code ||
+        oldWidget.version != widget.version) {
+      _versionGuidanceLanguage = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final titleText = widget.title?.trim() ?? '';
     final menuLanguage = MenuLanguageScope.of(context);
@@ -1868,7 +1893,7 @@ class _AppToolbarState extends State<AppToolbar> {
       if (widget.showLanguageSelector)
         _buildToolbarLanguageButton(
           context: context,
-          language: widget.language,
+          language: _versionLanguage,
           menuLanguage: menuLanguage,
           languages: widget.languages,
           loading: widget.languagesLoading,
@@ -2346,25 +2371,11 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
       _error = null;
     });
 
-    final uri = Uri.parse('$apiBaseUrl/topics').replace(
-      queryParameters: {
-        'language': widget.languageOption.apiLanguage,
-        'version': widget.apiVersion,
-      },
-    );
-
     try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        setState(() {
-          _error = 'Error: ${response.statusCode}';
-          _loading = false;
-        });
-        return;
-      }
-
-      final List data = json.decode(response.body);
-      final topics = data.map((e) => Topic.fromJson(e)).toList();
+      final topics = await _ApiCache.fetchTopics(
+        language: widget.languageOption.apiLanguage,
+        version: widget.apiVersion,
+      );
       final matchIndex = _findTopicIndex(topics);
       final match = matchIndex == -1 ? null : topics[matchIndex];
 
@@ -2499,6 +2510,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   String? _pendingTopicId;
   bool _isAdmin = false;
   bool _routeProvidedInitialVersion = false;
+  bool _topicsLoadRequested = false;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -2620,7 +2632,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
     } catch (_) {
       // If persistence fails we silently fall back to defaults.
     } finally {
-      if (mounted && !_languagesLoading) {
+      if (mounted) {
         fetchTopics();
       }
     }
@@ -2654,6 +2666,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           _languageOptionForCode(fallbackCode),
           forceMenuLanguageSync: true,
         );
+        await fetchTopics();
       }
     } catch (e) {
       if (!mounted) {
@@ -2664,7 +2677,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
         _supportedLanguages = kBaseLanguageOptions;
       });
     } finally {
-      if (mounted) {
+      if (mounted && !_topicsLoadRequested) {
         fetchTopics();
       }
     }
@@ -2778,6 +2791,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   }
 
   Future<void> fetchTopics([LanguageOption? option]) async {
+    _topicsLoadRequested = true;
     final languageOption = option ?? _languageOption;
     final apiVersion = _apiVersionFor(languageOption);
     final expectedLanguage = _languageOption.apiLanguage;
@@ -2786,41 +2800,23 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _loading = true;
       _error = null;
     });
-    final uri = Uri.parse('$apiBaseUrl/topics').replace(
-      queryParameters: {
-        'language': languageOption.apiLanguage,
-        'version': apiVersion,
-      },
-    );
     try {
-      final response = await http.get(uri);
-      if (response.statusCode == 200) {
-        List data = json.decode(response.body);
-        if (!mounted) {
-          return;
-        }
-        if (_languageOption.apiLanguage != expectedLanguage ||
-            _apiVersionFor(_languageOption) != expectedVersion) {
-          return;
-        }
-        setState(() {
-          _topics = data.map((e) => Topic.fromJson(e)).toList();
-          _loading = false;
-        });
-        _openPendingTopicIfNeeded();
-      } else {
-        if (!mounted) {
-          return;
-        }
-        if (_languageOption.apiLanguage != expectedLanguage ||
-            _apiVersionFor(_languageOption) != expectedVersion) {
-          return;
-        }
-        setState(() {
-          _error = "Error: ${response.statusCode}";
-          _loading = false;
-        });
+      final topics = await _ApiCache.fetchTopics(
+        language: languageOption.apiLanguage,
+        version: apiVersion,
+      );
+      if (!mounted) {
+        return;
       }
+      if (_languageOption.apiLanguage != expectedLanguage ||
+          _apiVersionFor(_languageOption) != expectedVersion) {
+        return;
+      }
+      setState(() {
+        _topics = topics;
+        _loading = false;
+      });
+      _openPendingTopicIfNeeded();
     } catch (e) {
       if (!mounted) {
         return;
@@ -3395,8 +3391,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
             TableCell(
               verticalAlignment: TableCellVerticalAlignment.top,
               child: Tooltip(
-                message:
-                    '${labels.clickToReadAllReferences}\n${_numberedTopicTitle(topic, languageOption, zeroBasedIndex: i)}',
+                message: labels.clickToReadAllReferences,
                 waitDuration: const Duration(milliseconds: 400),
                 child: BrowserRouteLink(
                   uri: _topicRouteUri(topic, i),
@@ -3841,21 +3836,14 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         : reference.verses.trim();
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
-        queryParameters: {
-          'language': widget.language,
-          'version': _previewVersionForRequest(),
-          'book': bookParam,
-          'chapter': reference.chapter.toString(),
-          'verse': verseParam,
-        },
-      );
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
       final verses = _normalizeVerseLinesForDisplay(
-        _parseVerseLines(response.body),
+        await _ApiCache.fetchVerseRange(
+          language: widget.language,
+          version: _previewVersionForRequest(),
+          book: bookParam,
+          chapter: reference.chapter,
+          verse: verseParam,
+        ),
         language: _previewLanguageOption(),
         withDiacritics: _previewWithDiacritics(),
       );
@@ -4477,22 +4465,15 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         : reference.verses.trim();
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
-        queryParameters: {
-          'language': widget.language,
-          'version': _previewVersionForRequest(),
-          'book': _bookParam(reference),
-          'chapter': reference.chapter.toString(),
-          'verse': verseParam,
-        },
-      );
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
       final cache = _ReferencePreviewCache(
         verses: _normalizeVerseLinesForDisplay(
-          _parseVerseLines(response.body),
+          await _ApiCache.fetchVerseRange(
+            language: widget.language,
+            version: _previewVersionForRequest(),
+            book: _bookParam(reference),
+            chapter: reference.chapter,
+            verse: verseParam,
+          ),
           language: _previewLanguageOption(),
           withDiacritics: _previewWithDiacritics(),
         ),
@@ -5507,21 +5488,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _loadingHarmonyTopics = true;
       _harmonyTopicsError = null;
     });
-    final uri = Uri.parse('$apiBaseUrl/topics').replace(
-      queryParameters: {
-        'language': _activeApiLanguage,
-        'version': _activeVersion,
-      },
-    );
     try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
-      final raw = json.decode(response.body);
-      final list = raw is List
-          ? raw.whereType<Map<String, dynamic>>().map(Topic.fromJson).toList()
-          : <Topic>[];
+      final list = await _ApiCache.fetchTopics(
+        language: _activeApiLanguage,
+        version: _activeVersion,
+      );
       if (!mounted) {
         return;
       }
@@ -5691,20 +5662,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
-        queryParameters: {
-          'language': _activeApiLanguage,
-          'version': _activeVersion,
-          'book': bookParam,
-          'chapter': widget.chapter.toString(),
-        },
-      );
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
       final verses = _normalizeVerseLinesForDisplay(
-        _parseVerseLines(response.body),
+        await _ApiCache.fetchChapter(
+          language: _activeApiLanguage,
+          version: _activeVersion,
+          book: bookParam,
+          chapter: widget.chapter,
+        ),
         language: _languageOption,
         withDiacritics: _withDiacritics,
       );
@@ -6497,24 +6461,18 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
-        queryParameters: {
-          'language': entry.language.apiLanguage,
-          'version': _comparisonVersion(
-            entry.language,
-            entry.version,
-            withDiacritics: entry.withDiacritics,
-          ),
-          'book': bookParam,
-          'chapter': widget.chapter.toString(),
-        },
+      final comparisonVersion = _comparisonVersion(
+        entry.language,
+        entry.version,
+        withDiacritics: entry.withDiacritics,
       );
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
       final verses = _normalizeVerseLinesForDisplay(
-        _parseVerseLines(response.body),
+        await _ApiCache.fetchChapter(
+          language: entry.language.apiLanguage,
+          version: comparisonVersion,
+          book: bookParam,
+          chapter: widget.chapter,
+        ),
         language: entry.language,
         withDiacritics: entry.withDiacritics,
       );
@@ -7322,6 +7280,112 @@ class GospelReference {
   }
 }
 
+class _ApiCache {
+  static final Map<String, Future<List<Topic>>> _topicsByTranslation = {};
+  static final Map<String, Future<List<_VerseLine>>> _chapters = {};
+  static final Map<String, Future<List<_VerseLine>>> _verseRanges = {};
+
+  static String _key(List<Object?> parts) {
+    return parts.map((part) => (part ?? '').toString().trim()).join('|');
+  }
+
+  static Future<T> _cached<T>(
+    Map<String, Future<T>> cache,
+    String key,
+    Future<T> Function() loader,
+  ) async {
+    final cached = cache[key];
+    if (cached != null) {
+      return cached;
+    }
+
+    final future = loader();
+    cache[key] = future;
+    try {
+      return await future;
+    } catch (_) {
+      if (identical(cache[key], future)) {
+        cache.remove(key);
+      }
+      rethrow;
+    }
+  }
+
+  static Future<List<Topic>> fetchTopics({
+    required String language,
+    required String version,
+  }) {
+    final key = _key(['topics', language, version]);
+    return _cached(_topicsByTranslation, key, () async {
+      final uri = Uri.parse(
+        '$apiBaseUrl/topics',
+      ).replace(queryParameters: {'language': language, 'version': version});
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final decoded = json.decode(response.body);
+      if (decoded is! List) {
+        return const <Topic>[];
+      }
+      return decoded
+          .whereType<Map>()
+          .map((item) => Topic.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    });
+  }
+
+  static Future<List<_VerseLine>> fetchChapter({
+    required String language,
+    required String version,
+    required String book,
+    required int chapter,
+  }) {
+    final key = _key(['chapter', language, version, book, chapter]);
+    return _cached(_chapters, key, () async {
+      final uri = Uri.parse('$apiBaseUrl/get_chapter').replace(
+        queryParameters: {
+          'language': language,
+          'version': version,
+          'book': book,
+          'chapter': chapter.toString(),
+        },
+      );
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      return _parseVerseLines(response.body);
+    });
+  }
+
+  static Future<List<_VerseLine>> fetchVerseRange({
+    required String language,
+    required String version,
+    required String book,
+    required int chapter,
+    required String verse,
+  }) {
+    final key = _key(['verse', language, version, book, chapter, verse]);
+    return _cached(_verseRanges, key, () async {
+      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
+        queryParameters: {
+          'language': language,
+          'version': version,
+          'book': book,
+          'chapter': chapter.toString(),
+          'verse': verse,
+        },
+      );
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      return _parseVerseLines(response.body);
+    });
+  }
+}
+
 // ----- Second Screen: Choose Version -----
 class ChooseVersionScreen extends StatefulWidget {
   final Topic topic;
@@ -7781,20 +7845,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         final parts = <_AuthorTextEntry>[];
         for (final ref in refs) {
           final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
-          final url =
-              "$apiBaseUrl/get_verse"
-              "?language=${Uri.encodeComponent(option.apiLanguage)}"
-              "&version=${Uri.encodeComponent(version)}"
-              "&book=${Uri.encodeComponent(bookId)}"
-              "&chapter=${ref.chapter}"
-              "&verse=${Uri.encodeComponent(ref.verses)}";
-          final response = await http.get(Uri.parse(url));
-          if (response.statusCode != 200) {
-            throw Exception("Error ${response.statusCode} for $author");
-          }
-          final List<dynamic> verses = json.decode(response.body);
           final verseLines = _normalizeVerseLinesForDisplay(
-            _parseVerseLinesFromJson(verses),
+            await _ApiCache.fetchVerseRange(
+              language: option.apiLanguage,
+              version: version,
+              book: bookId,
+              chapter: ref.chapter,
+              verse: ref.verses.trim().isEmpty ? '1' : ref.verses.trim(),
+            ),
             language: option,
             withDiacritics: _withDiacritics,
           );
@@ -8554,25 +8612,18 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     });
 
     try {
-      final uri = Uri.parse('$apiBaseUrl/get_verse').replace(
-        queryParameters: {
-          'language': entry.language.apiLanguage,
-          'version': _comparisonVersionFor(
+      final verses = _normalizeVerseLinesForDisplay(
+        await _ApiCache.fetchVerseRange(
+          language: entry.language.apiLanguage,
+          version: _comparisonVersionFor(
             entry.language,
             entry.version,
             withDiacritics: entry.withDiacritics,
           ),
-          'book': bookParam,
-          'chapter': reference.chapter.toString(),
-          'verse': verseParam,
-        },
-      );
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-        throw Exception('Error ${response.statusCode}');
-      }
-      final verses = _normalizeVerseLinesForDisplay(
-        _parseVerseLines(response.body),
+          book: bookParam,
+          chapter: reference.chapter,
+          verse: verseParam,
+        ),
         language: entry.language,
         withDiacritics: entry.withDiacritics,
       );
