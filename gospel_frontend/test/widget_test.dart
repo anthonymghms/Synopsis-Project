@@ -51,6 +51,41 @@ void main() {
     );
   }
 
+  Widget interlinearGroupFor(double textScale) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 280,
+              child: InterlinearVerseGroup(
+                verseNumber: 1,
+                language: 'english',
+                version: 'kjv',
+                textScale: textScale,
+                translations: const [
+                  InterlinearTranslation(
+                    label: 'English · KJV',
+                    direction: TextDirection.ltr,
+                    verses: {
+                      1: 'In the beginning was the Word, and the Word was with God.',
+                    },
+                  ),
+                  InterlinearTranslation(
+                    label: 'العربية · البستاني فاندايك',
+                    direction: TextDirection.rtl,
+                    verses: {1: 'في البدء كان الكلمة والكلمة كان عند الله.'},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<TestGesture> hoverOver(WidgetTester tester, Finder finder) async {
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: const Offset(-1, -1));
@@ -231,6 +266,58 @@ void main() {
       expect(hasReference(topic, 'Luke'), isTrue);
       expect(getReferencedGospels(topic), {'Luke'});
     });
+
+    test('quick-filter presets exclude the redundant any-Gospel preset', () {
+      expect(HarmonyFilterPreset.values, [
+        HarmonyFilterPreset.allTopics,
+        HarmonyFilterPreset.allFourGospels,
+        HarmonyFilterPreset.onlyMatthew,
+        HarmonyFilterPreset.onlyMark,
+        HarmonyFilterPreset.onlyLuke,
+        HarmonyFilterPreset.onlyJohn,
+        HarmonyFilterPreset.exactlyOneGospel,
+        HarmonyFilterPreset.atLeastTwoGospels,
+        HarmonyFilterPreset.custom,
+      ]);
+    });
+  });
+
+  testWidgets('interlinear rows apply zoom to LTR and RTL text immediately', (
+    tester,
+  ) async {
+    await tester.pumpWidget(interlinearGroupFor(1.0));
+
+    final richTextFinder = find.descendant(
+      of: find.byType(InterlinearVerseGroup),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is RichText && widget.text.toPlainText().contains('('),
+      ),
+    );
+    expect(richTextFinder, findsNWidgets(2));
+    final normalHeight = tester.getSize(richTextFinder.first).height;
+    for (final richText in tester.widgetList<RichText>(richTextFinder)) {
+      expect(richText.textScaler.scale(16), closeTo(16, 0.01));
+    }
+    expect(
+      Directionality.of(tester.element(richTextFinder.at(0))),
+      TextDirection.ltr,
+    );
+    expect(
+      Directionality.of(tester.element(richTextFinder.at(1))),
+      TextDirection.rtl,
+    );
+
+    await tester.pumpWidget(interlinearGroupFor(1.6));
+
+    final zoomedHeight = tester.getSize(richTextFinder.first).height;
+    expect(zoomedHeight, greaterThan(normalHeight));
+    for (final richText in tester.widgetList<RichText>(richTextFinder)) {
+      expect(richText.textScaler.scale(16), closeTo(25.6, 0.01));
+    }
+    final verseMarker = tester.widget<Text>(find.text('1'));
+    expect(verseMarker.textScaler!.scale(16), closeTo(25.6, 0.01));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('filter button and dialog use Arabic UI labels', (tester) async {
@@ -266,11 +353,52 @@ void main() {
     expect(find.text('إزالة التصفية'), findsOneWidget);
     expect(find.text('تطبيق'), findsOneWidget);
 
+    await tester.tap(find.byType(DropdownButtonFormField<HarmonyFilterPreset>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('أي إنجيل لديه مرجع'), findsNothing);
+    expect(find.text('كل الأناجيل الأربعة'), findsOneWidget);
+    expect(find.text('إنجيل واحد بالضبط'), findsOneWidget);
+    expect(find.text('على الأقل إنجيلان'), findsOneWidget);
+
+    await tester.tap(find.text('كل المواضيع').last);
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('تطبيق'));
     await tester.pumpAndSettle();
 
     expect(selected, isNotNull);
     expect(selected!.isActive, isFalse);
+  });
+
+  testWidgets('English filter menu omits the redundant preset', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('english'),
+          child: Scaffold(
+            body: Center(
+              child: HarmonyFilterButton(
+                filterState: HarmonyFilterState.allTopics,
+                uiLanguage: kBaseLanguageOptions.first,
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<HarmonyFilterPreset>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Any Gospel has reference'), findsNothing);
+    expect(find.text('All four Gospels'), findsOneWidget);
+    expect(find.text('Exactly one Gospel'), findsOneWidget);
+    expect(find.text('At least two Gospels'), findsOneWidget);
+    expect(find.text('Custom filter'), findsOneWidget);
   });
 
   testWidgets('custom filter dialog supports adding stacked conditions', (

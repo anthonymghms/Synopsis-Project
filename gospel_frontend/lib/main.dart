@@ -276,7 +276,6 @@ class LocalizedUiLabels {
   final String apply;
   final String customFilter;
   final String allTopics;
-  final String anyGospelHasReference;
   final String allFourGospels;
   final String onlyGospelPrefix;
   final String exactlyOneGospel;
@@ -370,7 +369,6 @@ class LocalizedUiLabels {
     required this.apply,
     required this.customFilter,
     required this.allTopics,
-    required this.anyGospelHasReference,
     required this.allFourGospels,
     required this.onlyGospelPrefix,
     required this.exactlyOneGospel,
@@ -534,7 +532,6 @@ const List<LanguageOption> kBaseLanguageOptions = [
       apply: 'Apply',
       customFilter: 'Custom filter',
       allTopics: 'All topics',
-      anyGospelHasReference: 'Any Gospel has reference',
       allFourGospels: 'All four Gospels',
       onlyGospelPrefix: 'Only',
       exactlyOneGospel: 'Exactly one Gospel',
@@ -645,7 +642,6 @@ const List<LanguageOption> kBaseLanguageOptions = [
       apply: 'تطبيق',
       customFilter: 'تصفية مخصصة',
       allTopics: 'كل المواضيع',
-      anyGospelHasReference: 'أي إنجيل لديه مرجع',
       allFourGospels: 'كل الأناجيل الأربعة',
       onlyGospelPrefix: 'فقط',
       exactlyOneGospel: 'إنجيل واحد بالضبط',
@@ -1533,7 +1529,6 @@ bool _isArabicLanguage(String language) {
 
 enum HarmonyFilterPreset {
   allTopics,
-  anyGospelHasReference,
   allFourGospels,
   onlyMatthew,
   onlyMark,
@@ -1605,12 +1600,6 @@ class HarmonyFilterState {
     switch (preset) {
       case HarmonyFilterPreset.allTopics:
         return HarmonyFilterState.allTopics;
-      case HarmonyFilterPreset.anyGospelHasReference:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.anyGospelHasReference,
-          operator: HarmonyFilterOperator.includesAnySelected,
-          selectedGospels: <String>{'Matthew', 'Mark', 'Luke', 'John'},
-        );
       case HarmonyFilterPreset.allFourGospels:
         return const HarmonyFilterState(
           preset: HarmonyFilterPreset.allFourGospels,
@@ -2448,8 +2437,6 @@ String _filterPresetLabel(
   switch (preset) {
     case HarmonyFilterPreset.allTopics:
       return labels.allTopics;
-    case HarmonyFilterPreset.anyGospelHasReference:
-      return labels.anyGospelHasReference;
     case HarmonyFilterPreset.allFourGospels:
       return labels.allFourGospels;
     case HarmonyFilterPreset.onlyMatthew:
@@ -8105,8 +8092,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
 
     final statusWidgets = <Widget>[];
-    final translations = <_InterlinearTranslation>[
-      _InterlinearTranslation(
+    final translations = <InterlinearTranslation>[
+      InterlinearTranslation(
         label: _metaSummary.isNotEmpty ? _metaSummary : _currentVersionLabel(),
         direction: _languageOption.direction,
         verses: _mapVersesByNumber(_chapterVerses),
@@ -8161,7 +8148,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         return number >= entry.scopeStartVerse && number <= entry.scopeEndVerse;
       }).toList();
       translations.add(
-        _InterlinearTranslation(
+        InterlinearTranslation(
           label: label,
           direction: entry.language.direction,
           verses: _mapVersesByNumber(scopedVerses),
@@ -8181,12 +8168,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ...verseKeys.map(
-          (number) => _buildInterlinearVerseGroup(
+          (number) => InterlinearVerseGroup(
             verseNumber: number,
             translations: translations,
-            theme: theme,
             language: _activeApiLanguage,
             version: _activeVersion,
+            textScale: _textScale,
             emphasized: _highlightVerses.contains(number),
           ),
         ),
@@ -8373,8 +8360,8 @@ List<int> _sortedVerseKeys(Iterable<Map<int, String>> maps) {
   return sorted;
 }
 
-class _InterlinearTranslation {
-  const _InterlinearTranslation({
+class InterlinearTranslation {
+  const InterlinearTranslation({
     required this.label,
     required this.direction,
     required this.verses,
@@ -8385,65 +8372,90 @@ class _InterlinearTranslation {
   final Map<int, String> verses;
 }
 
-Widget _buildInterlinearVerseGroup({
-  required int verseNumber,
-  required List<_InterlinearTranslation> translations,
-  required ThemeData theme,
-  required String language,
-  String? version,
-  TextStyle? textStyle,
-  TextStyle? labelStyle,
-  bool emphasized = false,
-}) {
-  final resolvedTextStyle =
-      textStyle ?? theme.textTheme.bodyLarge?.copyWith(height: 1.6);
-  final verseTextStyle = emphasized
-      ? resolvedTextStyle?.copyWith(fontWeight: FontWeight.w700)
-      : resolvedTextStyle;
-  final resolvedLabelStyle =
-      labelStyle ??
-      theme.textTheme.labelSmall?.copyWith(
-        color: theme.colorScheme.onSurfaceVariant,
-      );
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          formatVerseMarker(verseNumber, language: language, version: version),
-          style: theme.textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w600,
+class InterlinearVerseGroup extends StatelessWidget {
+  const InterlinearVerseGroup({
+    super.key,
+    required this.verseNumber,
+    required this.translations,
+    required this.language,
+    required this.textScale,
+    this.version,
+    this.textStyle,
+    this.labelStyle,
+    this.emphasized = false,
+  });
+
+  final int verseNumber;
+  final List<InterlinearTranslation> translations;
+  final String language;
+  final double textScale;
+  final String? version;
+  final TextStyle? textStyle;
+  final TextStyle? labelStyle;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scaler = TextScaler.linear(
+      textScale.clamp(_zoomMin, _zoomMax).toDouble(),
+    );
+    final resolvedTextStyle =
+        textStyle ?? theme.textTheme.bodyLarge?.copyWith(height: 1.6);
+    final verseTextStyle = emphasized
+        ? resolvedTextStyle?.copyWith(fontWeight: FontWeight.w700)
+        : resolvedTextStyle;
+    final resolvedLabelStyle =
+        labelStyle ??
+        theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            formatVerseMarker(
+              verseNumber,
+              language: language,
+              version: version,
+            ),
+            textScaler: scaler,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        ...translations.map((translation) {
-          final text = translation.verses[verseNumber] ?? '';
-          final verseText = text.isNotEmpty ? text : '—';
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Directionality(
-              textDirection: translation.direction,
-              child: RichText(
-                textAlign: TextAlign.start,
-                text: TextSpan(
-                  style: resolvedTextStyle,
-                  children: [
-                    TextSpan(text: verseText, style: verseTextStyle),
-                    const TextSpan(text: ' '),
-                    TextSpan(
-                      text: '(${translation.label})',
-                      style: resolvedLabelStyle,
-                    ),
-                  ],
+          const SizedBox(height: 4),
+          ...translations.map((translation) {
+            final text = translation.verses[verseNumber] ?? '';
+            final verseText = text.isNotEmpty ? text : '—';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Directionality(
+                textDirection: translation.direction,
+                child: RichText(
+                  textScaler: scaler,
+                  textAlign: TextAlign.start,
+                  text: TextSpan(
+                    style: resolvedTextStyle,
+                    children: [
+                      TextSpan(text: verseText, style: verseTextStyle),
+                      const TextSpan(text: ' '),
+                      TextSpan(
+                        text: '(${translation.label})',
+                        style: resolvedLabelStyle,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        }),
-      ],
-    ),
-  );
+            );
+          }),
+        ],
+      ),
+    );
+  }
 }
 
 class _ComparisonPassage {
@@ -10061,8 +10073,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     ThemeData theme,
   ) {
     final statusWidgets = <Widget>[];
-    final translations = <_InterlinearTranslation>[
-      _InterlinearTranslation(
+    final translations = <InterlinearTranslation>[
+      InterlinearTranslation(
         label: _languageVersionSummary,
         direction: _languageOption.direction,
         verses: _mapVersesByNumber(entry.verses),
@@ -10113,7 +10125,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         continue;
       }
       translations.add(
-        _InterlinearTranslation(
+        InterlinearTranslation(
           label: label,
           direction: comparison.language.direction,
           verses: _mapVersesByNumber(comparison.verses),
@@ -10128,12 +10140,12 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ...verseKeys.map(
-          (number) => _buildInterlinearVerseGroup(
+          (number) => InterlinearVerseGroup(
             verseNumber: number,
             translations: translations,
-            theme: theme,
             language: _languageOption.apiLanguage,
             version: _activeVersion,
+            textScale: _textScale,
             textStyle: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
           ),
         ),
