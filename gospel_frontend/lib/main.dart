@@ -3343,6 +3343,7 @@ class GospelApp extends StatelessWidget {
       final label = uri.queryParameters['label'] ?? '';
       final source = uri.queryParameters['source'] ?? '';
       final topicId = uri.queryParameters['topicId'] ?? '';
+      final topicNumber = uri.queryParameters['topicNumber'] ?? '';
       final gospel = uri.queryParameters['gospel'] ?? '';
       final comparisons = uri.queryParameters['comparisons'] ?? '';
 
@@ -3360,6 +3361,7 @@ class GospelApp extends StatelessWidget {
             referenceLabelOverride: label,
             source: source,
             topicId: topicId,
+            topicNumber: topicNumber,
             gospel: gospel,
             comparisonState: comparisons,
             initialMenuLanguage: rawMenuLanguage,
@@ -4370,6 +4372,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
   Widget _buildReferenceCell(
     Topic topic,
+    int displayIndex,
     String gospel,
     List<GospelReference> refs,
     TextStyle? style,
@@ -4412,6 +4415,10 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final tooltipMessage = MenuLanguageScope.of(
       context,
     ).ui.clickToReadInChapter;
+    final topicNumber = _topicNumberForDisplay(
+      topic,
+      zeroBasedIndex: displayIndex,
+    );
     final useCombinedHoverPreview = filteredRefs.length > 1;
     final children = filteredRefs
         .map(
@@ -4433,6 +4440,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
             textDirection: widget.languageOption.direction,
             topicName: topic.name,
             topicId: topic.id.isNotEmpty ? topic.id : topic.name,
+            topicNumber: topicNumber,
             sourceContext: 'harmony',
             gospel: gospel,
             language: widget.languageOption.apiLanguage,
@@ -4442,6 +4450,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 : null,
             tooltipMessage: tooltipMessage,
             enableHoverPreview: !useCombinedHoverPreview,
+            showHoverTooltip: false,
+            openInNewTab: true,
           ),
         )
         .toList();
@@ -4486,6 +4496,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
       textDirection: widget.languageOption.direction,
       topicName: topic.name,
       topicId: topic.id.isNotEmpty ? topic.id : topic.name,
+      topicNumber: topicNumber,
       sourceContext: 'harmony',
       gospel: gospel,
       language: widget.languageOption.apiLanguage,
@@ -4494,6 +4505,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
           ? !_isArabicWithoutDiacritics(widget.apiVersion)
           : null,
       tooltipMessage: tooltipMessage,
+      openInNewTab: true,
       child: SizedBox(width: double.infinity, child: cellContent),
     );
   }
@@ -4583,6 +4595,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 verticalAlignment: TableCellVerticalAlignment.top,
                 child: _buildReferenceCell(
                   topic,
+                  displayIndex,
                   gospel,
                   grouped[gospel] ?? const <GospelReference>[],
                   referenceStyle,
@@ -4695,6 +4708,25 @@ class _HarmonyTableState extends State<HarmonyTable> {
   }
 }
 
+const _referencePreviewHoverDelay = Duration(milliseconds: 1500);
+
+class _ReferencePreviewDelay {
+  Timer? _timer;
+
+  void schedule(VoidCallback callback) {
+    cancel();
+    _timer = Timer(_referencePreviewHoverDelay, () {
+      _timer = null;
+      callback();
+    });
+  }
+
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+  }
+}
+
 class ReferenceHoverText extends StatefulWidget {
   const ReferenceHoverText({
     super.key,
@@ -4710,8 +4742,11 @@ class ReferenceHoverText extends StatefulWidget {
     this.enableHoverPreview = true,
     this.withDiacritics,
     this.topicId = '',
+    this.topicNumber = '',
     this.sourceContext = '',
     this.gospel = '',
+    this.showHoverTooltip = true,
+    this.openInNewTab = false,
   });
 
   final GospelReference reference;
@@ -4726,8 +4761,11 @@ class ReferenceHoverText extends StatefulWidget {
   final bool enableHoverPreview;
   final bool? withDiacritics;
   final String topicId;
+  final String topicNumber;
   final String sourceContext;
   final String gospel;
+  final bool showHoverTooltip;
+  final bool openInNewTab;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -4748,6 +4786,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
   Timer? _repositionPreviewTimer;
+  final _previewDelay = _ReferencePreviewDelay();
   final GlobalKey _anchorKey = GlobalKey();
   final GlobalKey _previewKey = GlobalKey();
   Size _previewSize = const Size(280, 220);
@@ -4801,6 +4840,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     if (widget.topicId.trim().isNotEmpty) {
       queryParameters['topicId'] = widget.topicId.trim();
     }
+    if (widget.topicNumber.trim().isNotEmpty) {
+      queryParameters['topicNumber'] = widget.topicNumber.trim();
+    }
     if (widget.sourceContext.trim().isNotEmpty) {
       queryParameters['source'] = widget.sourceContext.trim();
     }
@@ -4822,6 +4864,19 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
   void _cancelHideTimer() {
     _hidePreviewTimer?.cancel();
     _hidePreviewTimer = null;
+  }
+
+  void _schedulePreviewShow() {
+    if (_previewEntry != null) {
+      return;
+    }
+    _previewDelay.schedule(() {
+      if (!mounted || !_isTriggerHovered || !widget.enableHoverPreview) {
+        return;
+      }
+      _showPreview();
+      _loadPreview();
+    });
   }
 
   void _schedulePreviewHide() {
@@ -5155,6 +5210,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       return;
     }
     _hidePreview();
+    _previewDelay.cancel();
     _cancelHideTimer();
     _isHovered = false;
     _isTriggerHovered = false;
@@ -5192,6 +5248,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
           const SizedBox(width: 8),
           BrowserRouteLink(
             uri: uri,
+            openInNewTab: widget.openInNewTab,
             builder: (context, followLink) => InkWell(
               onTap: followLink,
               borderRadius: BorderRadius.circular(4),
@@ -5274,6 +5331,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
 
   @override
   void dispose() {
+    _previewDelay.cancel();
     _cancelHideTimer();
     WidgetsBinding.instance.removeObserver(this);
     _stopRepositionListener();
@@ -5310,12 +5368,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         _cancelHideTimer();
         _updateHover(true);
         if (widget.enableHoverPreview) {
-          _showPreview();
-          _loadPreview();
+          _schedulePreviewShow();
         }
       },
       onExit: (_) {
         _isTriggerHovered = false;
+        _previewDelay.cancel();
         _updateHover(false);
         if (widget.enableHoverPreview) {
           _schedulePreviewHide();
@@ -5325,6 +5383,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         key: _anchorKey,
         child: BrowserRouteLink(
           uri: text.isEmpty ? null : uri,
+          openInNewTab: widget.openInNewTab,
           builder: (context, followLink) => GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: followLink,
@@ -5359,6 +5418,10 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       return link;
     }
 
+    if (!widget.showHoverTooltip) {
+      return Semantics(hint: helperText, child: link);
+    }
+
     return Tooltip(
       message: helperText,
       waitDuration: const Duration(milliseconds: 400),
@@ -5379,8 +5442,10 @@ class ReferenceCellHoverPreview extends StatefulWidget {
     this.tooltipMessage = 'Click to read in chapter',
     this.withDiacritics,
     this.topicId = '',
+    this.topicNumber = '',
     this.sourceContext = '',
     this.gospel = '',
+    this.openInNewTab = false,
   });
 
   final List<GospelReference> references;
@@ -5392,8 +5457,10 @@ class ReferenceCellHoverPreview extends StatefulWidget {
   final String tooltipMessage;
   final bool? withDiacritics;
   final String topicId;
+  final String topicNumber;
   final String sourceContext;
   final String gospel;
+  final bool openInNewTab;
 
   @override
   State<ReferenceCellHoverPreview> createState() =>
@@ -5412,6 +5479,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   OverlayEntry? _previewEntry;
   Timer? _hidePreviewTimer;
   Timer? _repositionPreviewTimer;
+  final _previewDelay = _ReferencePreviewDelay();
   final GlobalKey _anchorKey = GlobalKey();
   final GlobalKey _previewKey = GlobalKey();
   Size _previewSize = const Size(320, 260);
@@ -5451,6 +5519,9 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     }
     if (widget.topicId.trim().isNotEmpty) {
       queryParameters['topicId'] = widget.topicId.trim();
+    }
+    if (widget.topicNumber.trim().isNotEmpty) {
+      queryParameters['topicNumber'] = widget.topicNumber.trim();
     }
     if (widget.sourceContext.trim().isNotEmpty) {
       queryParameters['source'] = widget.sourceContext.trim();
@@ -5537,6 +5608,19 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   void _cancelHideTimer() {
     _hidePreviewTimer?.cancel();
     _hidePreviewTimer = null;
+  }
+
+  void _schedulePreviewShow() {
+    if (_previewEntry != null) {
+      return;
+    }
+    _previewDelay.schedule(() {
+      if (!mounted || !_isTriggerHovered) {
+        return;
+      }
+      _showPreview();
+      _loadPreview();
+    });
   }
 
   void _schedulePreviewHide() {
@@ -5834,6 +5918,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       return;
     }
     _hidePreview();
+    _previewDelay.cancel();
     _cancelHideTimer();
     _isTriggerHovered = false;
     _isPreviewHovered = false;
@@ -5869,6 +5954,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
           const SizedBox(width: 8),
           BrowserRouteLink(
             uri: uri,
+            openInNewTab: widget.openInNewTab,
             builder: (context, followLink) => InkWell(
               onTap: followLink,
               borderRadius: BorderRadius.circular(4),
@@ -5989,6 +6075,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
 
   @override
   void dispose() {
+    _previewDelay.cancel();
     _cancelHideTimer();
     WidgetsBinding.instance.removeObserver(this);
     _stopRepositionListener();
@@ -6004,11 +6091,11 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       onEnter: (_) {
         _isTriggerHovered = true;
         _cancelHideTimer();
-        _showPreview();
-        _loadPreview();
+        _schedulePreviewShow();
       },
       onExit: (_) {
         _isTriggerHovered = false;
+        _previewDelay.cancel();
         _schedulePreviewHide();
       },
       child: KeyedSubtree(key: _anchorKey, child: widget.child),
@@ -6036,6 +6123,7 @@ class ReferenceViewerPage extends StatefulWidget {
     this.referenceLabelOverride = '',
     this.source = '',
     this.topicId = '',
+    this.topicNumber = '',
     this.gospel = '',
     this.comparisonState = '',
     this.initialMenuLanguage,
@@ -6051,6 +6139,7 @@ class ReferenceViewerPage extends StatefulWidget {
   final String referenceLabelOverride;
   final String source;
   final String topicId;
+  final String topicNumber;
   final String gospel;
   final String comparisonState;
   final String? initialMenuLanguage;
@@ -6642,6 +6731,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       if (widget.topicId.trim().isNotEmpty) {
         queryParameters['topicId'] = widget.topicId.trim();
       }
+      if (widget.topicNumber.trim().isNotEmpty) {
+        queryParameters['topicNumber'] = widget.topicNumber.trim();
+      }
       queryParameters['gospel'] = _normalizeGospelName(book);
     }
     return Uri(path: '/reference', queryParameters: queryParameters);
@@ -6987,6 +7079,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
     if (widget.topicId.trim().isNotEmpty) {
       queryParameters['topicId'] = widget.topicId.trim();
+    }
+    if (widget.topicNumber.trim().isNotEmpty) {
+      queryParameters['topicNumber'] = widget.topicNumber.trim();
     }
     if (widget.gospel.trim().isNotEmpty) {
       queryParameters['gospel'] = widget.gospel.trim();
@@ -10079,6 +10174,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             textDirection: option.direction,
             topicName: _topic.name,
             topicId: _topic.id.isNotEmpty ? _topic.id : _topic.name,
+            topicNumber: widget.topicNumber,
             sourceContext: 'harmony',
             gospel: _normalizeGospelName(entry.reference.book),
             language: option.apiLanguage,

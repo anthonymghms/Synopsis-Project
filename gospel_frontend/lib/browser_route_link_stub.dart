@@ -34,10 +34,16 @@ class BrowserRouteLinkNavigation {
 }
 
 class BrowserRouteLink extends StatelessWidget {
-  const BrowserRouteLink({super.key, required this.uri, required this.builder});
+  const BrowserRouteLink({
+    super.key,
+    required this.uri,
+    required this.builder,
+    this.openInNewTab = false,
+  });
 
   final Uri? uri;
   final BrowserRouteLinkBuilder builder;
+  final bool openInNewTab;
 
   void _follow(BuildContext context) {
     final target = uri;

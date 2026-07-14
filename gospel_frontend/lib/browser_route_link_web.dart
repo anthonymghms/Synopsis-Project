@@ -44,10 +44,16 @@ class BrowserRouteLinkNavigation {
 }
 
 class BrowserRouteLink extends StatefulWidget {
-  const BrowserRouteLink({super.key, required this.uri, required this.builder});
+  const BrowserRouteLink({
+    super.key,
+    required this.uri,
+    required this.builder,
+    this.openInNewTab = false,
+  });
 
   final Uri? uri;
   final BrowserRouteLinkBuilder builder;
+  final bool openInNewTab;
 
   @override
   State<BrowserRouteLink> createState() => _BrowserRouteLinkState();
@@ -84,6 +90,13 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
       return;
     }
     _lastNavigationMicros = now;
+    if (widget.openInNewTab) {
+      final href = _href;
+      if (href != null) {
+        html.window.open(href, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
     Navigator.of(context).pushNamed(target.toString());
   }
 
@@ -98,7 +111,7 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
       anchor.href = href;
     }
     anchor
-      ..target = '_self'
+      ..target = widget.openInNewTab ? '_blank' : '_self'
       ..rel = 'noreferrer noopener'
       ..tabIndex = -1
       ..setAttribute('aria-hidden', 'true');
@@ -166,7 +179,7 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
           child: ExcludeFocus(
             child: ExcludeSemantics(
               child: HtmlElementView.fromTagName(
-                key: ValueKey(href),
+                key: ValueKey((href, widget.openInNewTab)),
                 tagName: 'a',
                 isVisible: false,
                 hitTestBehavior: PlatformViewHitTestBehavior.transparent,

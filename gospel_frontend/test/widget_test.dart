@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/main.dart';
@@ -48,6 +49,23 @@ void main() {
         ),
       ),
     );
+  }
+
+  Future<TestGesture> hoverOver(WidgetTester tester, Finder finder) async {
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: const Offset(-1, -1));
+    await gesture.moveTo(tester.getCenter(finder));
+    await tester.pump();
+    return gesture;
+  }
+
+  Future<void> moveOutsideAndRemove(
+    WidgetTester tester,
+    TestGesture gesture,
+  ) async {
+    await gesture.moveTo(const Offset(2000, 2000));
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.removePointer();
   }
 
   group('HarmonyFilterState', () {
@@ -350,6 +368,103 @@ void main() {
       find.byType(ReferenceHoverText),
     );
     expect(reference.enableHoverPreview, isTrue);
+    expect(reference.showHoverTooltip, isFalse);
+    expect(reference.openInNewTab, isTrue);
+  });
+
+  testWidgets('main-table reference URI is complete and opens in a new tab', (
+    tester,
+  ) async {
+    const reference = GospelReference(
+      book: 'Luke',
+      bookId: 'luke',
+      chapter: 4,
+      verses: '42-44',
+    );
+    final option = kBaseLanguageOptions.first;
+
+    await tester.pumpWidget(harmonyTableFor(const [reference]));
+
+    final routeLink = tester.widget<BrowserRouteLink>(
+      find.descendant(
+        of: find.byType(ReferenceHoverText),
+        matching: find.byType(BrowserRouteLink),
+      ),
+    );
+    expect(routeLink.openInNewTab, isTrue);
+    expect(routeLink.uri?.path, '/reference');
+    expect(routeLink.uri?.queryParameters, {
+      'book': 'luke',
+      'bookDisplay': 'Luke',
+      'chapter': '4',
+      'language': option.apiLanguage,
+      'version': option.apiVersion,
+      'label': '4:42-44',
+      'verses': '42-44',
+      'topic': 'Teaching and healings',
+      'topicId': '34',
+      'topicNumber': '34',
+      'source': 'harmony',
+      'gospel': 'Luke',
+    });
+
+    final topicLink = tester
+        .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+        .singleWhere((link) => link.uri?.path == '/topic');
+    expect(topicLink.openInNewTab, isFalse);
+  });
+
+  testWidgets('single-reference preview waits and cancels an early hover', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+      ]),
+    );
+
+    final reference = find.byType(ReferenceHoverText);
+    final gesture = await hoverOver(tester, reference);
+
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.text('Click to read in chapter'), findsNothing);
+
+    await gesture.moveTo(const Offset(2000, 2000));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('Click to read in chapter'), findsNothing);
+
+    await gesture.moveTo(tester.getCenter(reference));
+    await tester.pump(const Duration(milliseconds: 1499));
+    expect(find.text('Click to read in chapter'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.text('Click to read in chapter'), findsOneWidget);
+
+    final referenceLinks = tester
+        .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+        .where((link) => link.uri?.path == '/reference');
+    expect(referenceLinks, hasLength(2));
+    expect(referenceLinks.every((link) => link.openInNewTab), isTrue);
+
+    await moveOutsideAndRemove(tester, gesture);
+  });
+
+  testWidgets('main-table references have no redundant hover tooltip', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+      ]),
+    );
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip && widget.message == 'Click to read in chapter',
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('topic hover tooltip only shows helper text', (tester) async {
@@ -433,6 +548,62 @@ void main() {
       referenceLinks.every((reference) => !reference.enableHoverPreview),
       isTrue,
     );
+    expect(
+      referenceLinks.every((reference) => !reference.showHoverTooltip),
+      isTrue,
+    );
+    expect(referenceLinks.every((reference) => reference.openInNewTab), isTrue);
+    expect(
+      tester
+          .widget<ReferenceCellHoverPreview>(
+            find.byType(ReferenceCellHoverPreview),
+          )
+          .openInNewTab,
+      isTrue,
+    );
+  });
+
+  testWidgets('combined preview also waits for the hover delay', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+        GospelReference(book: 'Luke', chapter: 6, verses: '17-19'),
+      ]),
+    );
+
+    final combinedCell = find.byType(ReferenceCellHoverPreview);
+    final gesture = await hoverOver(tester, combinedCell);
+
+    await tester.pump(const Duration(milliseconds: 1499));
+    expect(find.text('Click to read in chapter'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.text('Click to read in chapter'), findsNWidgets(2));
+
+    await moveOutsideAndRemove(tester, gesture);
+  });
+
+  testWidgets('Arabic main-table references preserve RTL hover configuration', (
+    tester,
+  ) async {
+    final arabic = kBaseLanguageOptions.firstWhere(
+      (option) => option.code == 'arabic',
+    );
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+        GospelReference(book: 'Luke', chapter: 6, verses: '17-19'),
+      ], languageOption: arabic),
+    );
+
+    final combined = tester.widget<ReferenceCellHoverPreview>(
+      find.byType(ReferenceCellHoverPreview),
+    );
+    expect(combined.textDirection, TextDirection.rtl);
+    expect(combined.language, arabic.apiLanguage);
+    expect(combined.openInNewTab, isTrue);
   });
 
   testWidgets('harmony table caps and centers on wide screens', (tester) async {
