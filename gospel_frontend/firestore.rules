@@ -1,0 +1,135 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function hasAuthenticatedEmail(data) {
+      return request.auth.token.email is string
+          && data.email is string
+          && data.email == request.auth.token.email;
+    }
+
+    function validPreferences(data) {
+      return data is map
+          && data.keys().hasAll([
+            'menuLanguage',
+            'contentLanguage',
+            'preferredVersion',
+            'showDiacritics',
+            'zoomLevel',
+            'interlinearEnabled',
+            'showTopicNamesInChapter'
+          ])
+          && data.keys().hasOnly([
+            'menuLanguage',
+            'contentLanguage',
+            'preferredVersion',
+            'showDiacritics',
+            'zoomLevel',
+            'interlinearEnabled',
+            'showTopicNamesInChapter'
+          ])
+          && data.menuLanguage is string
+          && data.menuLanguage.size() <= 40
+          && data.contentLanguage is string
+          && data.contentLanguage.size() <= 40
+          && data.preferredVersion is string
+          && data.preferredVersion.size() <= 120
+          && data.showDiacritics is bool
+          && data.zoomLevel is number
+          && data.zoomLevel >= 0.8
+          && data.zoomLevel <= 1.6
+          && data.interlinearEnabled is bool
+          && data.showTopicNamesInChapter is bool;
+    }
+
+    function validCompletedProfile(data) {
+      return data.profileCompleted == true
+          && data.firstName is string
+          && data.firstName.size() > 0
+          && data.firstName.size() <= 80
+          && data.lastName is string
+          && data.lastName.size() > 0
+          && data.lastName.size() <= 80
+          && data.displayName is string
+          && data.displayName.size() <= 80
+          && data.country is string
+          && data.country.size() <= 80
+          && data.timezone is string
+          && data.timezone.size() <= 80
+          && (data.yearOfBirth == null
+              || (data.yearOfBirth is int
+                  && data.yearOfBirth >= 1900
+                  && data.yearOfBirth <= 2200))
+          && data.organization is string
+          && data.organization.size() <= 120
+          && data.bio is string
+          && data.bio.size() <= 500;
+    }
+
+    function validUserDocument(data) {
+      return data.profileCompleted is bool
+          && hasAuthenticatedEmail(data)
+          && validPreferences(data.preferences)
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp
+          && (data.profileCompleted == false || validCompletedProfile(data));
+    }
+
+    function onlyUserEditableFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'firstName',
+        'lastName',
+        'displayName',
+        'email',
+        'country',
+        'timezone',
+        'yearOfBirth',
+        'organization',
+        'bio',
+        'preferences',
+        'profileCompleted',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function validCreateTimestamps() {
+      return request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+    }
+
+    function validUpdateTimestamps() {
+      return request.resource.data.updatedAt == request.time
+          && ((resource.data.keys().hasAny(['createdAt'])
+                  && request.resource.data.createdAt == resource.data.createdAt)
+              || (!(resource.data.keys().hasAny(['createdAt']))
+                  && request.resource.data.createdAt == request.time));
+    }
+
+    match /users/{userId} {
+      // `get` is intentionally separate from `list`: users cannot enumerate
+      // profiles or read any account document other than their own.
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+                    && validUserDocument(request.resource.data)
+                    && validCreateTimestamps();
+      allow update: if isOwner(userId)
+                    && onlyUserEditableFieldsChanged()
+                    && validUserDocument(request.resource.data)
+                    && validUpdateTimestamps();
+      allow delete: if false;
+    }
+
+    // The Flutter client discovers supported languages and translations here.
+    // All writes remain server/Admin-SDK operations.
+    match /bibles/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}

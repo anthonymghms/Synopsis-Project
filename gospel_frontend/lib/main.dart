@@ -7,6 +7,8 @@ import 'package:gospel_frontend/auth_screen.dart';
 import 'package:gospel_frontend/main_scaffold.dart';
 import 'package:gospel_frontend/browser_find_text.dart';
 import 'package:gospel_frontend/browser_route_link.dart';
+import 'package:gospel_frontend/profile_setup_screen.dart';
+import 'package:gospel_frontend/user_profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
@@ -250,6 +252,14 @@ class ZoomController {
     final prefs = _prefs;
     if (prefs != null) {
       prefs.setDouble('reader_zoom_scale', next);
+    }
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(zoomLevel: next),
+        ),
+      );
     }
   }
 }
@@ -1323,6 +1333,16 @@ Future<void> _persistArabicDiacriticsPreference(bool withDiacritics) async {
     await prefs.setBool('arabic_with_diacritics', withDiacritics);
   } catch (_) {
     // Persistence is a convenience, not a blocker for reading.
+  }
+  final profileController = UserProfileController.instance;
+  if (profileController.profile != null) {
+    try {
+      await profileController.updatePreferences(
+        profileController.preferences.copyWith(showDiacritics: withDiacritics),
+      );
+    } catch (_) {
+      // The reading view remains usable if remote persistence is unavailable.
+    }
   }
 }
 
@@ -3060,7 +3080,17 @@ Widget _buildMenuLanguageButton({
       tooltip: menuLanguage.ui.menuLanguage,
       position: PopupMenuPosition.under,
       icon: const Icon(Icons.public, size: 22),
-      onSelected: MenuLanguageController.instance.update,
+      onSelected: (language) {
+        MenuLanguageController.instance.update(language);
+        final profileController = UserProfileController.instance;
+        if (profileController.profile != null) {
+          unawaited(
+            _updateUserPreferencesBestEffort(
+              profileController.preferences.copyWith(menuLanguage: language),
+            ),
+          );
+        }
+      },
       itemBuilder: (_) => languages
           .map(
             (option) => _checkedMenuItem<String>(
@@ -3157,6 +3187,20 @@ Future<void> _persistLanguageVersion(
   } catch (_) {
     // Keep the UI responsive if local persistence is unavailable.
   }
+  final profileController = UserProfileController.instance;
+  if (profileController.profile != null) {
+    final current = profileController.preferences;
+    await profileController.updatePreferences(
+      current.copyWith(
+        contentLanguage: option.code,
+        preferredVersion: _sanitizeVersionForLanguage(option, version),
+        menuLanguage: syncMenuLanguage ? option.code : current.menuLanguage,
+        showDiacritics: option.code == 'arabic' && withDiacritics != null
+            ? withDiacritics
+            : current.showDiacritics,
+      ),
+    );
+  }
 }
 
 bool _hasAdminFlag(Map<String, dynamic> data) {
@@ -3251,8 +3295,33 @@ void main() async {
   runApp(GospelApp());
 }
 
-class GospelApp extends StatelessWidget {
+class GospelApp extends StatefulWidget {
   const GospelApp({super.key});
+
+  @override
+  State<GospelApp> createState() => _GospelAppState();
+}
+
+class _GospelAppState extends State<GospelApp> {
+  @override
+  void initState() {
+    super.initState();
+    UserProfileController.instance.addListener(_applyLoadedPreferences);
+  }
+
+  @override
+  void dispose() {
+    UserProfileController.instance.removeListener(_applyLoadedPreferences);
+    super.dispose();
+  }
+
+  void _applyLoadedPreferences() {
+    final profile = UserProfileController.instance.profile;
+    if (profile != null) {
+      _applyUserPreferencesToLegacyControllers(profile.preferences);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MenuLanguageScope(
@@ -3304,7 +3373,9 @@ class GospelApp extends StatelessWidget {
           builder: (context) => TopicListScreen(
             initialLanguage: rawLanguage,
             initialVersion: rawVersion,
-            initialMenuLanguage: rawMenuLanguage,
+            initialMenuLanguage:
+                rawMenuLanguage ??
+                UserProfileController.instance.preferences.menuLanguage,
           ),
         ),
       );
@@ -3351,7 +3422,9 @@ class GospelApp extends StatelessWidget {
             topicNumber: topicNumber,
             gospel: gospel,
             comparisonState: comparisons,
-            initialMenuLanguage: rawMenuLanguage,
+            initialMenuLanguage:
+                rawMenuLanguage ??
+                UserProfileController.instance.preferences.menuLanguage,
           ),
         ),
       );
@@ -3383,7 +3456,9 @@ class GospelApp extends StatelessWidget {
             topicId: initialTopicId,
             topicNumber: initialTopicNumber,
             comparisonState: comparisons,
-            initialMenuLanguage: rawMenuLanguage,
+            initialMenuLanguage:
+                rawMenuLanguage ??
+                UserProfileController.instance.preferences.menuLanguage,
           ),
         ),
       );
@@ -3392,8 +3467,11 @@ class GospelApp extends StatelessWidget {
     return MaterialPageRoute(
       settings: settings,
       builder: (_) => AuthGate(
-        builder: (context) =>
-            TopicListScreen(initialMenuLanguage: rawMenuLanguage),
+        builder: (context) => TopicListScreen(
+          initialMenuLanguage:
+              rawMenuLanguage ??
+              UserProfileController.instance.preferences.menuLanguage,
+        ),
       ),
     );
   }
@@ -3414,12 +3492,155 @@ class AuthGate extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (snapshot.hasData) {
-          return builder(context);
+        final user = snapshot.data;
+        if (user != null) {
+          return _AuthenticatedProfileGate(
+            key: ValueKey<String>(user.uid),
+            user: user,
+            builder: builder,
+          );
         }
+        UserProfileController.instance.clear();
         return const AuthScreen();
       },
     );
+  }
+}
+
+class _AuthenticatedProfileGate extends StatefulWidget {
+  const _AuthenticatedProfileGate({
+    super.key,
+    required this.user,
+    required this.builder,
+  });
+
+  final User user;
+  final WidgetBuilder builder;
+
+  @override
+  State<_AuthenticatedProfileGate> createState() =>
+      _AuthenticatedProfileGateState();
+}
+
+class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
+  late Future<UserProfile> _loadFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    UserProfileController.instance.addListener(_profileChanged);
+    _loadFuture = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AuthenticatedProfileGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user.uid != widget.user.uid) {
+      _loadFuture = _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    UserProfileController.instance.removeListener(_profileChanged);
+    super.dispose();
+  }
+
+  Future<UserProfile> _load({bool force = false}) async {
+    final profile = await UserProfileController.instance.loadForUser(
+      widget.user,
+      force: force,
+    );
+    _applyUserPreferencesToLegacyControllers(profile.preferences);
+    return profile;
+  }
+
+  void _profileChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<UserProfile>(
+      future: _loadFuture,
+      builder: (context, snapshot) {
+        final controller = UserProfileController.instance;
+        final cachedProfile = controller.hasProfileFor(widget.user.uid)
+            ? controller.profile
+            : null;
+        if (snapshot.connectionState != ConnectionState.done &&
+            cachedProfile == null) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          final menuLanguage = MenuLanguageController.instance.languageCode;
+          final arabic = menuLanguage == 'arabic';
+          return Scaffold(
+            body: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        arabic
+                            ? 'تعذر تحميل إعدادات الحساب.'
+                            : 'Your account settings could not be loaded.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _loadFuture = _load(force: true);
+                          });
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: Text(arabic ? 'إعادة المحاولة' : 'Try again'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        final profile = cachedProfile ?? snapshot.data;
+        if (profile == null) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (!profile.profileCompleted) {
+          return ProfileSetupScreen(profile: profile);
+        }
+        return widget.builder(context);
+      },
+    );
+  }
+}
+
+void _applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
+  LanguageSelectionController.instance.update(preferences.contentLanguage);
+  MenuLanguageController.instance.update(preferences.menuLanguage);
+  ZoomController.instance.update(preferences.zoomLevel);
+}
+
+Future<void> _updateUserPreferencesBestEffort(
+  UserPreferences preferences,
+) async {
+  try {
+    await UserProfileController.instance.updatePreferences(preferences);
+  } catch (_) {
+    // Immediate toolbar settings stay usable while a later save or retry can
+    // restore remote persistence after a transient connection failure.
   }
 }
 
@@ -6332,7 +6553,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   @override
   void initState() {
     super.initState();
+    final savedPreferences = UserProfileController.instance.preferences;
     _textScale = ZoomController.instance.textScale;
+    _showTopicNames = savedPreferences.showTopicNamesInChapter;
+    _interlinearView = savedPreferences.interlinearEnabled;
     _syncSelectedContentLanguage(
       _languageOption,
       explicitMenuLanguage: widget.initialMenuLanguage,
@@ -7374,6 +7598,14 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (next && _harmonyTopics.isEmpty && !_loadingHarmonyTopics) {
       _loadHarmonyTopics();
     }
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(showTopicNamesInChapter: next),
+        ),
+      );
+    }
   }
 
   Widget _buildTopicNamesToggleButton() {
@@ -7403,6 +7635,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     setState(() {
       _interlinearView = !_interlinearView;
     });
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(
+            interlinearEnabled: _interlinearView,
+          ),
+        ),
+      );
+    }
   }
 
   void _setTextScale(double value) {
@@ -9005,7 +9247,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   @override
   void initState() {
     super.initState();
+    final savedPreferences = UserProfileController.instance.preferences;
     _textScale = ZoomController.instance.textScale;
+    _interlinearView = savedPreferences.interlinearEnabled;
     _languageOption = widget.languageOption;
     _apiVersion = _sanitizeVersionForLanguage(
       _languageOption,
@@ -10031,6 +10275,16 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     setState(() {
       _interlinearView = !_interlinearView;
     });
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(
+            interlinearEnabled: _interlinearView,
+          ),
+        ),
+      );
+    }
   }
 
   void _setTextScale(double value) {
