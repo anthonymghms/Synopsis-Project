@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:gospel_frontend/utils/format_verse_ref.dart';
 import 'package:gospel_frontend/widgets/verse_ref_text.dart';
+import 'package:gospel_frontend/gospel_filter.dart';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = String.fromEnvironment(
@@ -282,32 +283,24 @@ class LocalizedUiLabels {
   final String tooltipMessage;
   final String comparePrompt;
   final String filter;
+  final String gospelCombinations;
+  final String searchFilters;
+  final String included;
+  final String excluded;
+  final String unrestricted;
+  final String fourIncludedGospels;
+  final String threeIncludedGospels;
+  final String twoIncludedGospels;
+  final String oneIncludedGospel;
+  final String noExcludedGospels;
+  final String oneExcludedGospel;
+  final String twoExcludedGospels;
+  final String threeExcludedGospels;
+  final String applyFilter;
+  final String noMatchingFilterCombinations;
   final String clearFilter;
-  final String apply;
-  final String customFilter;
   final String allTopics;
-  final String allFourGospels;
-  final String onlyGospelPrefix;
-  final String exactlyOneGospel;
-  final String atLeastTwoGospels;
-  final String hasReference;
-  final String doesNotHaveReference;
-  final String includesAllSelected;
-  final String includesAnySelected;
-  final String excludesSelected;
-  final String onlySelected;
-  final String exactly;
-  final String atLeast;
-  final String gospelCount;
   final String results;
-  final String selectedGospels;
-  final String matchIndividualConditions;
-  final String addCondition;
-  final String removeCondition;
-  final String matchAllConditions;
-  final String matchAnyConditions;
-  final String condition;
-  final String any;
   final String language;
   final String version;
   final String addTranslation;
@@ -375,32 +368,24 @@ class LocalizedUiLabels {
     required this.tooltipMessage,
     required this.comparePrompt,
     required this.filter,
+    required this.gospelCombinations,
+    required this.searchFilters,
+    required this.included,
+    required this.excluded,
+    required this.unrestricted,
+    required this.fourIncludedGospels,
+    required this.threeIncludedGospels,
+    required this.twoIncludedGospels,
+    required this.oneIncludedGospel,
+    required this.noExcludedGospels,
+    required this.oneExcludedGospel,
+    required this.twoExcludedGospels,
+    required this.threeExcludedGospels,
+    required this.applyFilter,
+    required this.noMatchingFilterCombinations,
     required this.clearFilter,
-    required this.apply,
-    required this.customFilter,
     required this.allTopics,
-    required this.allFourGospels,
-    required this.onlyGospelPrefix,
-    required this.exactlyOneGospel,
-    required this.atLeastTwoGospels,
-    required this.hasReference,
-    required this.doesNotHaveReference,
-    required this.includesAllSelected,
-    required this.includesAnySelected,
-    required this.excludesSelected,
-    required this.onlySelected,
-    required this.exactly,
-    required this.atLeast,
-    required this.gospelCount,
     required this.results,
-    required this.selectedGospels,
-    required this.matchIndividualConditions,
-    required this.addCondition,
-    required this.removeCondition,
-    required this.matchAllConditions,
-    required this.matchAnyConditions,
-    required this.condition,
-    required this.any,
     required this.language,
     required this.version,
     required this.addTranslation,
@@ -538,32 +523,24 @@ const List<LanguageOption> kBaseLanguageOptions = [
       tooltipMessage: 'Click to view more',
       comparePrompt: 'Select authors to compare',
       filter: 'Filter',
+      gospelCombinations: 'Gospel combinations',
+      searchFilters: 'Search filters',
+      included: 'Included',
+      excluded: 'Excluded',
+      unrestricted: 'Any',
+      fourIncludedGospels: 'Four included',
+      threeIncludedGospels: 'Three included',
+      twoIncludedGospels: 'Two included',
+      oneIncludedGospel: 'One included',
+      noExcludedGospels: 'No excluded Gospels',
+      oneExcludedGospel: 'One excluded Gospel',
+      twoExcludedGospels: 'Two excluded Gospels',
+      threeExcludedGospels: 'Three excluded Gospels',
+      applyFilter: 'Apply filter',
+      noMatchingFilterCombinations: 'No matching filter combinations',
       clearFilter: 'Clear filter',
-      apply: 'Apply',
-      customFilter: 'Custom filter',
       allTopics: 'All topics',
-      allFourGospels: 'All four Gospels',
-      onlyGospelPrefix: 'Only',
-      exactlyOneGospel: 'Exactly one Gospel',
-      atLeastTwoGospels: 'At least two Gospels',
-      hasReference: 'Has reference',
-      doesNotHaveReference: 'Does not have reference',
-      includesAllSelected: 'Includes all selected',
-      includesAnySelected: 'Includes any selected',
-      excludesSelected: 'Excludes selected',
-      onlySelected: 'Only selected',
-      exactly: 'Exactly',
-      atLeast: 'At least',
-      gospelCount: 'Gospel count',
       results: 'results',
-      selectedGospels: 'Selected Gospels',
-      matchIndividualConditions: 'Match conditions',
-      addCondition: 'Add condition',
-      removeCondition: 'Remove condition',
-      matchAllConditions: 'Match all conditions',
-      matchAnyConditions: 'Match any condition',
-      condition: 'Condition',
-      any: 'Any',
       language: 'Language',
       version: 'Version',
       addTranslation: 'Add translation',
@@ -648,32 +625,24 @@ const List<LanguageOption> kBaseLanguageOptions = [
       tooltipMessage: 'اضغط لعرض المزيد',
       comparePrompt: 'اختر الأناجيل للمقارنة',
       filter: 'تصفية',
+      gospelCombinations: 'تركيبات الأناجيل',
+      searchFilters: 'البحث في التصفيات',
+      included: 'مشمولة',
+      excluded: 'مستبعدة',
+      unrestricted: 'غير مقيّد',
+      fourIncludedGospels: 'أربعة أناجيل مشمولة',
+      threeIncludedGospels: 'ثلاثة أناجيل مشمولة',
+      twoIncludedGospels: 'إنجيلان مشمولان',
+      oneIncludedGospel: 'إنجيل واحد مشمول',
+      noExcludedGospels: 'لا توجد أناجيل مستبعدة',
+      oneExcludedGospel: 'إنجيل واحد مستبعد',
+      twoExcludedGospels: 'إنجيلان مستبعدان',
+      threeExcludedGospels: 'ثلاثة أناجيل مستبعدة',
+      applyFilter: 'تطبيق التصفية',
+      noMatchingFilterCombinations: 'لا توجد تصفيات مطابقة',
       clearFilter: 'إزالة التصفية',
-      apply: 'تطبيق',
-      customFilter: 'تصفية مخصصة',
       allTopics: 'كل المواضيع',
-      allFourGospels: 'كل الأناجيل الأربعة',
-      onlyGospelPrefix: 'فقط',
-      exactlyOneGospel: 'إنجيل واحد بالضبط',
-      atLeastTwoGospels: 'على الأقل إنجيلان',
-      hasReference: 'لديه مرجع',
-      doesNotHaveReference: 'لا يوجد مرجع',
-      includesAllSelected: 'يحتوي على كل المحدد',
-      includesAnySelected: 'يحتوي على أي من المحدد',
-      excludesSelected: 'لا يحتوي على المحدد',
-      onlySelected: 'فقط المحدد',
-      exactly: 'بالضبط',
-      atLeast: 'على الأقل',
-      gospelCount: 'عدد الأناجيل',
       results: 'نتيجة',
-      selectedGospels: 'الأناجيل المحددة',
-      matchIndividualConditions: 'مطابقة الشروط',
-      addCondition: 'إضافة شرط',
-      removeCondition: 'إزالة الشرط',
-      matchAllConditions: 'مطابقة كل الشروط',
-      matchAnyConditions: 'مطابقة أي شرط',
-      condition: 'شرط',
-      any: 'أي',
       language: 'اللغة',
       version: 'الترجمة',
       addTranslation: 'إضافة ترجمة',
@@ -1086,14 +1055,20 @@ void _syncSelectedContentLanguage(
   }
 }
 
-Uri _mainTableUri({required LanguageOption language, required String version}) {
-  return Uri(
-    path: '/',
-    queryParameters: {
-      'language': language.apiLanguage,
-      'version': _sanitizeVersionForLanguage(language, version),
-    },
-  );
+Uri _mainTableUri({
+  required LanguageOption language,
+  required String version,
+  String? filterCode,
+}) {
+  final queryParameters = <String, String>{
+    'language': language.apiLanguage,
+    'version': _sanitizeVersionForLanguage(language, version),
+  };
+  final combination = gospelFilterCombinationForCode(filterCode);
+  if (combination != null) {
+    queryParameters['filter'] = combination.code;
+  }
+  return Uri(path: '/', queryParameters: queryParameters);
 }
 
 Uri _topicUri({
@@ -1547,266 +1522,6 @@ bool _isArabicLanguage(String language) {
       normalized == 'ar';
 }
 
-enum HarmonyFilterPreset {
-  allTopics,
-  allFourGospels,
-  onlyMatthew,
-  onlyMark,
-  onlyLuke,
-  onlyJohn,
-  exactlyOneGospel,
-  atLeastTwoGospels,
-  custom,
-}
-
-enum HarmonyFilterOperator {
-  includesAllSelected,
-  includesAnySelected,
-  excludesSelected,
-  onlySelected,
-  exactlyCount,
-  atLeastCount,
-  matchIndividualConditions,
-}
-
-enum GospelReferenceRequirement { any, hasReference, doesNotHaveReference }
-
-enum HarmonyFilterConditionMode { all, any }
-
-class HarmonyFilterCondition {
-  const HarmonyFilterCondition({
-    required this.gospel,
-    required this.requirement,
-  });
-
-  final String gospel;
-  final GospelReferenceRequirement requirement;
-
-  HarmonyFilterCondition normalized() {
-    final canonical = _normalizeGospelName(gospel);
-    return HarmonyFilterCondition(
-      gospel: orderedGospels.contains(canonical)
-          ? canonical
-          : orderedGospels.first,
-      requirement: requirement == GospelReferenceRequirement.any
-          ? GospelReferenceRequirement.hasReference
-          : requirement,
-    );
-  }
-}
-
-class HarmonyFilterState {
-  const HarmonyFilterState({
-    this.preset = HarmonyFilterPreset.allTopics,
-    this.operator = HarmonyFilterOperator.includesAllSelected,
-    this.selectedGospels = const <String>{},
-    this.gospelCount = 1,
-    this.requirements = const <String, GospelReferenceRequirement>{},
-    this.conditionMode = HarmonyFilterConditionMode.all,
-    this.conditions = const <HarmonyFilterCondition>[],
-  });
-
-  static const HarmonyFilterState allTopics = HarmonyFilterState();
-
-  final HarmonyFilterPreset preset;
-  final HarmonyFilterOperator operator;
-  final Set<String> selectedGospels;
-  final int gospelCount;
-  final Map<String, GospelReferenceRequirement> requirements;
-  final HarmonyFilterConditionMode conditionMode;
-  final List<HarmonyFilterCondition> conditions;
-
-  factory HarmonyFilterState.preset(HarmonyFilterPreset preset) {
-    switch (preset) {
-      case HarmonyFilterPreset.allTopics:
-        return HarmonyFilterState.allTopics;
-      case HarmonyFilterPreset.allFourGospels:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.allFourGospels,
-          operator: HarmonyFilterOperator.includesAllSelected,
-          selectedGospels: <String>{'Matthew', 'Mark', 'Luke', 'John'},
-        );
-      case HarmonyFilterPreset.onlyMatthew:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.onlyMatthew,
-          operator: HarmonyFilterOperator.onlySelected,
-          selectedGospels: <String>{'Matthew'},
-        );
-      case HarmonyFilterPreset.onlyMark:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.onlyMark,
-          operator: HarmonyFilterOperator.onlySelected,
-          selectedGospels: <String>{'Mark'},
-        );
-      case HarmonyFilterPreset.onlyLuke:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.onlyLuke,
-          operator: HarmonyFilterOperator.onlySelected,
-          selectedGospels: <String>{'Luke'},
-        );
-      case HarmonyFilterPreset.onlyJohn:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.onlyJohn,
-          operator: HarmonyFilterOperator.onlySelected,
-          selectedGospels: <String>{'John'},
-        );
-      case HarmonyFilterPreset.exactlyOneGospel:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.exactlyOneGospel,
-          operator: HarmonyFilterOperator.exactlyCount,
-          gospelCount: 1,
-        );
-      case HarmonyFilterPreset.atLeastTwoGospels:
-        return const HarmonyFilterState(
-          preset: HarmonyFilterPreset.atLeastTwoGospels,
-          operator: HarmonyFilterOperator.atLeastCount,
-          gospelCount: 2,
-        );
-      case HarmonyFilterPreset.custom:
-        return const HarmonyFilterState(preset: HarmonyFilterPreset.custom);
-    }
-  }
-
-  factory HarmonyFilterState.custom({
-    required HarmonyFilterOperator operator,
-    Set<String> selectedGospels = const <String>{},
-    int gospelCount = 1,
-    Map<String, GospelReferenceRequirement> requirements =
-        const <String, GospelReferenceRequirement>{},
-    HarmonyFilterConditionMode conditionMode = HarmonyFilterConditionMode.all,
-    List<HarmonyFilterCondition> conditions = const <HarmonyFilterCondition>[],
-  }) {
-    final normalizedConditions = _normalizeFilterConditions(conditions);
-    final normalizedRequirements = _normalizeRequirements(requirements);
-    return HarmonyFilterState(
-      preset: HarmonyFilterPreset.custom,
-      operator: operator,
-      selectedGospels: _normalizeGospelSet(selectedGospels),
-      gospelCount: _clampedGospelCount(gospelCount),
-      requirements: normalizedRequirements,
-      conditionMode: conditionMode,
-      conditions:
-          normalizedConditions.isNotEmpty ||
-              operator != HarmonyFilterOperator.matchIndividualConditions
-          ? normalizedConditions
-          : _conditionsFromRequirements(normalizedRequirements),
-    );
-  }
-
-  bool get isActive {
-    if (preset == HarmonyFilterPreset.allTopics) {
-      return false;
-    }
-    if (preset != HarmonyFilterPreset.custom) {
-      return true;
-    }
-    switch (operator) {
-      case HarmonyFilterOperator.includesAllSelected:
-      case HarmonyFilterOperator.includesAnySelected:
-      case HarmonyFilterOperator.excludesSelected:
-      case HarmonyFilterOperator.onlySelected:
-        return selectedGospels.isNotEmpty;
-      case HarmonyFilterOperator.exactlyCount:
-      case HarmonyFilterOperator.atLeastCount:
-        return gospelCount > 0;
-      case HarmonyFilterOperator.matchIndividualConditions:
-        return conditions.isNotEmpty ||
-            requirements.values.any(
-              (value) => value != GospelReferenceRequirement.any,
-            );
-    }
-  }
-
-  HarmonyFilterState copyWith({
-    HarmonyFilterPreset? preset,
-    HarmonyFilterOperator? operator,
-    Set<String>? selectedGospels,
-    int? gospelCount,
-    Map<String, GospelReferenceRequirement>? requirements,
-    HarmonyFilterConditionMode? conditionMode,
-    List<HarmonyFilterCondition>? conditions,
-  }) {
-    final nextPreset = preset ?? this.preset;
-    if (nextPreset != HarmonyFilterPreset.custom) {
-      return HarmonyFilterState.preset(nextPreset);
-    }
-    return HarmonyFilterState.custom(
-      operator: operator ?? this.operator,
-      selectedGospels: selectedGospels ?? this.selectedGospels,
-      gospelCount: gospelCount ?? this.gospelCount,
-      requirements: requirements ?? this.requirements,
-      conditionMode: conditionMode ?? this.conditionMode,
-      conditions: conditions ?? this.conditions,
-    );
-  }
-}
-
-Set<String> _normalizeGospelSet(Iterable<String> gospels) {
-  final normalized = <String>{};
-  for (final gospel in gospels) {
-    final canonical = _normalizeGospelName(gospel);
-    if (orderedGospels.contains(canonical)) {
-      normalized.add(canonical);
-    }
-  }
-  return normalized;
-}
-
-Map<String, GospelReferenceRequirement> _normalizeRequirements(
-  Map<String, GospelReferenceRequirement> requirements,
-) {
-  final normalized = <String, GospelReferenceRequirement>{};
-  for (final gospel in orderedGospels) {
-    final value =
-        requirements[gospel] ??
-        requirements[_normalizeGospelName(gospel)] ??
-        GospelReferenceRequirement.any;
-    normalized[gospel] = value;
-  }
-  return normalized;
-}
-
-List<HarmonyFilterCondition> _normalizeFilterConditions(
-  Iterable<HarmonyFilterCondition> conditions,
-) {
-  return [
-    for (final condition in conditions)
-      if (condition.requirement != GospelReferenceRequirement.any)
-        condition.normalized(),
-  ];
-}
-
-List<HarmonyFilterCondition> _conditionsFromRequirements(
-  Map<String, GospelReferenceRequirement> requirements,
-) {
-  final normalized = _normalizeRequirements(requirements);
-  return [
-    for (final gospel in orderedGospels)
-      if (normalized[gospel] != null &&
-          normalized[gospel] != GospelReferenceRequirement.any)
-        HarmonyFilterCondition(
-          gospel: gospel,
-          requirement: normalized[gospel]!,
-        ),
-  ];
-}
-
-int _clampedGospelCount(int count) {
-  return count.clamp(0, orderedGospels.length).toInt();
-}
-
-bool _setEquals<T>(Set<T> a, Set<T> b) {
-  if (a.length != b.length) {
-    return false;
-  }
-  for (final value in a) {
-    if (!b.contains(value)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 const Set<String> _emptyReferenceMarkers = {'', '-', '–', '—', 'null'};
 
 bool _isReferenceValuePresent(String value) {
@@ -1827,81 +1542,35 @@ bool _referenceHasData(GospelReference reference) {
 }
 
 bool hasReference(Topic topic, String gospel) {
-  final canonical = _normalizeGospelName(gospel);
-  for (final reference in topic.references) {
-    if (_normalizeGospelName(reference.book) != canonical) {
-      continue;
-    }
-    if (_referenceHasData(reference)) {
-      return true;
-    }
-  }
-  return false;
+  final canonical = Gospel.fromCanonicalName(_normalizeGospelName(gospel));
+  return canonical != null && (topic.gospelPresenceMask & canonical.bit) != 0;
 }
 
 Set<String> getReferencedGospels(Topic topic) {
-  final referenced = <String>{};
-  for (final gospel in orderedGospels) {
-    if (hasReference(topic, gospel)) {
-      referenced.add(gospel);
+  return <String>{
+    for (final gospel in Gospel.values)
+      if ((topic.gospelPresenceMask & gospel.bit) != 0) gospel.canonicalName,
+  };
+}
+
+int _gospelPresenceMask(Iterable<GospelReference> references) {
+  var mask = 0;
+  for (final reference in references) {
+    if (!_referenceHasData(reference)) {
+      continue;
+    }
+    final gospel = Gospel.fromCanonicalName(
+      _normalizeGospelName(reference.book),
+    );
+    if (gospel != null) {
+      mask |= gospel.bit;
     }
   }
-  return referenced;
+  return mask;
 }
 
-bool matchesFilter(Topic topic, HarmonyFilterState filter) {
-  if (!filter.isActive) {
-    return true;
-  }
-  final referenced = getReferencedGospels(topic);
-  final selected = _normalizeGospelSet(filter.selectedGospels);
-
-  switch (filter.operator) {
-    case HarmonyFilterOperator.includesAllSelected:
-      return selected.every(referenced.contains);
-    case HarmonyFilterOperator.includesAnySelected:
-      return selected.any(referenced.contains);
-    case HarmonyFilterOperator.excludesSelected:
-      return selected.every((gospel) => !referenced.contains(gospel));
-    case HarmonyFilterOperator.onlySelected:
-      return _setEquals(referenced, selected);
-    case HarmonyFilterOperator.exactlyCount:
-      return referenced.length == _clampedGospelCount(filter.gospelCount);
-    case HarmonyFilterOperator.atLeastCount:
-      return referenced.length >= _clampedGospelCount(filter.gospelCount);
-    case HarmonyFilterOperator.matchIndividualConditions:
-      final conditions = _normalizeFilterConditions(
-        filter.conditions.isNotEmpty
-            ? filter.conditions
-            : _conditionsFromRequirements(filter.requirements),
-      );
-      if (conditions.isEmpty) {
-        return true;
-      }
-
-      bool conditionMatches(HarmonyFilterCondition condition) {
-        final hasRef = referenced.contains(
-          _normalizeGospelName(condition.gospel),
-        );
-        switch (condition.requirement) {
-          case GospelReferenceRequirement.any:
-            return true;
-          case GospelReferenceRequirement.hasReference:
-            return hasRef;
-          case GospelReferenceRequirement.doesNotHaveReference:
-            return !hasRef;
-        }
-      }
-
-      if (filter.conditionMode == HarmonyFilterConditionMode.any) {
-        return conditions.any(conditionMatches);
-      }
-      return conditions.every(conditionMatches);
-  }
-}
-
-class _HarmonyFilterMemory {
-  static HarmonyFilterState state = HarmonyFilterState.allTopics;
+bool matchesFilter(Topic topic, GospelFilterCombination? filter) {
+  return filter?.matchesPresenceMask(topic.gospelPresenceMask) ?? true;
 }
 
 String _topicNumberForDisplay(
@@ -2449,67 +2118,194 @@ String _gospelFilterLabel(
   return _displayGospelName(gospel, uiLanguage);
 }
 
-String _filterPresetLabel(
-  HarmonyFilterPreset preset,
+String _includedGroupLabel(int count, LocalizedUiLabels labels) {
+  switch (count) {
+    case 4:
+      return labels.fourIncludedGospels;
+    case 3:
+      return labels.threeIncludedGospels;
+    case 2:
+      return labels.twoIncludedGospels;
+    default:
+      return labels.oneIncludedGospel;
+  }
+}
+
+String _excludedGroupLabel(int count, LocalizedUiLabels labels) {
+  switch (count) {
+    case 0:
+      return labels.noExcludedGospels;
+    case 1:
+      return labels.oneExcludedGospel;
+    case 2:
+      return labels.twoExcludedGospels;
+    default:
+      return labels.threeExcludedGospels;
+  }
+}
+
+String _localizedGospelName(
+  Gospel gospel,
   LocalizedUiLabels labels,
   LanguageOption uiLanguage,
 ) {
-  switch (preset) {
-    case HarmonyFilterPreset.allTopics:
-      return labels.allTopics;
-    case HarmonyFilterPreset.allFourGospels:
-      return labels.allFourGospels;
-    case HarmonyFilterPreset.onlyMatthew:
-      return '${labels.onlyGospelPrefix} ${_gospelFilterLabel('Matthew', labels, uiLanguage)}';
-    case HarmonyFilterPreset.onlyMark:
-      return '${labels.onlyGospelPrefix} ${_gospelFilterLabel('Mark', labels, uiLanguage)}';
-    case HarmonyFilterPreset.onlyLuke:
-      return '${labels.onlyGospelPrefix} ${_gospelFilterLabel('Luke', labels, uiLanguage)}';
-    case HarmonyFilterPreset.onlyJohn:
-      return '${labels.onlyGospelPrefix} ${_gospelFilterLabel('John', labels, uiLanguage)}';
-    case HarmonyFilterPreset.exactlyOneGospel:
-      return labels.exactlyOneGospel;
-    case HarmonyFilterPreset.atLeastTwoGospels:
-      return labels.atLeastTwoGospels;
-    case HarmonyFilterPreset.custom:
-      return labels.customFilter;
-  }
+  return _gospelFilterLabel(gospel.canonicalName, labels, uiLanguage);
 }
 
-String _filterOperatorLabel(
-  HarmonyFilterOperator operator,
-  LocalizedUiLabels labels,
+String _combinationSummary(
+  GospelFilterCombination combination,
+  LanguageOption uiLanguage,
 ) {
-  switch (operator) {
-    case HarmonyFilterOperator.includesAllSelected:
-      return labels.includesAllSelected;
-    case HarmonyFilterOperator.includesAnySelected:
-      return labels.includesAnySelected;
-    case HarmonyFilterOperator.excludesSelected:
-      return labels.excludesSelected;
-    case HarmonyFilterOperator.onlySelected:
-      return labels.onlySelected;
-    case HarmonyFilterOperator.exactlyCount:
-      return labels.exactly;
-    case HarmonyFilterOperator.atLeastCount:
-      return labels.atLeast;
-    case HarmonyFilterOperator.matchIndividualConditions:
-      return labels.matchIndividualConditions;
+  final labels = uiLanguage.ui;
+  String namesFor(GospelConstraint constraint) {
+    return combination
+        .gospelsWith(constraint)
+        .map((gospel) => _localizedGospelName(gospel, labels, uiLanguage))
+        .join(', ');
   }
+
+  final parts = <String>[
+    combination.code,
+    '${labels.included}: ${namesFor(GospelConstraint.included)}',
+  ];
+  final excluded = namesFor(GospelConstraint.excluded);
+  if (excluded.isNotEmpty) {
+    parts.add('${labels.excluded}: $excluded');
+  }
+  final unrestricted = namesFor(GospelConstraint.any);
+  if (unrestricted.isNotEmpty) {
+    parts.add('${labels.unrestricted}: $unrestricted');
+  }
+  return parts.join('. ');
 }
 
-String _requirementLabel(
-  GospelReferenceRequirement requirement,
-  LocalizedUiLabels labels,
+String _normalizeFilterSearch(String value) {
+  return value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
+      .replaceAll('ـ', '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+const Map<Gospel, String> _arabicGospelSearchNames = <Gospel, String>{
+  Gospel.matthew: 'متى',
+  Gospel.mark: 'مرقس',
+  Gospel.luke: 'لوقا',
+  Gospel.john: 'يوحنا',
+};
+
+bool matchesGospelFilterSearch(
+  GospelFilterCombination combination,
+  String query,
+  LanguageOption uiLanguage,
 ) {
-  switch (requirement) {
-    case GospelReferenceRequirement.any:
-      return labels.any;
-    case GospelReferenceRequirement.hasReference:
-      return labels.hasReference;
-    case GospelReferenceRequirement.doesNotHaveReference:
-      return labels.doesNotHaveReference;
+  final normalizedQuery = _normalizeFilterSearch(query);
+  if (normalizedQuery.isEmpty) {
+    return true;
   }
+  final codeMatch = RegExp(r'\bc\d{2}\b').firstMatch(normalizedQuery);
+  if (codeMatch != null &&
+      codeMatch.group(0) != combination.code.toLowerCase()) {
+    return false;
+  }
+
+  String names(GospelConstraint constraint, {required bool arabic}) {
+    return combination
+        .gospelsWith(constraint)
+        .map(
+          (gospel) =>
+              arabic ? _arabicGospelSearchNames[gospel]! : gospel.canonicalName,
+        )
+        .join(' ');
+  }
+
+  final includedEnglish = names(GospelConstraint.included, arabic: false);
+  final excludedEnglish = names(GospelConstraint.excluded, arabic: false);
+  final anyEnglish = names(GospelConstraint.any, arabic: false);
+  final includedArabic = names(GospelConstraint.included, arabic: true);
+  final excludedArabic = names(GospelConstraint.excluded, arabic: true);
+  final anyArabic = names(GospelConstraint.any, arabic: true);
+  final mentionedGospels = <Gospel>{
+    for (final gospel in Gospel.values)
+      if (normalizedQuery.contains(gospel.canonicalName.toLowerCase()) ||
+          normalizedQuery.contains(
+            _normalizeFilterSearch(_arabicGospelSearchNames[gospel]!),
+          ))
+        gospel,
+  };
+  final hasExcludedKeyword = <String>[
+    'exclude',
+    'excluded',
+    'without',
+    'does not have',
+    'مستبعد',
+  ].any(normalizedQuery.contains);
+  if (hasExcludedKeyword && mentionedGospels.isNotEmpty) {
+    return mentionedGospels.every(
+      (gospel) => combination.constraints[gospel] == GospelConstraint.excluded,
+    );
+  }
+  final hasIncludedKeyword = <String>[
+    'include',
+    'included',
+    'has reference',
+    'مشمول',
+  ].any(normalizedQuery.contains);
+  if (hasIncludedKeyword && mentionedGospels.isNotEmpty) {
+    return mentionedGospels.every(
+      (gospel) => combination.constraints[gospel] == GospelConstraint.included,
+    );
+  }
+  final hasOnlyKeyword =
+      normalizedQuery.contains('only') || normalizedQuery.contains('فقط');
+  if (hasOnlyKeyword && mentionedGospels.isNotEmpty) {
+    return combination.includedCount == mentionedGospels.length &&
+        combination.excludedCount ==
+            Gospel.values.length - mentionedGospels.length &&
+        mentionedGospels.every(
+          (gospel) =>
+              combination.constraints[gospel] == GospelConstraint.included,
+        );
+  }
+  final hasUnrestrictedKeyword = <String>[
+    'any',
+    'unrestricted',
+    'غير مقيد',
+    'أي',
+  ].any(normalizedQuery.contains);
+  if (hasUnrestrictedKeyword && mentionedGospels.isNotEmpty) {
+    return mentionedGospels.every(
+      (gospel) => combination.constraints[gospel] == GospelConstraint.any,
+    );
+  }
+  if (mentionedGospels.isNotEmpty) {
+    return mentionedGospels.every(
+      (gospel) => combination.constraints[gospel] == GospelConstraint.included,
+    );
+  }
+  final exactOnly =
+      combination.includedCount == 1 && combination.excludedCount == 3
+      ? 'only $includedEnglish فقط $includedArabic'
+      : '';
+  final haystack = _normalizeFilterSearch(
+    <String>[
+      combination.code,
+      _combinationSummary(combination, uiLanguage),
+      'included include has reference $includedEnglish',
+      if (excludedEnglish.isNotEmpty)
+        'excluded exclude without does not have $excludedEnglish',
+      if (anyEnglish.isNotEmpty) 'any unrestricted $anyEnglish',
+      'مشمولة مشمول $includedArabic',
+      if (excludedArabic.isNotEmpty) 'مستبعدة مستبعد $excludedArabic',
+      if (anyArabic.isNotEmpty) 'غير مقيد أي $anyArabic',
+      exactOnly,
+    ].join(' '),
+  );
+  return normalizedQuery
+      .split(' ')
+      .where((term) => term.isNotEmpty)
+      .every(haystack.contains);
 }
 
 String _localizedResultsLabel(LanguageOption uiLanguage, int count) {
@@ -2538,531 +2334,626 @@ Widget _buildHarmonyResultCountChip({
   );
 }
 
+Widget _buildActiveGospelFilterChip({
+  required BuildContext context,
+  required GospelFilterCombination combination,
+  required LanguageOption uiLanguage,
+  required VoidCallback onDeleted,
+}) {
+  final labels = uiLanguage.ui;
+  final includedNames = combination
+      .gospelsWith(GospelConstraint.included)
+      .map((gospel) => _localizedGospelName(gospel, labels, uiLanguage))
+      .join(' + ');
+  return Tooltip(
+    message: _combinationSummary(combination, uiLanguage),
+    child: InputChip(
+      avatar: const Icon(Icons.tune, size: 17),
+      label: Text(
+        '${combination.code} · $includedNames',
+        overflow: TextOverflow.ellipsis,
+      ),
+      onDeleted: onDeleted,
+      deleteButtonTooltipMessage: labels.clearFilter,
+      visualDensity: VisualDensity.compact,
+      side: BorderSide(color: Theme.of(context).colorScheme.primary),
+    ),
+  );
+}
+
+class _GospelFilterDialogResult {
+  const _GospelFilterDialogResult(this.combination);
+
+  final GospelFilterCombination? combination;
+}
+
 class HarmonyFilterButton extends StatelessWidget {
   const HarmonyFilterButton({
     super.key,
-    required this.filterState,
+    required this.selectedCombination,
     required this.uiLanguage,
     required this.onChanged,
+    this.currentResultCount,
   });
 
-  final HarmonyFilterState filterState;
+  final GospelFilterCombination? selectedCombination;
   final LanguageOption uiLanguage;
-  final ValueChanged<HarmonyFilterState> onChanged;
+  final ValueChanged<GospelFilterCombination?> onChanged;
+  final int? currentResultCount;
 
   Future<void> _showFilterDialog(BuildContext context) async {
     BrowserRouteLinkNavigation.pushBlock();
-    HarmonyFilterState? next;
+    _GospelFilterDialogResult? result;
     try {
-      next = await showDialog<HarmonyFilterState>(
+      result = await showDialog<_GospelFilterDialogResult>(
         context: context,
         builder: (context) => _HarmonyFilterDialog(
-          initialFilter: filterState,
+          initialCombination: selectedCombination,
           uiLanguage: uiLanguage,
+          currentResultCount: currentResultCount,
         ),
       );
     } finally {
       BrowserRouteLinkNavigation.popBlock();
       BrowserRouteLinkNavigation.blockFor(const Duration(milliseconds: 350));
     }
-    if (next != null) {
-      onChanged(next);
+    if (result != null) {
+      onChanged(result.combination);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final labels = uiLanguage.ui;
-    final label = labels.filter;
     final icon = Icon(
-      filterState.isActive ? Icons.filter_alt : Icons.filter_alt_outlined,
+      selectedCombination == null
+          ? Icons.filter_alt_outlined
+          : Icons.filter_alt,
       size: 18,
     );
-    if (filterState.isActive) {
+    if (selectedCombination != null) {
       return FilledButton.icon(
         onPressed: () => _showFilterDialog(context),
         style: _toolbarFilledStyle(context),
         icon: icon,
-        label: Text(label, overflow: TextOverflow.ellipsis),
+        label: Text(labels.filter, overflow: TextOverflow.ellipsis),
       );
     }
     return OutlinedButton.icon(
       onPressed: () => _showFilterDialog(context),
       style: _toolbarOutlinedStyle(context),
       icon: icon,
-      label: Text(label, overflow: TextOverflow.ellipsis),
+      label: Text(labels.filter, overflow: TextOverflow.ellipsis),
     );
   }
 }
 
 class _HarmonyFilterDialog extends StatefulWidget {
   const _HarmonyFilterDialog({
-    required this.initialFilter,
+    required this.initialCombination,
     required this.uiLanguage,
+    required this.currentResultCount,
   });
 
-  final HarmonyFilterState initialFilter;
+  final GospelFilterCombination? initialCombination;
   final LanguageOption uiLanguage;
+  final int? currentResultCount;
 
   @override
   State<_HarmonyFilterDialog> createState() => _HarmonyFilterDialogState();
 }
 
 class _HarmonyFilterDialogState extends State<_HarmonyFilterDialog> {
-  late HarmonyFilterPreset _preset;
-  late HarmonyFilterOperator _operator;
-  late Set<String> _selectedGospels;
-  late int _gospelCount;
-  late HarmonyFilterConditionMode _conditionMode;
-  late List<HarmonyFilterCondition> _conditions;
+  final TextEditingController _searchController = TextEditingController();
+  String? _selectedCode;
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
-    final initial = widget.initialFilter;
-    _preset = initial.preset;
-    _operator = initial.operator;
-    _selectedGospels = _normalizeGospelSet(initial.selectedGospels);
-    _gospelCount = _clampedGospelCount(initial.gospelCount);
-    if (_gospelCount <= 0) {
-      _gospelCount = 1;
-    }
-    _conditionMode = initial.conditionMode;
-    _conditions = _normalizeFilterConditions(
-      initial.conditions.isNotEmpty
-          ? initial.conditions
-          : _conditionsFromRequirements(initial.requirements),
-    );
-    if (_preset == HarmonyFilterPreset.custom &&
-        _operator == HarmonyFilterOperator.matchIndividualConditions &&
-        _conditions.isEmpty) {
-      _conditions.add(_defaultCondition());
-    }
+    _selectedCode = widget.initialCombination?.code;
   }
 
-  bool get _usesSelectedGospels {
-    return _operator == HarmonyFilterOperator.includesAllSelected ||
-        _operator == HarmonyFilterOperator.includesAnySelected ||
-        _operator == HarmonyFilterOperator.excludesSelected ||
-        _operator == HarmonyFilterOperator.onlySelected;
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  bool get _usesGospelCount {
-    return _operator == HarmonyFilterOperator.exactlyCount ||
-        _operator == HarmonyFilterOperator.atLeastCount;
+  GospelFilterCombination? get _selectedCombination =>
+      gospelFilterCombinationForCode(_selectedCode);
+
+  void _select(GospelFilterCombination? combination) {
+    setState(() {
+      _selectedCode = combination?.code;
+    });
   }
 
-  bool get _usesRequirements {
-    return _operator == HarmonyFilterOperator.matchIndividualConditions;
+  void _apply() {
+    Navigator.of(context).pop(_GospelFilterDialogResult(_selectedCombination));
   }
 
-  bool get _canApply {
-    if (_preset != HarmonyFilterPreset.custom) {
-      return true;
-    }
-    if (_usesSelectedGospels) {
-      return _selectedGospels.isNotEmpty;
-    }
-    if (_usesGospelCount) {
-      return _gospelCount > 0;
-    }
-    if (_usesRequirements) {
-      return _conditions.isNotEmpty;
-    }
-    return true;
-  }
-
-  HarmonyFilterState _buildFilter() {
-    if (_preset != HarmonyFilterPreset.custom) {
-      return HarmonyFilterState.preset(_preset);
-    }
-    return HarmonyFilterState.custom(
-      operator: _operator,
-      selectedGospels: _selectedGospels,
-      gospelCount: _gospelCount,
-      requirements: const <String, GospelReferenceRequirement>{},
-      conditionMode: _conditionMode,
-      conditions: _conditions,
+  Widget _selectionIcon(bool selected) {
+    return Icon(
+      selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+      color: selected
+          ? Theme.of(context).colorScheme.primary
+          : Theme.of(context).colorScheme.onSurfaceVariant,
+      size: 24,
     );
   }
 
-  HarmonyFilterCondition _defaultCondition() {
-    return const HarmonyFilterCondition(
-      gospel: 'Matthew',
-      requirement: GospelReferenceRequirement.hasReference,
-    );
-  }
-
-  void _ensureOneCondition() {
-    if (_conditions.isEmpty) {
-      _conditions.add(_defaultCondition());
-    }
-  }
-
-  List<DropdownMenuItem<HarmonyFilterPreset>> _presetItems(
-    LocalizedUiLabels labels,
-  ) {
-    return HarmonyFilterPreset.values
-        .map(
-          (preset) => DropdownMenuItem<HarmonyFilterPreset>(
-            value: preset,
-            child: Text(
-              _filterPresetLabel(preset, labels, widget.uiLanguage),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        )
-        .toList();
-  }
-
-  List<DropdownMenuItem<HarmonyFilterOperator>> _operatorItems(
-    LocalizedUiLabels labels,
-  ) {
-    return HarmonyFilterOperator.values
-        .map(
-          (operator) => DropdownMenuItem<HarmonyFilterOperator>(
-            value: operator,
-            child: Text(
-              _filterOperatorLabel(operator, labels),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        )
-        .toList();
-  }
-
-  Widget _buildSelectedGospels(LocalizedUiLabels labels) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          labels.selectedGospels,
-          style: Theme.of(context).textTheme.labelLarge,
-          textAlign: TextAlign.start,
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          textDirection: widget.uiLanguage.direction,
-          children: [
-            for (final gospel in orderedGospels)
-              FilterChip(
-                label: Text(
-                  _gospelFilterLabel(gospel, labels, widget.uiLanguage),
-                ),
-                selected: _selectedGospels.contains(gospel),
-                onSelected: (selected) {
-                  setState(() {
-                    if (selected) {
-                      _selectedGospels.add(gospel);
-                    } else {
-                      _selectedGospels.remove(gospel);
-                    }
-                  });
-                },
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGospelCountPicker(LocalizedUiLabels labels) {
-    return DropdownButtonFormField<int>(
-      initialValue: _gospelCount,
-      isExpanded: true,
-      decoration: InputDecoration(labelText: labels.gospelCount),
-      items: [
-        for (var count = 1; count <= orderedGospels.length; count++)
-          DropdownMenuItem<int>(
-            value: count,
-            child: Text(
-              widget.uiLanguage.code == 'arabic'
-                  ? toArabicIndicDigits(count.toString())
-                  : count.toString(),
-            ),
-          ),
-      ],
-      onChanged: (value) {
-        if (value == null) {
-          return;
-        }
-        setState(() {
-          _gospelCount = value;
-        });
-      },
-    );
-  }
-
-  List<DropdownMenuItem<HarmonyFilterConditionMode>> _conditionModeItems(
-    LocalizedUiLabels labels,
-  ) {
-    return [
-      DropdownMenuItem<HarmonyFilterConditionMode>(
-        value: HarmonyFilterConditionMode.all,
-        child: Text(labels.matchAllConditions),
-      ),
-      DropdownMenuItem<HarmonyFilterConditionMode>(
-        value: HarmonyFilterConditionMode.any,
-        child: Text(labels.matchAnyConditions),
-      ),
-    ];
-  }
-
-  HarmonyFilterCondition _conditionAt(int index) {
-    if (index >= 0 && index < _conditions.length) {
-      return _conditions[index];
-    }
-    return const HarmonyFilterCondition(
-      gospel: 'Matthew',
-      requirement: GospelReferenceRequirement.hasReference,
-    );
-  }
-
-  void _updateCondition(
-    int index, {
-    String? gospel,
-    GospelReferenceRequirement? requirement,
+  Widget _constraintChip({
+    required Gospel gospel,
+    required GospelConstraint constraint,
   }) {
-    final current = _conditionAt(index);
-    final next = HarmonyFilterCondition(
-      gospel: gospel ?? current.gospel,
-      requirement: requirement ?? current.requirement,
-    ).normalized();
-    setState(() {
-      if (index >= 0 && index < _conditions.length) {
-        _conditions[index] = next;
-      }
-    });
-  }
-
-  void _addCondition() {
-    setState(() {
-      final used = _conditions.map((condition) => condition.gospel).toSet();
-      final gospel = orderedGospels.firstWhere(
-        (candidate) => !used.contains(candidate),
-        orElse: () => orderedGospels.first,
-      );
-      _conditions.add(
-        HarmonyFilterCondition(
-          gospel: gospel,
-          requirement: GospelReferenceRequirement.hasReference,
-        ),
-      );
-    });
-  }
-
-  void _removeCondition(int index) {
-    setState(() {
-      if (index >= 0 && index < _conditions.length) {
-        _conditions.removeAt(index);
-      }
-    });
-  }
-
-  Widget _buildConditionRow(
-    LocalizedUiLabels labels,
-    int index,
-    HarmonyFilterCondition condition,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+    final scheme = Theme.of(context).colorScheme;
+    final (
+      IconData icon,
+      Color foreground,
+      Color background,
+    ) = switch (constraint) {
+      GospelConstraint.included => (
+        Icons.check_circle_outline,
+        scheme.primary,
+        scheme.primaryContainer.withValues(alpha: 0.55),
+      ),
+      GospelConstraint.excluded => (
+        Icons.block,
+        scheme.error,
+        scheme.errorContainer.withValues(alpha: 0.55),
+      ),
+      GospelConstraint.any => (
+        Icons.remove_circle_outline,
+        scheme.onSurfaceVariant,
+        scheme.surfaceContainerHighest,
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: foreground.withValues(alpha: 0.35)),
+      ),
       child: Row(
-        textDirection: widget.uiLanguage.direction,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: DropdownButtonFormField<String>(
-              initialValue: condition.gospel,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: '${labels.condition} ${index + 1}',
-              ),
-              items: [
-                for (final gospel in orderedGospels)
-                  DropdownMenuItem<String>(
-                    value: gospel,
-                    child: Text(
-                      _gospelFilterLabel(gospel, labels, widget.uiLanguage),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value == null) {
-                  return;
-                }
-                _updateCondition(index, gospel: value);
-              },
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: DropdownButtonFormField<GospelReferenceRequirement>(
-              initialValue: condition.requirement,
-              isExpanded: true,
-              decoration: InputDecoration(labelText: labels.reference),
-              items: [
-                for (final requirement in const [
-                  GospelReferenceRequirement.hasReference,
-                  GospelReferenceRequirement.doesNotHaveReference,
-                ])
-                  DropdownMenuItem<GospelReferenceRequirement>(
-                    value: requirement,
-                    child: Text(
-                      _requirementLabel(requirement, labels),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value == null) {
-                  return;
-                }
-                _updateCondition(index, requirement: value);
-              },
-            ),
-          ),
+          Icon(icon, size: 15, color: foreground),
           const SizedBox(width: 4),
-          IconButton(
-            tooltip: labels.removeCondition,
-            onPressed: _conditions.length <= 1
-                ? null
-                : () => _removeCondition(index),
-            icon: const Icon(Icons.close),
+          Text(
+            _localizedGospelName(
+              gospel,
+              widget.uiLanguage.ui,
+              widget.uiLanguage,
+            ),
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: foreground,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildConditionRows(LocalizedUiLabels labels) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _constraintRow(
+    GospelFilterCombination combination,
+    GospelConstraint constraint,
+  ) {
+    final gospels = combination.gospelsWith(constraint).toList();
+    if (gospels.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final labels = widget.uiLanguage.ui;
+    final label = switch (constraint) {
+      GospelConstraint.included => labels.included,
+      GospelConstraint.excluded => labels.excluded,
+      GospelConstraint.any => labels.unrestricted,
+    };
+    final icon = switch (constraint) {
+      GospelConstraint.included => Icons.check,
+      GospelConstraint.excluded => Icons.block,
+      GospelConstraint.any => Icons.remove,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: widget.uiLanguage.code == 'arabic' ? 78 : 72,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 14),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final gospel in gospels)
+                  _constraintChip(gospel: gospel, constraint: constraint),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _combinationCard(GospelFilterCombination combination) {
+    final selected = combination.code == _selectedCode;
+    final scheme = Theme.of(context).colorScheme;
+    final summary = _combinationSummary(combination, widget.uiLanguage);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Semantics(
+        label: summary,
+        selected: selected,
+        button: true,
+        child: Card(
+          margin: EdgeInsets.zero,
+          elevation: selected ? 1 : 0,
+          color: selected
+              ? scheme.primaryContainer.withValues(alpha: 0.35)
+              : scheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _select(combination),
+            canRequestFocus: true,
+            child: Padding(
+              padding: const EdgeInsets.all(13),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _selectionIcon(selected),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      combination.code,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _constraintRow(combination, GospelConstraint.included),
+                        _constraintRow(combination, GospelConstraint.excluded),
+                        _constraintRow(combination, GospelConstraint.any),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _allTopicsCard() {
+    final selected = _selectedCode == null;
+    final labels = widget.uiLanguage.ui;
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: labels.allTopics,
+      selected: selected,
+      button: true,
+      child: Card(
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        elevation: selected ? 1 : 0,
+        color: selected
+            ? scheme.primaryContainer.withValues(alpha: 0.35)
+            : scheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _select(null),
+          canRequestFocus: true,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                _selectionIcon(selected),
+                const SizedBox(width: 12),
+                Icon(Icons.view_list_outlined, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    labels.allTopics,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _filterGroups() {
+    final labels = widget.uiLanguage.ui;
+    final filtered = semanticallyOrderedGospelFilters
+        .where(
+          (combination) =>
+              matchesGospelFilterSearch(combination, _query, widget.uiLanguage),
+        )
+        .toList();
+    if (filtered.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.search_off, size: 42),
+              const SizedBox(height: 12),
+              Text(
+                labels.noMatchingFilterCombinations,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
-        DropdownButtonFormField<HarmonyFilterConditionMode>(
-          initialValue: _conditionMode,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: labels.matchIndividualConditions,
-          ),
-          items: _conditionModeItems(labels),
-          onChanged: (value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              _conditionMode = value;
-            });
-          },
-        ),
-        const SizedBox(height: 12),
-        for (var i = 0; i < _conditions.length; i++)
-          _buildConditionRow(labels, i, _conditions[i]),
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: OutlinedButton.icon(
-            onPressed: _addCondition,
-            icon: const Icon(Icons.add, size: 18),
-            label: Text(labels.addCondition),
-          ),
-        ),
+        for (final includedCount in const <int>[4, 3, 2, 1])
+          if (filtered.any(
+            (combination) => combination.includedCount == includedCount,
+          ))
+            ExpansionTile(
+              key: ValueKey<String>(
+                'included-$includedCount-$_query-${_selectedCode ?? 'all'}',
+              ),
+              initiallyExpanded:
+                  _query.isNotEmpty ||
+                  _selectedCombination?.includedCount == includedCount ||
+                  includedCount == 4,
+              tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+              childrenPadding: EdgeInsets.zero,
+              title: Text(
+                _includedGroupLabel(includedCount, labels),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                filtered
+                    .where(
+                      (combination) =>
+                          combination.includedCount == includedCount,
+                    )
+                    .length
+                    .toString(),
+              ),
+              children: [
+                for (final excludedCount in const <int>[0, 1, 2, 3])
+                  if (filtered.any(
+                    (combination) =>
+                        combination.includedCount == includedCount &&
+                        combination.excludedCount == excludedCount,
+                  )) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(
+                          _excludedGroupLabel(excludedCount, labels),
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ),
+                    for (final combination in filtered.where(
+                      (combination) =>
+                          combination.includedCount == includedCount &&
+                          combination.excludedCount == excludedCount,
+                    ))
+                      _combinationCard(combination),
+                  ],
+              ],
+            ),
       ],
     );
   }
 
-  Widget _buildCustomControls(LocalizedUiLabels labels) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButtonFormField<HarmonyFilterOperator>(
-          initialValue: _operator,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: labels.customFilter),
-          items: _operatorItems(labels),
-          onChanged: (value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              _operator = value;
-              if (_operator ==
-                      HarmonyFilterOperator.matchIndividualConditions &&
-                  _conditions.isEmpty) {
-                _ensureOneCondition();
-              }
-            });
-          },
+  Widget _header() {
+    final labels = widget.uiLanguage.ui;
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    labels.gospelCombinations,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (widget.currentResultCount != null)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 4),
+                    child: Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        _localizedResultsLabel(
+                          widget.uiLanguage,
+                          widget.currentResultCount!,
+                        ),
+                      ),
+                    ),
+                  ),
+                IconButton(
+                  tooltip: labels.cancel,
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                labelText: labels.searchFilters,
+                hintText: 'C25 · Matthew · متى',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: labels.clearFilter,
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {
+                            _query = '';
+                          });
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _query = value;
+                });
+              },
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                onPressed: _selectedCode == null ? null : () => _select(null),
+                icon: const Icon(Icons.filter_alt_off, size: 18),
+                label: Text(labels.clearFilter),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
-        if (_usesSelectedGospels) _buildSelectedGospels(labels),
-        if (_usesGospelCount) _buildGospelCountPicker(labels),
-        if (_usesRequirements) _buildConditionRows(labels),
-      ],
+      ),
+    );
+  }
+
+  Widget _actions() {
+    final labels = widget.uiLanguage.ui;
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: OverflowBar(
+          alignment: MainAxisAlignment.end,
+          spacing: 8,
+          overflowSpacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: () => _select(null),
+              icon: const Icon(Icons.filter_alt_off, size: 18),
+              label: Text(labels.clearFilter),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(labels.cancel),
+            ),
+            FilledButton.icon(
+              onPressed: _apply,
+              icon: const Icon(Icons.check, size: 18),
+              label: Text(labels.applyFilter),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final labels = widget.uiLanguage.ui;
+    final size = MediaQuery.sizeOf(context);
+    final fullScreen = size.width < 640 || size.height < 680;
+    final dialog = Dialog(
+      insetPadding: fullScreen
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+      shape: fullScreen
+          ? const RoundedRectangleBorder()
+          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: fullScreen ? size.width : math.min(780, size.width - 48),
+        height: fullScreen ? size.height : math.min(760, size.height - 44),
+        child: Column(
+          children: [
+            _header(),
+            const Divider(height: 1),
+            _allTopicsCard(),
+            Expanded(child: _filterGroups()),
+            const Divider(height: 1),
+            _actions(),
+          ],
+        ),
+      ),
+    );
     return Directionality(
       textDirection: widget.uiLanguage.direction,
-      child: AlertDialog(
-        title: Text(labels.filter, textAlign: TextAlign.start),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                DropdownButtonFormField<HarmonyFilterPreset>(
-                  initialValue: _preset,
-                  isExpanded: true,
-                  decoration: InputDecoration(labelText: labels.filter),
-                  items: _presetItems(labels),
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() {
-                      final wasCustom = _preset == HarmonyFilterPreset.custom;
-                      _preset = value;
-                      if (_preset == HarmonyFilterPreset.custom && !wasCustom) {
-                        _operator =
-                            HarmonyFilterOperator.matchIndividualConditions;
-                        _ensureOneCondition();
-                      }
-                    });
-                  },
-                ),
-                if (_preset == HarmonyFilterPreset.custom) ...[
-                  const SizedBox(height: 16),
-                  _buildCustomControls(labels),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () =>
-                Navigator.of(context).pop(HarmonyFilterState.allTopics),
-            child: Text(labels.clearFilter),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(labels.cancel),
-          ),
-          FilledButton(
-            onPressed: _canApply
-                ? () => Navigator.of(context).pop(_buildFilter())
-                : null,
-            child: Text(labels.apply),
-          ),
-        ],
-      ),
+      child: fullScreen ? SafeArea(child: dialog) : dialog,
     );
   }
 }
@@ -3218,7 +3109,15 @@ Future<bool> _isCurrentUserAdmin() async {
   if (user == null) {
     return false;
   }
+  return _adminStateByUser.putIfAbsent(
+    user.uid,
+    () => _loadAdminStateForUser(user),
+  );
+}
 
+final Map<String, Future<bool>> _adminStateByUser = <String, Future<bool>>{};
+
+Future<bool> _loadAdminStateForUser(User user) async {
   try {
     final token = await user.getIdTokenResult();
     final claims = token.claims ?? const <String, dynamic>{};
@@ -3373,6 +3272,7 @@ class _GospelAppState extends State<GospelApp> {
           builder: (context) => TopicListScreen(
             initialLanguage: rawLanguage,
             initialVersion: rawVersion,
+            initialFilterCode: uri.queryParameters['filter'],
             initialMenuLanguage:
                 rawMenuLanguage ??
                 UserProfileController.instance.preferences.menuLanguage,
@@ -3802,12 +3702,14 @@ class TopicListScreen extends StatefulWidget {
     this.initialTopicId,
     this.initialLanguage,
     this.initialVersion,
+    this.initialFilterCode,
     this.initialMenuLanguage,
   });
 
   final String? initialTopicId;
   final String? initialLanguage;
   final String? initialVersion;
+  final String? initialFilterCode;
   final String? initialMenuLanguage;
   @override
   State<TopicListScreen> createState() => _TopicListScreenState();
@@ -3829,7 +3731,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   bool _isAdmin = false;
   bool _routeProvidedInitialVersion = false;
   bool _topicsLoadRequested = false;
-  HarmonyFilterState _filterState = _HarmonyFilterMemory.state;
+  GospelFilterCombination? _filterCombination;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -3837,6 +3739,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   void initState() {
     super.initState();
+    _filterCombination = gospelFilterCombinationForCode(
+      widget.initialFilterCode,
+    );
     final initialLanguage = widget.initialLanguage?.trim();
     final initialVersion = widget.initialVersion?.trim();
     if (initialLanguage != null && initialLanguage.isNotEmpty) {
@@ -4029,7 +3934,11 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
     if (mounted && option.code == _selectedLanguageCode) {
       Navigator.of(context).pushReplacementNamed(
-        _mainTableUri(language: option, version: normalized).toString(),
+        _mainTableUri(
+          language: option,
+          version: normalized,
+          filterCode: _filterCombination?.code,
+        ).toString(),
       );
       return;
     }
@@ -4067,7 +3976,11 @@ class _TopicListScreenState extends State<TopicListScreen> {
       return;
     }
     Navigator.of(context).pushReplacementNamed(
-      _mainTableUri(language: option, version: normalized).toString(),
+      _mainTableUri(
+        language: option,
+        version: normalized,
+        filterCode: _filterCombination?.code,
+      ).toString(),
     );
   }
 
@@ -4172,23 +4085,28 @@ class _TopicListScreenState extends State<TopicListScreen> {
   List<int> _visibleTopicIndexes() {
     final indexes = <int>[];
     for (var i = 0; i < _topics.length; i++) {
-      if (matchesFilter(_topics[i], _filterState)) {
+      if (matchesFilter(_topics[i], _filterCombination)) {
         indexes.add(i);
       }
     }
     return indexes;
   }
 
-  void _setFilterState(HarmonyFilterState filterState) {
-    setState(() {
-      _filterState = filterState;
-      _HarmonyFilterMemory.state = filterState;
-    });
-    _tableKey.currentState?.resetScroll();
+  void _setFilterCombination(GospelFilterCombination? combination) {
+    if (combination?.code == _filterCombination?.code) {
+      return;
+    }
+    Navigator.of(context).pushNamed(
+      _mainTableUri(
+        language: _languageOption,
+        version: _apiVersionFor(_languageOption),
+        filterCode: combination?.code,
+      ).toString(),
+    );
   }
 
   void _clearFilter() {
-    _setFilterState(HarmonyFilterState.allTopics);
+    _setFilterCombination(null);
   }
 
   @override
@@ -4257,16 +4175,17 @@ class _TopicListScreenState extends State<TopicListScreen> {
                           label: Text(menuLanguage.resetLabel),
                         ),
                       HarmonyFilterButton(
-                        filterState: _filterState,
+                        selectedCombination: _filterCombination,
                         uiLanguage: menuLanguage,
-                        onChanged: _setFilterState,
+                        currentResultCount: visibleTopics.length,
+                        onChanged: _setFilterCombination,
                       ),
-                      if (_filterState.isActive)
-                        OutlinedButton.icon(
-                          onPressed: _clearFilter,
-                          style: _toolbarOutlinedStyle(context),
-                          icon: const Icon(Icons.filter_alt_off, size: 18),
-                          label: Text(menuLanguage.ui.clearFilter),
+                      if (_filterCombination != null)
+                        _buildActiveGospelFilterChip(
+                          context: context,
+                          combination: _filterCombination!,
+                          uiLanguage: menuLanguage,
+                          onDeleted: _clearFilter,
                         ),
                       _buildHarmonyResultCountChip(
                         context: context,
@@ -8732,7 +8651,10 @@ class Topic {
   final String id;
   final String name;
   final List<GospelReference> references;
-  const Topic({required this.id, required this.name, required this.references});
+  final int gospelPresenceMask;
+
+  Topic({required this.id, required this.name, required this.references})
+    : gospelPresenceMask = _gospelPresenceMask(references);
 
   factory Topic.fromJson(Map<String, dynamic> json) {
     final dynamic referencesRaw = json['references'] ?? json['entries'] ?? [];
