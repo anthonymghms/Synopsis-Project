@@ -27,6 +27,7 @@ void main() {
     double width = 1000,
     double height = 500,
     LanguageOption? languageOption,
+    List<Gospel>? visibleGospels,
   }) {
     final option = languageOption ?? kBaseLanguageOptions.first;
     return MaterialApp(
@@ -46,6 +47,7 @@ void main() {
               ],
               languageOption: option,
               apiVersion: option.apiVersion,
+              visibleGospels: visibleGospels,
             ),
           ),
         ),
@@ -197,6 +199,139 @@ void main() {
     });
   });
 
+  group('advanced Gospel processing pipeline', () {
+    test('filters union, intersection, and post-operation exclusion', () {
+      final topics = <Topic>[
+        topicWith('mark', ['Mark']),
+        topicWith('luke', ['Luke']),
+        topicWith('both', ['Mark', 'Luke']),
+        topicWith('both-john', ['Mark', 'Luke', 'John']),
+      ];
+      final union = GospelFilterState(
+        mode: GospelFilterMode.union,
+        includeMask: Gospel.mark.bit | Gospel.luke.bit,
+      );
+      final intersection = GospelFilterState(
+        mode: GospelFilterMode.intersection,
+        includeMask: Gospel.mark.bit | Gospel.luke.bit,
+      );
+      final excluded = union.copyWith(excludeMask: Gospel.john.bit);
+
+      expect(
+        processHarmonyTopicIndexes(
+          topics,
+          union,
+          const GospelSortState(gospel: Gospel.mark),
+        ).toSet(),
+        {0, 1, 2, 3},
+      );
+      expect(
+        processHarmonyTopicIndexes(
+          topics,
+          intersection,
+          const GospelSortState(gospel: Gospel.mark),
+        ).toSet(),
+        {2, 3},
+      );
+      expect(
+        processHarmonyTopicIndexes(
+          topics,
+          excluded,
+          const GospelSortState(gospel: Gospel.mark),
+        ).toSet(),
+        {0, 1, 2},
+      );
+    });
+
+    test('sorts numeric chapter and verse using the earliest reference', () {
+      final topics = <Topic>[
+        Topic(id: 'missing-leading', name: 'Leading', references: const []),
+        Topic(
+          id: 'chapter-2',
+          name: 'Chapter 2',
+          references: const [
+            GospelReference(book: 'Mark', chapter: 2, verses: '1'),
+          ],
+        ),
+        Topic(id: 'missing-near-2', name: 'Related', references: const []),
+        Topic(
+          id: 'verse-14',
+          name: 'Verse 14',
+          references: const [
+            GospelReference(book: 'Mark', chapter: 1, verses: '14'),
+          ],
+        ),
+        Topic(
+          id: 'multiple',
+          name: 'Multiple',
+          references: const [
+            GospelReference(book: 'Mark', chapter: 3, verses: '5'),
+            GospelReference(book: 'Mark', chapter: 1, verses: '2-4'),
+          ],
+        ),
+      ];
+
+      final indexes = processHarmonyTopicIndexes(
+        topics,
+        const GospelFilterState(),
+        const GospelSortState(gospel: Gospel.mark),
+      );
+
+      expect(indexes, [0, 4, 3, 1, 2]);
+      expect(
+        topics[4].earliestGospelAnchors[Gospel.mark],
+        const GospelChronologyAnchor(chapter: 1, verse: 2),
+      );
+    });
+
+    test('localized digits parse into canonical chronology metadata', () {
+      final reference = GospelReference.fromJson({
+        'book': 'مرقس',
+        'chapter': '٢',
+        'verses': '١٤-١٥',
+      });
+      final topic = Topic(id: 'ar', name: 'Arabic', references: [reference]);
+
+      expect(hasGospelReference(topic, Gospel.mark), isTrue);
+      expect(
+        topic.earliestGospelAnchors[Gospel.mark],
+        const GospelChronologyAnchor(chapter: 2, verse: 14),
+      );
+    });
+
+    test('Luke chronology remains available while Luke is hidden', () {
+      final topics = <Topic>[
+        Topic(
+          id: 'later',
+          name: 'Later',
+          references: const [
+            GospelReference(book: 'Luke', chapter: 2, verses: '1'),
+          ],
+        ),
+        Topic(
+          id: 'earlier',
+          name: 'Earlier',
+          references: const [
+            GospelReference(book: 'Luke', chapter: 1, verses: '20'),
+          ],
+        ),
+      ];
+      final columns = ColumnVisibilityState(
+        visibleMask: Gospel.matthew.bit | Gospel.mark.bit | Gospel.john.bit,
+      );
+
+      expect(columns.isVisible(Gospel.luke), isFalse);
+      expect(
+        processHarmonyTopicIndexes(
+          topics,
+          const GospelFilterState(),
+          const GospelSortState(gospel: Gospel.luke),
+        ),
+        [1, 0],
+      );
+    });
+  });
+
   testWidgets('interlinear rows apply zoom to LTR and RTL text immediately', (
     tester,
   ) async {
@@ -235,13 +370,16 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Arabic Gospel filter browser is localized and RTL', (
-    tester,
-  ) async {
+  testWidgets('Arabic set filter is localized, live, and RTL', (tester) async {
     final arabic = kBaseLanguageOptions.firstWhere(
       (option) => option.code == 'arabic',
     );
-    GospelFilterCombination? selected;
+    var selected = const GospelFilterState();
+    final masks = <int>[
+      Gospel.mark.bit,
+      Gospel.luke.bit,
+      Gospel.mark.bit | Gospel.luke.bit,
+    ];
 
     await tester.pumpWidget(
       MaterialApp(
@@ -250,12 +388,11 @@ void main() {
           child: Scaffold(
             body: Center(
               child: HarmonyFilterButton(
-                selectedCombination: null,
+                filterState: selected,
                 uiLanguage: arabic,
-                currentResultCount: 42,
-                onChanged: (combination) {
-                  selected = combination;
-                },
+                topicPresenceMasks: masks,
+                currentResultCount: 3,
+                onChanged: (state) => selected = state,
               ),
             ),
           ),
@@ -267,46 +404,108 @@ void main() {
     await tester.tap(find.text('تصفية'));
     await tester.pumpAndSettle();
 
-    expect(find.text('تركيبات الأناجيل'), findsOneWidget);
-    expect(find.text('البحث في التصفيات'), findsOneWidget);
-    expect(find.text('كل المواضيع'), findsOneWidget);
+    expect(find.text('العملية'), findsOneWidget);
+    expect(find.text('اتحاد'), findsOneWidget);
+    expect(find.text('تقاطع'), findsOneWidget);
     expect(find.text('إزالة التصفية'), findsWidgets);
-    expect(find.text('تطبيق التصفية'), findsOneWidget);
-    expect(find.text('أربعة أناجيل مشمولة'), findsOneWidget);
-    expect(find.text('٤٢ نتيجة'), findsOneWidget);
+    expect(find.text('٣ موضوعًا'), findsWidgets);
     expect(
-      Directionality.of(tester.element(find.text('تركيبات الأناجيل'))),
+      Directionality.of(tester.element(find.text('العملية'))),
       TextDirection.rtl,
     );
 
-    await tester.tap(find.text('C01'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('تطبيق التصفية'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('تقاطع'));
+    await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
+    await tester.tap(find.byKey(const ValueKey<String>('include-luke')));
+    await tester.pump();
 
-    expect(selected?.code, 'C01');
+    expect(selected.mode, GospelFilterMode.intersection);
+    expect(selected.includeMask, Gospel.mark.bit | Gospel.luke.bit);
+    expect(find.text('مرقس ∩ لوقا'), findsOneWidget);
+    expect(find.text('١ موضوعًا'), findsWidgets);
   });
 
-  testWidgets('English filter browser groups, searches, and selects by code', (
-    tester,
-  ) async {
-    GospelFilterCombination? selected;
+  testWidgets(
+    'English set filter builds union then exclusion with live counts',
+    (tester) async {
+      var selected = const GospelFilterState();
+      final masks = <int>[
+        Gospel.mark.bit,
+        Gospel.luke.bit,
+        Gospel.mark.bit | Gospel.luke.bit,
+        Gospel.mark.bit | Gospel.luke.bit | Gospel.john.bit,
+        Gospel.matthew.bit,
+      ];
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MenuLanguageScope(
-          notifier: ValueNotifier<String>('english'),
-          child: Scaffold(
-            body: Center(
-              child: HarmonyFilterButton(
-                selectedCombination: null,
-                uiLanguage: kBaseLanguageOptions.first,
-                currentResultCount: 12,
-                onChanged: (combination) {
-                  selected = combination;
-                },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MenuLanguageScope(
+            notifier: ValueNotifier<String>('english'),
+            child: Scaffold(
+              body: Center(
+                child: HarmonyFilterButton(
+                  filterState: selected,
+                  uiLanguage: kBaseLanguageOptions.first,
+                  topicPresenceMasks: masks,
+                  currentResultCount: 5,
+                  onChanged: (state) => selected = state,
+                ),
               ),
             ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Filter'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
+      await tester.pump();
+      expect(find.text('Mark'), findsWidgets);
+      expect(find.text('3 topics'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey<String>('include-luke')));
+      await tester.pump();
+      expect(find.text('Mark ∪ Luke'), findsOneWidget);
+      expect(find.text('4 topics'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey<String>('exclude-john')));
+      await tester.pump();
+      expect(find.text('(Mark ∪ Luke) − John'), findsOneWidget);
+      expect(find.text('3 topics'), findsWidgets);
+      expect(selected.mode, GospelFilterMode.union);
+      expect(selected.includeMask, Gospel.mark.bit | Gospel.luke.bit);
+      expect(selected.excludeMask, Gospel.john.bit);
+      expect(find.text('Apply filter'), findsNothing);
+    },
+  );
+
+  testWidgets('filter changes update the outside count live', (tester) async {
+    var state = const GospelFilterState();
+    final masks = <int>[Gospel.mark.bit, Gospel.luke.bit, Gospel.john.bit];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              final count = masks.where(state.matchesPresenceMask).length;
+              return Column(
+                children: [
+                  HarmonyFilterButton(
+                    filterState: state,
+                    uiLanguage: kBaseLanguageOptions.first,
+                    topicPresenceMasks: masks,
+                    currentResultCount: count,
+                    onChanged: (value) {
+                      setState(() {
+                        state = value;
+                      });
+                    },
+                  ),
+                  Text('outside-count-$count'),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -314,44 +513,11 @@ void main() {
 
     await tester.tap(find.text('Filter'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
+    await tester.pump();
 
-    expect(find.text('Gospel combinations'), findsOneWidget);
-    expect(find.text('Four included'), findsOneWidget);
-    expect(find.text('Custom filter'), findsNothing);
-
-    await tester.enterText(find.byType(TextField), 'C25');
-    await tester.pumpAndSettle();
-
-    expect(find.text('C25'), findsNWidgets(2));
-    expect(find.text('C01'), findsNothing);
-    expect(find.text('Two included'), findsOneWidget);
-    expect(find.text('Included'), findsOneWidget);
-    expect(find.text('Any'), findsOneWidget);
-    expect(find.text('Excluded'), findsNothing);
-
-    await tester.tap(find.text('C25').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Apply filter'));
-    await tester.pumpAndSettle();
-
-    expect(selected?.code, 'C25');
-  });
-
-  test('filter search understands codes, semantics, and Arabic names', () {
-    final english = kBaseLanguageOptions.first;
-    final c05 = gospelFilterCombinationForCode('C05')!;
-    final c25 = gospelFilterCombinationForCode('C25')!;
-    final c32 = gospelFilterCombinationForCode('C32')!;
-
-    expect(matchesGospelFilterSearch(c25, 'C25', english), isTrue);
-    expect(matchesGospelFilterSearch(c25, 'Matthew John', english), isTrue);
-    expect(matchesGospelFilterSearch(c05, 'Matthew John', english), isFalse);
-    expect(matchesGospelFilterSearch(c05, 'exclude Luke', english), isTrue);
-    expect(matchesGospelFilterSearch(c32, 'only Mark', english), isTrue);
-    expect(matchesGospelFilterSearch(c25, 'any Luke', english), isTrue);
-    expect(matchesGospelFilterSearch(c05, 'any Luke', english), isFalse);
-    expect(matchesGospelFilterSearch(c25, 'متى يوحنا', english), isTrue);
-    expect(matchesGospelFilterSearch(c25, 'exclude Luke', english), isFalse);
+    expect(find.text('outside-count-1'), findsOneWidget);
+    expect(find.text('1 topics'), findsWidgets);
   });
 
   testWidgets('filter browser uses a full-height mobile layout', (
@@ -367,8 +533,9 @@ void main() {
         home: Scaffold(
           body: Center(
             child: HarmonyFilterButton(
-              selectedCombination: null,
+              filterState: const GospelFilterState(),
               uiLanguage: kBaseLanguageOptions.first,
+              topicPresenceMasks: const <int>[],
               onChanged: (_) {},
             ),
           ),
@@ -382,8 +549,8 @@ void main() {
     final dialogSize = tester.getSize(find.byType(Dialog));
     expect(dialogSize.width, greaterThanOrEqualTo(380));
     expect(dialogSize.height, greaterThanOrEqualTo(760));
-    expect(find.text('Search filters'), findsOneWidget);
-    expect(find.text('Apply filter'), findsOneWidget);
+    expect(find.text('Include Gospels'), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -392,8 +559,9 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: HarmonyFilterButton(
-            selectedCombination: null,
+            filterState: const GospelFilterState(),
             uiLanguage: kBaseLanguageOptions.first,
+            topicPresenceMasks: const <int>[],
             onChanged: (_) {},
           ),
         ),
@@ -402,12 +570,12 @@ void main() {
 
     await tester.tap(find.text('Filter'));
     await tester.pumpAndSettle();
-    expect(find.text('Gospel combinations'), findsOneWidget);
+    expect(find.text('Operation'), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
 
-    expect(find.text('Gospel combinations'), findsNothing);
+    expect(find.text('Operation'), findsNothing);
   });
 
   testWidgets('browser route links ignore taps while navigation is blocked', (
@@ -688,6 +856,90 @@ void main() {
     expect(combined.textDirection, TextDirection.rtl);
     expect(combined.language, arabic.apiLanguage);
     expect(combined.openInNewTab, isTrue);
+  });
+
+  testWidgets('hidden Gospel columns do not render their references', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(
+        const [
+          GospelReference(book: 'Matthew', chapter: 1, verses: '1'),
+          GospelReference(book: 'Mark', chapter: 1, verses: '2'),
+          GospelReference(book: 'Luke', chapter: 1, verses: '3'),
+          GospelReference(book: 'John', chapter: 1, verses: '4'),
+        ],
+        visibleGospels: const [Gospel.matthew, Gospel.mark],
+      ),
+    );
+
+    expect(find.text('Matthew'), findsOneWidget);
+    expect(find.text('Mark'), findsOneWidget);
+    expect(find.text('Luke'), findsNothing);
+    expect(find.text('John'), findsNothing);
+    expect(find.byType(ReferenceHoverText), findsNWidgets(2));
+  });
+
+  testWidgets('column picker prevents hiding all and can re-enable columns', (
+    tester,
+  ) async {
+    var state = const ColumnVisibilityState();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonyColumnsButton(
+            state: state,
+            uiLanguage: kBaseLanguageOptions.first,
+            onChanged: (value) => state = value,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('columns-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('column-luke')));
+    await tester.tap(find.byKey(const ValueKey<String>('column-john')));
+    await tester.tap(find.byKey(const ValueKey<String>('column-matthew')));
+    await tester.pump();
+
+    expect(state.visibleGospels, [Gospel.mark]);
+    final finalChip = tester.widget<FilterChip>(
+      find.byKey(const ValueKey<String>('column-mark')),
+    );
+    expect(finalChip.onSelected, isNull);
+
+    await tester.tap(find.byKey(const ValueKey<String>('column-luke')));
+    await tester.pump();
+    expect(state.visibleGospels, [Gospel.mark, Gospel.luke]);
+  });
+
+  testWidgets('sort picker exposes all localized Gospel chronologies', (
+    tester,
+  ) async {
+    var state = const GospelSortState();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonySortButton(
+            state: state,
+            uiLanguage: kBaseLanguageOptions.first,
+            onChanged: (value) => state = value,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Matthew chronology'), findsOneWidget);
+    expect(find.text('Mark chronology'), findsOneWidget);
+    expect(find.text('Luke chronology'), findsOneWidget);
+    expect(find.text('John chronology'), findsOneWidget);
+
+    await tester.tap(find.text('Luke chronology'));
+    await tester.pumpAndSettle();
+    expect(state.gospel, Gospel.luke);
   });
 
   testWidgets('harmony table caps and centers on wide screens', (tester) async {

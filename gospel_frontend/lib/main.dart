@@ -282,7 +282,22 @@ class LocalizedUiLabels {
   final List<String> gospelHeaders;
   final String tooltipMessage;
   final String comparePrompt;
+  final String columns;
+  final String showColumns;
+  final String sort;
+  final String sortBy;
+  final String chronology;
   final String filter;
+  final String operation;
+  final String union;
+  final String intersection;
+  final String includeGospels;
+  final String exclude;
+  final String currentFilter;
+  final String topics;
+  final String references;
+  final String atLeastOneColumnVisible;
+  final String filterUpdatesLive;
   final String gospelCombinations;
   final String searchFilters;
   final String included;
@@ -367,7 +382,22 @@ class LocalizedUiLabels {
     required this.gospelHeaders,
     required this.tooltipMessage,
     required this.comparePrompt,
+    required this.columns,
+    required this.showColumns,
+    required this.sort,
+    required this.sortBy,
+    required this.chronology,
     required this.filter,
+    required this.operation,
+    required this.union,
+    required this.intersection,
+    required this.includeGospels,
+    required this.exclude,
+    required this.currentFilter,
+    required this.topics,
+    required this.references,
+    required this.atLeastOneColumnVisible,
+    required this.filterUpdatesLive,
     required this.gospelCombinations,
     required this.searchFilters,
     required this.included,
@@ -522,7 +552,23 @@ const List<LanguageOption> kBaseLanguageOptions = [
       gospelHeaders: ['Matthew', 'Mark', 'Luke', 'John'],
       tooltipMessage: 'Click to view more',
       comparePrompt: 'Select authors to compare',
+      columns: 'Columns',
+      showColumns: 'Show columns',
+      sort: 'Sort',
+      sortBy: 'Sort by',
+      chronology: 'chronology',
       filter: 'Filter',
+      operation: 'Operation',
+      union: 'Union',
+      intersection: 'Intersection',
+      includeGospels: 'Include Gospels',
+      exclude: 'Exclude',
+      currentFilter: 'Current filter',
+      topics: 'topics',
+      references: 'references',
+      atLeastOneColumnVisible:
+          'At least one Gospel column must remain visible.',
+      filterUpdatesLive: 'The table and topic counts update as you choose.',
       gospelCombinations: 'Gospel combinations',
       searchFilters: 'Search filters',
       included: 'Included',
@@ -624,7 +670,22 @@ const List<LanguageOption> kBaseLanguageOptions = [
       gospelHeaders: ['متى', 'مرقس', 'لوقا', 'يوحنا'],
       tooltipMessage: 'اضغط لعرض المزيد',
       comparePrompt: 'اختر الأناجيل للمقارنة',
+      columns: 'الأعمدة',
+      showColumns: 'إظهار الأعمدة',
+      sort: 'الترتيب',
+      sortBy: 'الترتيب حسب',
+      chronology: 'التسلسل الزمني',
       filter: 'تصفية',
+      operation: 'العملية',
+      union: 'اتحاد',
+      intersection: 'تقاطع',
+      includeGospels: 'الأناجيل المشمولة',
+      exclude: 'استبعاد',
+      currentFilter: 'التصفية الحالية',
+      topics: 'موضوعًا',
+      references: 'مرجعًا',
+      atLeastOneColumnVisible: 'يجب إبقاء عمود إنجيل واحد ظاهرًا على الأقل.',
+      filterUpdatesLive: 'يتحدث الجدول وعدد المواضيع مع كل اختيار.',
       gospelCombinations: 'تركيبات الأناجيل',
       searchFilters: 'البحث في التصفيات',
       included: 'مشمولة',
@@ -1058,16 +1119,19 @@ void _syncSelectedContentLanguage(
 Uri _mainTableUri({
   required LanguageOption language,
   required String version,
-  String? filterCode,
+  GospelFilterState filterState = const GospelFilterState(),
+  GospelSortState sortState = const GospelSortState(),
+  ColumnVisibilityState columnVisibility = const ColumnVisibilityState(),
 }) {
   final queryParameters = <String, String>{
     'language': language.apiLanguage,
     'version': _sanitizeVersionForLanguage(language, version),
+    ...harmonyViewQueryParameters(
+      filter: filterState,
+      sort: sortState,
+      columns: columnVisibility,
+    ),
   };
-  final combination = gospelFilterCombinationForCode(filterCode);
-  if (combination != null) {
-    queryParameters['filter'] = combination.code;
-  }
   return Uri(path: '/', queryParameters: queryParameters);
 }
 
@@ -1543,7 +1607,7 @@ bool _referenceHasData(GospelReference reference) {
 
 bool hasReference(Topic topic, String gospel) {
   final canonical = Gospel.fromCanonicalName(_normalizeGospelName(gospel));
-  return canonical != null && (topic.gospelPresenceMask & canonical.bit) != 0;
+  return canonical != null && hasGospelReference(topic, canonical);
 }
 
 Set<String> getReferencedGospels(Topic topic) {
@@ -1569,8 +1633,171 @@ int _gospelPresenceMask(Iterable<GospelReference> references) {
   return mask;
 }
 
+bool hasGospelReference(Topic topic, Gospel gospel) {
+  return topic.gospelPresenceMask & gospel.bit != 0;
+}
+
 bool matchesFilter(Topic topic, GospelFilterCombination? filter) {
   return filter?.matchesPresenceMask(topic.gospelPresenceMask) ?? true;
+}
+
+bool matchesAdvancedFilter(Topic topic, GospelFilterState filter) {
+  return filter.matchesPresenceMask(topic.gospelPresenceMask);
+}
+
+class GospelChronologyAnchor implements Comparable<GospelChronologyAnchor> {
+  const GospelChronologyAnchor({required this.chapter, required this.verse});
+
+  final int chapter;
+  final int verse;
+
+  @override
+  int compareTo(GospelChronologyAnchor other) {
+    final chapterComparison = chapter.compareTo(other.chapter);
+    return chapterComparison != 0
+        ? chapterComparison
+        : verse.compareTo(other.verse);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is GospelChronologyAnchor &&
+        other.chapter == chapter &&
+        other.verse == verse;
+  }
+
+  @override
+  int get hashCode => Object.hash(chapter, verse);
+}
+
+String _normalizeReferenceDigits(String value) {
+  const replacements = <String, String>{
+    '٠': '0',
+    '١': '1',
+    '٢': '2',
+    '٣': '3',
+    '٤': '4',
+    '٥': '5',
+    '٦': '6',
+    '٧': '7',
+    '٨': '8',
+    '٩': '9',
+    '۰': '0',
+    '۱': '1',
+    '۲': '2',
+    '۳': '3',
+    '۴': '4',
+    '۵': '5',
+    '۶': '6',
+    '۷': '7',
+    '۸': '8',
+    '۹': '9',
+  };
+  return value.split('').map((digit) => replacements[digit] ?? digit).join();
+}
+
+int _parseReferenceNumber(Object? rawValue) {
+  return int.tryParse(
+        _normalizeReferenceDigits(rawValue?.toString().trim() ?? ''),
+      ) ??
+      0;
+}
+
+GospelChronologyAnchor? _chronologyAnchorForReference(
+  GospelReference reference,
+) {
+  if (!_referenceHasData(reference)) {
+    return null;
+  }
+  final numbers = RegExp(r'\d+')
+      .allMatches(_normalizeReferenceDigits(reference.verses))
+      .map((match) => int.parse(match.group(0)!))
+      .toList();
+  if (reference.chapter > 0) {
+    return GospelChronologyAnchor(
+      chapter: reference.chapter,
+      verse: numbers.isEmpty ? 0 : numbers.first,
+    );
+  }
+  if (numbers.isEmpty) {
+    return null;
+  }
+  return GospelChronologyAnchor(
+    chapter: numbers.first,
+    verse: numbers.length > 1 ? numbers[1] : 0,
+  );
+}
+
+Map<Gospel, GospelChronologyAnchor> _earliestGospelAnchors(
+  Iterable<GospelReference> references,
+) {
+  final anchors = <Gospel, GospelChronologyAnchor>{};
+  for (final reference in references) {
+    final gospel = Gospel.fromCanonicalName(
+      _normalizeGospelName(reference.book),
+    );
+    final anchor = _chronologyAnchorForReference(reference);
+    if (gospel == null || anchor == null) {
+      continue;
+    }
+    final current = anchors[gospel];
+    if (current == null || anchor.compareTo(current) < 0) {
+      anchors[gospel] = anchor;
+    }
+  }
+  return Map<Gospel, GospelChronologyAnchor>.unmodifiable(anchors);
+}
+
+/// Applies the deterministic main-table pipeline: set filter, chronology sort,
+/// then returns canonical topic indexes for rendering and numbering.
+List<int> processHarmonyTopicIndexes(
+  List<Topic> topics,
+  GospelFilterState filter,
+  GospelSortState sort,
+) {
+  final filtered = <int>[
+    for (var index = 0; index < topics.length; index++)
+      if (matchesAdvancedFilter(topics[index], filter)) index,
+  ];
+  if (filtered.length < 2) {
+    return filtered;
+  }
+
+  final leadingMissing = <int>[];
+  final missingAfterAnchor = <int, List<int>>{};
+  final anchored = <int>[];
+  int? previousAnchoredIndex;
+
+  for (final topicIndex in filtered) {
+    final anchor = topics[topicIndex].earliestGospelAnchors[sort.gospel];
+    if (anchor != null) {
+      anchored.add(topicIndex);
+      previousAnchoredIndex = topicIndex;
+    } else if (previousAnchoredIndex == null) {
+      leadingMissing.add(topicIndex);
+    } else {
+      missingAfterAnchor
+          .putIfAbsent(previousAnchoredIndex, () => <int>[])
+          .add(topicIndex);
+    }
+  }
+
+  anchored.sort((firstIndex, secondIndex) {
+    final first = topics[firstIndex].earliestGospelAnchors[sort.gospel]!;
+    final second = topics[secondIndex].earliestGospelAnchors[sort.gospel]!;
+    final anchorComparison = first.compareTo(second);
+    return anchorComparison != 0
+        ? anchorComparison
+        : firstIndex.compareTo(secondIndex);
+  });
+
+  return <int>[
+    ...leadingMissing,
+    for (final topicIndex in anchored) ...[
+      topicIndex,
+      ...?missingAfterAnchor[topicIndex],
+    ],
+  ];
 }
 
 String _topicNumberForDisplay(
@@ -2328,36 +2555,9 @@ Widget _buildHarmonyResultCountChip({
       size: 18,
       color: theme.colorScheme.primary,
     ),
-    label: Text(_localizedResultsLabel(uiLanguage, count)),
+    label: Text(_localizedTopicCount(uiLanguage, count)),
     side: BorderSide(color: theme.colorScheme.outlineVariant),
     backgroundColor: theme.colorScheme.surface,
-  );
-}
-
-Widget _buildActiveGospelFilterChip({
-  required BuildContext context,
-  required GospelFilterCombination combination,
-  required LanguageOption uiLanguage,
-  required VoidCallback onDeleted,
-}) {
-  final labels = uiLanguage.ui;
-  final includedNames = combination
-      .gospelsWith(GospelConstraint.included)
-      .map((gospel) => _localizedGospelName(gospel, labels, uiLanguage))
-      .join(' + ');
-  return Tooltip(
-    message: _combinationSummary(combination, uiLanguage),
-    child: InputChip(
-      avatar: const Icon(Icons.tune, size: 17),
-      label: Text(
-        '${combination.code} · $includedNames',
-        overflow: TextOverflow.ellipsis,
-      ),
-      onDeleted: onDeleted,
-      deleteButtonTooltipMessage: labels.clearFilter,
-      visualDensity: VisualDensity.compact,
-      side: BorderSide(color: Theme.of(context).colorScheme.primary),
-    ),
   );
 }
 
@@ -2370,48 +2570,49 @@ class _GospelFilterDialogResult {
 class HarmonyFilterButton extends StatelessWidget {
   const HarmonyFilterButton({
     super.key,
-    required this.selectedCombination,
+    required this.filterState,
     required this.uiLanguage,
     required this.onChanged,
+    required this.topicPresenceMasks,
     this.currentResultCount,
+    this.onInteractionEnd,
   });
 
-  final GospelFilterCombination? selectedCombination;
+  final GospelFilterState filterState;
   final LanguageOption uiLanguage;
-  final ValueChanged<GospelFilterCombination?> onChanged;
+  final ValueChanged<GospelFilterState> onChanged;
+  final List<int> topicPresenceMasks;
   final int? currentResultCount;
+  final VoidCallback? onInteractionEnd;
 
   Future<void> _showFilterDialog(BuildContext context) async {
     BrowserRouteLinkNavigation.pushBlock();
-    _GospelFilterDialogResult? result;
     try {
-      result = await showDialog<_GospelFilterDialogResult>(
+      await showDialog<void>(
         context: context,
-        builder: (context) => _HarmonyFilterDialog(
-          initialCombination: selectedCombination,
+        builder: (context) => _HarmonySetFilterDialog(
+          initialState: filterState,
           uiLanguage: uiLanguage,
+          topicPresenceMasks: topicPresenceMasks,
           currentResultCount: currentResultCount,
+          onChanged: onChanged,
         ),
       );
     } finally {
       BrowserRouteLinkNavigation.popBlock();
       BrowserRouteLinkNavigation.blockFor(const Duration(milliseconds: 350));
     }
-    if (result != null) {
-      onChanged(result.combination);
-    }
+    onInteractionEnd?.call();
   }
 
   @override
   Widget build(BuildContext context) {
     final labels = uiLanguage.ui;
     final icon = Icon(
-      selectedCombination == null
-          ? Icons.filter_alt_outlined
-          : Icons.filter_alt,
+      !filterState.isActive ? Icons.filter_alt_outlined : Icons.filter_alt,
       size: 18,
     );
-    if (selectedCombination != null) {
+    if (filterState.isActive) {
       return FilledButton.icon(
         onPressed: () => _showFilterDialog(context),
         style: _toolbarFilledStyle(context),
@@ -2958,6 +3159,576 @@ class _HarmonyFilterDialogState extends State<_HarmonyFilterDialog> {
   }
 }
 
+String _localizedTopicCount(LanguageOption uiLanguage, int count) {
+  final number = uiLanguage.code == 'arabic'
+      ? toArabicIndicDigits(count.toString())
+      : count.toString();
+  return '$number ${uiLanguage.ui.topics}';
+}
+
+String _localizedGospelList(
+  Iterable<Gospel> gospels,
+  LanguageOption uiLanguage, {
+  required String separator,
+}) {
+  return gospels
+      .map((gospel) => _localizedGospelName(gospel, uiLanguage.ui, uiLanguage))
+      .join(separator);
+}
+
+String _mathematicalFilterExpression(
+  GospelFilterState state,
+  LanguageOption uiLanguage,
+) {
+  if (!state.isActive) {
+    return uiLanguage.ui.allTopics;
+  }
+  final operator = state.mode == GospelFilterMode.union ? ' ∪ ' : ' ∩ ';
+  final included = _localizedGospelList(
+    state.includedGospels,
+    uiLanguage,
+    separator: operator,
+  );
+  if (state.excludeMask == 0) {
+    return included;
+  }
+  final excluded = _localizedGospelList(
+    state.excludedGospels,
+    uiLanguage,
+    separator: ' ∪ ',
+  );
+  return '($included) − $excluded';
+}
+
+String _wordedFilterExpression(
+  GospelFilterState state,
+  LanguageOption uiLanguage,
+) {
+  if (!state.isActive) {
+    return uiLanguage.ui.allTopics;
+  }
+  final labels = uiLanguage.ui;
+  final operation = state.mode == GospelFilterMode.union
+      ? labels.union
+      : labels.intersection;
+  final included = _localizedGospelList(
+    state.includedGospels,
+    uiLanguage,
+    separator: ' + ',
+  );
+  final buffer = StringBuffer('$operation: $included');
+  if (state.excludeMask != 0) {
+    final excluded = _localizedGospelList(
+      state.excludedGospels,
+      uiLanguage,
+      separator: ' + ',
+    );
+    buffer.write(' · ${labels.exclude}: $excluded');
+  }
+  return buffer.toString();
+}
+
+Widget _buildActiveSetFilterChip({
+  required BuildContext context,
+  required GospelFilterState state,
+  required LanguageOption uiLanguage,
+  required VoidCallback onDeleted,
+}) {
+  return Tooltip(
+    message: _wordedFilterExpression(state, uiLanguage),
+    child: InputChip(
+      avatar: const Icon(Icons.functions, size: 17),
+      label: Text(
+        _mathematicalFilterExpression(state, uiLanguage),
+        overflow: TextOverflow.ellipsis,
+      ),
+      onDeleted: onDeleted,
+      deleteButtonTooltipMessage: uiLanguage.ui.clearFilter,
+      visualDensity: VisualDensity.compact,
+      side: BorderSide(color: Theme.of(context).colorScheme.primary),
+    ),
+  );
+}
+
+class _HarmonySetFilterDialog extends StatefulWidget {
+  const _HarmonySetFilterDialog({
+    required this.initialState,
+    required this.uiLanguage,
+    required this.topicPresenceMasks,
+    required this.onChanged,
+    this.currentResultCount,
+  });
+
+  final GospelFilterState initialState;
+  final LanguageOption uiLanguage;
+  final List<int> topicPresenceMasks;
+  final ValueChanged<GospelFilterState> onChanged;
+  final int? currentResultCount;
+
+  @override
+  State<_HarmonySetFilterDialog> createState() =>
+      _HarmonySetFilterDialogState();
+}
+
+class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
+  late GospelFilterState _state;
+
+  @override
+  void initState() {
+    super.initState();
+    _state = widget.initialState;
+  }
+
+  int get _baseCount =>
+      widget.topicPresenceMasks.where(_state.matchesBasePresenceMask).length;
+
+  int get _finalCount =>
+      widget.topicPresenceMasks.where(_state.matchesPresenceMask).length;
+
+  void _update(GospelFilterState state) {
+    if (state == _state) {
+      return;
+    }
+    setState(() {
+      _state = state;
+    });
+    widget.onChanged(state);
+  }
+
+  Widget _sectionTitle(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+
+  Widget _gospelChips({required bool exclusion}) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final gospel in Gospel.values)
+          FilterChip(
+            key: ValueKey<String>(
+              '${exclusion ? 'exclude' : 'include'}-${gospel.name}',
+            ),
+            label: Text(
+              _localizedGospelName(
+                gospel,
+                widget.uiLanguage.ui,
+                widget.uiLanguage,
+              ),
+            ),
+            avatar: Icon(
+              exclusion ? Icons.block_outlined : Icons.menu_book_outlined,
+              size: 17,
+            ),
+            selected: exclusion
+                ? _state.excludes(gospel)
+                : _state.includes(gospel),
+            onSelected:
+                exclusion && (!_state.isActive || _state.includes(gospel))
+                ? null
+                : (_) => _update(
+                    exclusion
+                        ? _state.toggleExcluded(gospel)
+                        : _state.toggleIncluded(gospel),
+                  ),
+          ),
+      ],
+    );
+  }
+
+  Widget _expressionCard() {
+    final labels = widget.uiLanguage.ui;
+    final scheme = Theme.of(context).colorScheme;
+    final baseState = _state.copyWith(excludeMask: 0);
+    return Card(
+      margin: EdgeInsets.zero,
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              labels.currentFilter,
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _wordedFilterExpression(baseState, widget.uiLanguage),
+              key: const ValueKey<String>('filter-base-wording'),
+            ),
+            const SizedBox(height: 3),
+            SelectableText(
+              _mathematicalFilterExpression(baseState, widget.uiLanguage),
+              key: const ValueKey<String>('filter-base-expression'),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              _localizedTopicCount(widget.uiLanguage, _baseCount),
+              key: const ValueKey<String>('filter-base-count'),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            if (_state.excludeMask != 0) ...[
+              const Divider(height: 24),
+              Text(
+                '${labels.exclude}: ${_localizedGospelList(_state.excludedGospels, widget.uiLanguage, separator: ' + ')}',
+                key: const ValueKey<String>('filter-exclusion-wording'),
+              ),
+              const SizedBox(height: 3),
+              SelectableText(
+                _mathematicalFilterExpression(_state, widget.uiLanguage),
+                key: const ValueKey<String>('filter-final-expression'),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                _localizedTopicCount(widget.uiLanguage, _finalCount),
+                key: const ValueKey<String>('filter-final-count'),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = widget.uiLanguage.ui;
+    final size = MediaQuery.sizeOf(context);
+    final fullScreen = size.width < 600 || size.height < 650;
+    final dialog = Dialog(
+      insetPadding: fullScreen
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: fullScreen
+          ? const RoundedRectangleBorder()
+          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: fullScreen ? size.width : math.min(600, size.width - 48),
+        height: fullScreen ? size.height : math.min(720, size.height - 48),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      labels.filter,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(
+                      _localizedTopicCount(widget.uiLanguage, _finalCount),
+                      key: const ValueKey<String>('filter-header-count'),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: labels.done,
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sectionTitle(labels.operation),
+                    SegmentedButton<GospelFilterMode>(
+                      key: const ValueKey<String>('filter-operation'),
+                      segments: [
+                        ButtonSegment<GospelFilterMode>(
+                          value: GospelFilterMode.union,
+                          icon: const Icon(Icons.join_full, size: 18),
+                          label: Text(labels.union),
+                        ),
+                        ButtonSegment<GospelFilterMode>(
+                          value: GospelFilterMode.intersection,
+                          icon: const Icon(Icons.join_inner, size: 18),
+                          label: Text(labels.intersection),
+                        ),
+                      ],
+                      selected: {_state.mode},
+                      onSelectionChanged: (selection) =>
+                          _update(_state.copyWith(mode: selection.single)),
+                    ),
+                    const SizedBox(height: 20),
+                    _sectionTitle(labels.includeGospels),
+                    _gospelChips(exclusion: false),
+                    const SizedBox(height: 20),
+                    _sectionTitle(labels.exclude),
+                    _gospelChips(exclusion: true),
+                    const SizedBox(height: 20),
+                    _expressionCard(),
+                    const SizedBox(height: 10),
+                    Text(
+                      labels.filterUpdatesLive,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            SafeArea(
+              top: false,
+              minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: !_state.isActive && _state.excludeMask == 0
+                        ? null
+                        : () => _update(GospelFilterState(mode: _state.mode)),
+                    icon: const Icon(Icons.filter_alt_off, size: 18),
+                    label: Text(labels.clearFilter),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(labels.done),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return Directionality(
+      textDirection: widget.uiLanguage.direction,
+      child: fullScreen ? SafeArea(child: dialog) : dialog,
+    );
+  }
+}
+
+class HarmonyColumnsButton extends StatelessWidget {
+  const HarmonyColumnsButton({
+    super.key,
+    required this.state,
+    required this.uiLanguage,
+    required this.onChanged,
+    this.onInteractionEnd,
+  });
+
+  final ColumnVisibilityState state;
+  final LanguageOption uiLanguage;
+  final ValueChanged<ColumnVisibilityState> onChanged;
+  final VoidCallback? onInteractionEnd;
+
+  Future<void> _showDialog(BuildContext context) async {
+    BrowserRouteLinkNavigation.pushBlock();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _HarmonyColumnsDialog(
+          initialState: state,
+          uiLanguage: uiLanguage,
+          onChanged: onChanged,
+        ),
+      );
+    } finally {
+      BrowserRouteLinkNavigation.popBlock();
+      BrowserRouteLinkNavigation.blockFor(const Duration(milliseconds: 350));
+    }
+    onInteractionEnd?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = state.visibleMask != allGospelsMask;
+    final icon = const Icon(Icons.view_column_outlined, size: 18);
+    final label = Text(
+      '${uiLanguage.ui.columns}: ${state.visibleCount}',
+      overflow: TextOverflow.ellipsis,
+    );
+    return active
+        ? FilledButton.icon(
+            key: const ValueKey<String>('columns-button'),
+            onPressed: () => _showDialog(context),
+            style: _toolbarFilledStyle(context),
+            icon: icon,
+            label: label,
+          )
+        : OutlinedButton.icon(
+            key: const ValueKey<String>('columns-button'),
+            onPressed: () => _showDialog(context),
+            style: _toolbarOutlinedStyle(context),
+            icon: icon,
+            label: label,
+          );
+  }
+}
+
+class _HarmonyColumnsDialog extends StatefulWidget {
+  const _HarmonyColumnsDialog({
+    required this.initialState,
+    required this.uiLanguage,
+    required this.onChanged,
+  });
+
+  final ColumnVisibilityState initialState;
+  final LanguageOption uiLanguage;
+  final ValueChanged<ColumnVisibilityState> onChanged;
+
+  @override
+  State<_HarmonyColumnsDialog> createState() => _HarmonyColumnsDialogState();
+}
+
+class _HarmonyColumnsDialogState extends State<_HarmonyColumnsDialog> {
+  late ColumnVisibilityState _state;
+
+  @override
+  void initState() {
+    super.initState();
+    _state = widget.initialState;
+  }
+
+  void _toggle(Gospel gospel) {
+    final next = _state.toggle(gospel);
+    if (next == _state) {
+      return;
+    }
+    setState(() {
+      _state = next;
+    });
+    widget.onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = widget.uiLanguage.ui;
+    return Directionality(
+      textDirection: widget.uiLanguage.direction,
+      child: AlertDialog(
+        title: Text(labels.showColumns),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final gospel in Gospel.values)
+                    FilterChip(
+                      key: ValueKey<String>('column-${gospel.name}'),
+                      label: Text(
+                        _localizedGospelName(gospel, labels, widget.uiLanguage),
+                      ),
+                      avatar: const Icon(Icons.menu_book_outlined, size: 17),
+                      selected: _state.isVisible(gospel),
+                      onSelected:
+                          _state.isVisible(gospel) && _state.visibleCount == 1
+                          ? null
+                          : (_) => _toggle(gospel),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                labels.atLeastOneColumnVisible,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(labels.done),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class HarmonySortButton extends StatelessWidget {
+  const HarmonySortButton({
+    super.key,
+    required this.state,
+    required this.uiLanguage,
+    required this.onChanged,
+  });
+
+  final GospelSortState state;
+  final LanguageOption uiLanguage;
+  final ValueChanged<GospelSortState> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = uiLanguage.ui;
+    final gospelLabel = _localizedGospelName(state.gospel, labels, uiLanguage);
+    return PopupMenuButton<Gospel>(
+      key: const ValueKey<String>('sort-button'),
+      tooltip: labels.sortBy,
+      position: PopupMenuPosition.under,
+      initialValue: state.gospel,
+      onSelected: (gospel) => onChanged(GospelSortState(gospel: gospel)),
+      itemBuilder: (context) => [
+        for (final gospel in Gospel.values)
+          _checkedMenuItem<Gospel>(
+            value: gospel,
+            label:
+                '${_localizedGospelName(gospel, labels, uiLanguage)} ${labels.chronology}',
+            selected: gospel == state.gospel,
+            textDirection: uiLanguage.direction,
+          ),
+      ],
+      child: IgnorePointer(
+        child: OutlinedButton.icon(
+          onPressed: () {},
+          style: _toolbarOutlinedStyle(context),
+          icon: const Icon(Icons.sort, size: 18),
+          label: Text(
+            '${labels.sort}: $gospelLabel',
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Widget _buildMenuLanguageButton({
   required BuildContext context,
   required LanguageOption menuLanguage,
@@ -3273,6 +4044,11 @@ class _GospelAppState extends State<GospelApp> {
             initialLanguage: rawLanguage,
             initialVersion: rawVersion,
             initialFilterCode: uri.queryParameters['filter'],
+            initialFilterMode: uri.queryParameters['filterMode'],
+            initialIncludedGospels: uri.queryParameters['include'],
+            initialExcludedGospels: uri.queryParameters['exclude'],
+            initialSortGospel: uri.queryParameters['sort'],
+            initialVisibleColumns: uri.queryParameters['columns'],
             initialMenuLanguage:
                 rawMenuLanguage ??
                 UserProfileController.instance.preferences.menuLanguage,
@@ -3703,6 +4479,11 @@ class TopicListScreen extends StatefulWidget {
     this.initialLanguage,
     this.initialVersion,
     this.initialFilterCode,
+    this.initialFilterMode,
+    this.initialIncludedGospels,
+    this.initialExcludedGospels,
+    this.initialSortGospel,
+    this.initialVisibleColumns,
     this.initialMenuLanguage,
   });
 
@@ -3710,6 +4491,11 @@ class TopicListScreen extends StatefulWidget {
   final String? initialLanguage;
   final String? initialVersion;
   final String? initialFilterCode;
+  final String? initialFilterMode;
+  final String? initialIncludedGospels;
+  final String? initialExcludedGospels;
+  final String? initialSortGospel;
+  final String? initialVisibleColumns;
   final String? initialMenuLanguage;
   @override
   State<TopicListScreen> createState() => _TopicListScreenState();
@@ -3731,7 +4517,10 @@ class _TopicListScreenState extends State<TopicListScreen> {
   bool _isAdmin = false;
   bool _routeProvidedInitialVersion = false;
   bool _topicsLoadRequested = false;
-  GospelFilterCombination? _filterCombination;
+  late GospelFilterState _filterState;
+  late GospelSortState _sortState;
+  late ColumnVisibilityState _columnVisibility;
+  late String _committedControlSignature;
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
@@ -3739,9 +4528,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
   @override
   void initState() {
     super.initState();
-    _filterCombination = gospelFilterCombinationForCode(
-      widget.initialFilterCode,
+    _filterState = GospelFilterState.fromQueryParameters(<String, String>{
+      if (widget.initialFilterMode != null)
+        'filterMode': widget.initialFilterMode!,
+      if (widget.initialIncludedGospels != null)
+        'include': widget.initialIncludedGospels!,
+      if (widget.initialExcludedGospels != null)
+        'exclude': widget.initialExcludedGospels!,
+    }, legacyCode: widget.initialFilterCode);
+    _sortState = GospelSortState.fromQueryValue(widget.initialSortGospel);
+    _columnVisibility = ColumnVisibilityState.fromQueryValue(
+      widget.initialVisibleColumns,
     );
+    _committedControlSignature = _controlSignature;
     final initialLanguage = widget.initialLanguage?.trim();
     final initialVersion = widget.initialVersion?.trim();
     if (initialLanguage != null && initialLanguage.isNotEmpty) {
@@ -3937,7 +4736,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
         _mainTableUri(
           language: option,
           version: normalized,
-          filterCode: _filterCombination?.code,
+          filterState: _filterState,
+          sortState: _sortState,
+          columnVisibility: _columnVisibility,
         ).toString(),
       );
       return;
@@ -3979,7 +4780,9 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _mainTableUri(
         language: option,
         version: normalized,
-        filterCode: _filterCombination?.code,
+        filterState: _filterState,
+        sortState: _sortState,
+        columnVisibility: _columnVisibility,
       ).toString(),
     );
   }
@@ -4082,40 +4885,74 @@ class _TopicListScreenState extends State<TopicListScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _openTopic(match!));
   }
 
-  List<int> _visibleTopicIndexes() {
-    final indexes = <int>[];
-    for (var i = 0; i < _topics.length; i++) {
-      if (matchesFilter(_topics[i], _filterCombination)) {
-        indexes.add(i);
-      }
-    }
-    return indexes;
+  List<int> _processedTopicIndexes() {
+    return processHarmonyTopicIndexes(_topics, _filterState, _sortState);
   }
 
-  void _setFilterCombination(GospelFilterCombination? combination) {
-    if (combination?.code == _filterCombination?.code) {
+  String get _controlSignature => <Object>[
+    _filterState.mode.name,
+    _filterState.includeMask,
+    _filterState.excludeMask,
+    _sortState.gospel.name,
+    _columnVisibility.visibleMask,
+  ].join(':');
+
+  void _setFilterState(GospelFilterState state) {
+    if (state == _filterState || !mounted) {
       return;
     }
+    setState(() {
+      _filterState = state;
+    });
+  }
+
+  void _setColumnVisibility(ColumnVisibilityState state) {
+    if (state == _columnVisibility || !mounted) {
+      return;
+    }
+    setState(() {
+      _columnVisibility = state;
+    });
+  }
+
+  void _setSortState(GospelSortState state) {
+    if (state == _sortState || !mounted) {
+      return;
+    }
+    setState(() {
+      _sortState = state;
+    });
+    _commitControlState();
+  }
+
+  void _commitControlState() {
+    if (!mounted || _committedControlSignature == _controlSignature) {
+      return;
+    }
+    _committedControlSignature = _controlSignature;
     Navigator.of(context).pushNamed(
       _mainTableUri(
         language: _languageOption,
         version: _apiVersionFor(_languageOption),
-        filterCode: combination?.code,
+        filterState: _filterState,
+        sortState: _sortState,
+        columnVisibility: _columnVisibility,
       ).toString(),
     );
   }
 
   void _clearFilter() {
-    _setFilterCombination(null);
+    _setFilterState(GospelFilterState(mode: _filterState.mode));
+    _commitControlState();
   }
 
   @override
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
     final menuLanguage = MenuLanguageScope.of(context);
-    final visibleTopicIndexes = _visibleTopicIndexes();
-    final visibleTopics = [
-      for (final index in visibleTopicIndexes) _topics[index],
+    final processedTopicIndexes = _processedTopicIndexes();
+    final processedTopics = [
+      for (final index in processedTopicIndexes) _topics[index],
     ];
     return Directionality(
       textDirection: menuLanguage.direction,
@@ -4175,33 +5012,49 @@ class _TopicListScreenState extends State<TopicListScreen> {
                           label: Text(menuLanguage.resetLabel),
                         ),
                       HarmonyFilterButton(
-                        selectedCombination: _filterCombination,
+                        filterState: _filterState,
                         uiLanguage: menuLanguage,
-                        currentResultCount: visibleTopics.length,
-                        onChanged: _setFilterCombination,
+                        topicPresenceMasks: [
+                          for (final topic in _topics) topic.gospelPresenceMask,
+                        ],
+                        currentResultCount: processedTopics.length,
+                        onChanged: _setFilterState,
+                        onInteractionEnd: _commitControlState,
                       ),
-                      if (_filterCombination != null)
-                        _buildActiveGospelFilterChip(
-                          context: context,
-                          combination: _filterCombination!,
-                          uiLanguage: menuLanguage,
-                          onDeleted: _clearFilter,
-                        ),
                       _buildHarmonyResultCountChip(
                         context: context,
                         uiLanguage: menuLanguage,
-                        count: visibleTopics.length,
+                        count: processedTopics.length,
                       ),
+                      HarmonySortButton(
+                        state: _sortState,
+                        uiLanguage: menuLanguage,
+                        onChanged: _setSortState,
+                      ),
+                      HarmonyColumnsButton(
+                        state: _columnVisibility,
+                        uiLanguage: menuLanguage,
+                        onChanged: _setColumnVisibility,
+                        onInteractionEnd: _commitControlState,
+                      ),
+                      if (_filterState.isActive)
+                        _buildActiveSetFilterChip(
+                          context: context,
+                          state: _filterState,
+                          uiLanguage: menuLanguage,
+                          onDeleted: _clearFilter,
+                        ),
                     ],
                   ),
                   const Divider(height: 0),
                   Expanded(
                     child: HarmonyTable(
                       key: _tableKey,
-                      topics: visibleTopics,
-                      topicDisplayIndexes: visibleTopicIndexes,
+                      topics: processedTopics,
+                      topicDisplayIndexes: processedTopicIndexes,
                       languageOption: languageOption,
                       apiVersion: _apiVersionFor(languageOption),
+                      visibleGospels: _columnVisibility.visibleGospels.toList(),
                     ),
                   ),
                 ],
@@ -4241,12 +5094,14 @@ class HarmonyTable extends StatefulWidget {
     required this.languageOption,
     required this.apiVersion,
     this.topicDisplayIndexes,
+    this.visibleGospels,
   });
 
   final List<Topic> topics;
   final LanguageOption languageOption;
   final String apiVersion;
   final List<int>? topicDisplayIndexes;
+  final List<Gospel>? visibleGospels;
 
   @override
   State<HarmonyTable> createState() => _HarmonyTableState();
@@ -4449,9 +5304,12 @@ class _HarmonyTableState extends State<HarmonyTable> {
     return displayIndexes[rowIndex];
   }
 
+  List<Gospel> get _visibleGospels => widget.visibleGospels ?? Gospel.values;
+
   double _harmonyTableWidthFor(double availableWidth) {
+    final minimumWidth = 280.0 + (120.0 * _visibleGospels.length);
     return math.max(
-      _minHarmonyTableWidth,
+      math.min(_minHarmonyTableWidth, minimumWidth),
       _responsiveContentWidth(availableWidth, maxWidth: _maxHarmonyTableWidth),
     );
   }
@@ -4464,11 +5322,11 @@ class _HarmonyTableState extends State<HarmonyTable> {
     };
     final subjectWidth = math.max(
       280.0,
-      tableWidth - (referenceWidth * orderedGospels.length),
+      tableWidth - (referenceWidth * _visibleGospels.length),
     );
     return {
       0: FixedColumnWidth(subjectWidth),
-      for (var i = 0; i < orderedGospels.length; i++)
+      for (var i = 0; i < _visibleGospels.length; i++)
         i + 1: FixedColumnWidth(referenceWidth),
     };
   }
@@ -4667,9 +5525,9 @@ class _HarmonyTableState extends State<HarmonyTable> {
       decoration: BoxDecoration(color: headerBackground),
       children: [
         _buildHeaderCell(labels.subjectsHeader, headerStyle, subjectAlign),
-        for (var i = 0; i < orderedGospels.length; i++)
+        for (final gospel in _visibleGospels)
           _buildHeaderCell(
-            labels.gospelHeaders[i],
+            labels.gospelHeaders[Gospel.values.indexOf(gospel)],
             headerStyle,
             TextAlign.center,
           ),
@@ -4717,14 +5575,14 @@ class _HarmonyTableState extends State<HarmonyTable> {
                 ),
               ),
             ),
-            for (final gospel in orderedGospels)
+            for (final gospel in _visibleGospels)
               TableCell(
                 verticalAlignment: TableCellVerticalAlignment.top,
                 child: _buildReferenceCell(
                   topic,
                   displayIndex,
-                  gospel,
-                  grouped[gospel] ?? const <GospelReference>[],
+                  gospel.canonicalName,
+                  grouped[gospel.canonicalName] ?? const <GospelReference>[],
                   referenceStyle,
                   referenceAlign,
                 ),
@@ -8652,9 +9510,11 @@ class Topic {
   final String name;
   final List<GospelReference> references;
   final int gospelPresenceMask;
+  final Map<Gospel, GospelChronologyAnchor> earliestGospelAnchors;
 
   Topic({required this.id, required this.name, required this.references})
-    : gospelPresenceMask = _gospelPresenceMask(references);
+    : gospelPresenceMask = _gospelPresenceMask(references),
+      earliestGospelAnchors = _earliestGospelAnchors(references);
 
   factory Topic.fromJson(Map<String, dynamic> json) {
     final dynamic referencesRaw = json['references'] ?? json['entries'] ?? [];
@@ -8689,7 +9549,7 @@ class GospelReference {
     final rawChapter = json['chapter'];
     final parsedChapter = rawChapter is int
         ? rawChapter
-        : int.tryParse(rawChapter?.toString() ?? '') ?? 0;
+        : _parseReferenceNumber(rawChapter);
     final rawBookId =
         json['book_id'] ?? json['bookId'] ?? json['documentId'] ?? '';
     return GospelReference(

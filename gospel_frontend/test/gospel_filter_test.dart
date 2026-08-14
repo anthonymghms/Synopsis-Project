@@ -158,4 +158,172 @@ void main() {
       expect(gospelFilterCombinationForCode(' c25 ')?.code, 'C25');
     });
   });
+
+  group('GospelFilterState set operations', () {
+    final markLuke = Gospel.mark.bit | Gospel.luke.bit;
+
+    test('union matches either included Gospel', () {
+      final state = GospelFilterState(
+        mode: GospelFilterMode.union,
+        includeMask: markLuke,
+      );
+
+      expect(state.matchesPresenceMask(Gospel.mark.bit), isTrue);
+      expect(state.matchesPresenceMask(Gospel.luke.bit), isTrue);
+      expect(state.matchesPresenceMask(markLuke), isTrue);
+      expect(state.matchesPresenceMask(Gospel.john.bit), isFalse);
+    });
+
+    test('intersection requires every included Gospel', () {
+      final state = GospelFilterState(
+        mode: GospelFilterMode.intersection,
+        includeMask: markLuke,
+      );
+
+      expect(state.matchesPresenceMask(Gospel.mark.bit), isFalse);
+      expect(state.matchesPresenceMask(Gospel.luke.bit), isFalse);
+      expect(state.matchesPresenceMask(markLuke), isTrue);
+    });
+
+    test('exclusion is applied after union or intersection', () {
+      final union = GospelFilterState(
+        mode: GospelFilterMode.union,
+        includeMask: markLuke,
+        excludeMask: Gospel.john.bit,
+      );
+      final intersection = GospelFilterState(
+        mode: GospelFilterMode.intersection,
+        includeMask: Gospel.matthew.bit | Gospel.mark.bit,
+        excludeMask: Gospel.luke.bit,
+      );
+
+      expect(union.matchesBasePresenceMask(Gospel.mark.bit), isTrue);
+      expect(
+        union.matchesPresenceMask(Gospel.mark.bit | Gospel.john.bit),
+        isFalse,
+      );
+      expect(
+        union.matchesPresenceMask(Gospel.luke.bit | Gospel.john.bit),
+        isFalse,
+      );
+      expect(
+        intersection.matchesPresenceMask(Gospel.matthew.bit | Gospel.mark.bit),
+        isTrue,
+      );
+      expect(
+        intersection.matchesPresenceMask(
+          Gospel.matthew.bit | Gospel.mark.bit | Gospel.luke.bit,
+        ),
+        isFalse,
+      );
+
+      final multipleExclusions = union.copyWith(
+        excludeMask: Gospel.matthew.bit | Gospel.john.bit,
+      );
+      expect(multipleExclusions.matchesPresenceMask(Gospel.mark.bit), isTrue);
+      expect(
+        multipleExclusions.matchesPresenceMask(
+          Gospel.mark.bit | Gospel.matthew.bit,
+        ),
+        isFalse,
+      );
+    });
+
+    test('include/exclude conflicts are prevented', () {
+      final included = const GospelFilterState().toggleIncluded(Gospel.mark);
+      expect(included.toggleExcluded(Gospel.mark), included);
+
+      final excluded = GospelFilterState(
+        includeMask: Gospel.luke.bit,
+        excludeMask: Gospel.mark.bit,
+      );
+      final movedToInclude = excluded.toggleIncluded(Gospel.mark);
+      expect(movedToInclude.includes(Gospel.mark), isTrue);
+      expect(movedToInclude.excludes(Gospel.mark), isFalse);
+    });
+
+    test('query parameters round-trip canonical identifiers', () {
+      final state = GospelFilterState.fromQueryParameters({
+        'filterMode': 'union',
+        'include': 'mark,luke',
+        'exclude': 'john',
+      });
+
+      expect(state.mode, GospelFilterMode.union);
+      expect(gospelMaskToQueryValue(state.includeMask), 'mark,luke');
+      expect(gospelMaskToQueryValue(state.excludeMask), 'john');
+    });
+
+    test('legacy C01-C65 URLs translate to intersection state', () {
+      final state = GospelFilterState.fromQueryParameters(
+        const {},
+        legacyCode: 'C05',
+      );
+
+      expect(state.mode, GospelFilterMode.intersection);
+      expect(state.includeMask, Gospel.matthew.bit | Gospel.mark.bit);
+      expect(state.excludeMask, Gospel.luke.bit | Gospel.john.bit);
+    });
+
+    test('invalid query parameters safely fall back to all topics', () {
+      final state = GospelFilterState.fromQueryParameters({
+        'filterMode': 'invalid',
+        'include': 'acts,romans',
+        'exclude': 'john',
+      });
+      expect(state.isActive, isFalse);
+      expect(state.matchesPresenceMask(0), isTrue);
+    });
+  });
+
+  group('independent visibility and sort state', () {
+    test('column state refuses to hide the final visible Gospel', () {
+      var state = const ColumnVisibilityState();
+      state = state.toggle(Gospel.luke).toggle(Gospel.john);
+      expect(state.visibleGospels, [Gospel.matthew, Gospel.mark]);
+      state = state.toggle(Gospel.matthew);
+      expect(state.visibleGospels, [Gospel.mark]);
+      expect(state.toggle(Gospel.mark), state);
+    });
+
+    test('column and sort query values use canonical identifiers', () {
+      final columns = ColumnVisibilityState.fromQueryValue('matthew,mark,luke');
+      final sort = GospelSortState.fromQueryValue('LuKe');
+
+      expect(columns.visibleMask, 0x7);
+      expect(sort.gospel, Gospel.luke);
+      expect(ColumnVisibilityState.fromQueryValue('invalid').visibleMask, 0xf);
+      expect(GospelSortState.fromQueryValue('invalid').gospel, Gospel.matthew);
+    });
+
+    test('combined view URL state encodes only canonical non-defaults', () {
+      final parameters = harmonyViewQueryParameters(
+        filter: GospelFilterState(
+          mode: GospelFilterMode.union,
+          includeMask: Gospel.mark.bit | Gospel.luke.bit,
+          excludeMask: Gospel.john.bit,
+        ),
+        sort: const GospelSortState(gospel: Gospel.mark),
+        columns: ColumnVisibilityState(
+          visibleMask: Gospel.matthew.bit | Gospel.mark.bit | Gospel.luke.bit,
+        ),
+      );
+
+      expect(parameters, {
+        'filterMode': 'union',
+        'include': 'mark,luke',
+        'exclude': 'john',
+        'sort': 'mark',
+        'columns': 'matthew,mark,luke',
+      });
+      expect(
+        harmonyViewQueryParameters(
+          filter: const GospelFilterState(),
+          sort: const GospelSortState(),
+          columns: const ColumnVisibilityState(),
+        ),
+        isEmpty,
+      );
+    });
+  });
 }
