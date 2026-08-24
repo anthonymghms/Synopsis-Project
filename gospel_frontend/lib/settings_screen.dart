@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'browser_route_link.dart';
 
 import 'profile_editor.dart';
 import 'user_profile.dart';
@@ -29,7 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _confirmDiscard() async {
-    final discard = await showDialog<bool>(
+    final discard = await showBrowserSafeDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(_arabic ? 'تجاهل التغييرات؟' : 'Discard changes?'),

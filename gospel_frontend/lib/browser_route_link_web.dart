@@ -7,8 +7,8 @@ import 'dart:html' as html;
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 
 typedef BrowserRouteLinkBuilder =
     Widget Function(BuildContext context, VoidCallback? followLink);
@@ -34,11 +34,58 @@ class BrowserRouteLinkNavigation {
     }
   }
 
+  static void popBlockAfterEvent() {
+    Timer.run(popBlock);
+  }
+
   static void blockFor(Duration duration) {
     final until =
         DateTime.now().microsecondsSinceEpoch + duration.inMicroseconds;
     if (until > _blockedUntilMicros) {
       _blockedUntilMicros = until;
+    }
+  }
+}
+
+Future<T?> showBrowserSafeDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) async {
+  BrowserRouteLinkNavigation.pushBlock();
+  try {
+    return await showDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      builder: builder,
+    );
+  } finally {
+    BrowserRouteLinkNavigation.popBlockAfterEvent();
+  }
+}
+
+class BrowserRouteHistory {
+  static Uri _currentUri() {
+    final hash = html.window.location.hash;
+    if (hash.startsWith('#/')) {
+      return Uri.parse(hash.substring(1));
+    }
+    return Uri.parse(
+      '${html.window.location.pathname}${html.window.location.search}',
+    );
+  }
+
+  static Stream<Uri> get changes =>
+      html.window.onPopState.map((_) => _currentUri());
+
+  static void update(Uri uri, {bool replace = false}) {
+    final external =
+        ui_web.urlStrategy?.prepareExternalUrl(uri.toString()) ??
+        uri.toString();
+    if (replace) {
+      html.window.history.replaceState(null, '', external);
+    } else {
+      html.window.history.pushState(null, '', external);
     }
   }
 }

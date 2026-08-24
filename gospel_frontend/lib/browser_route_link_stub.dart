@@ -1,4 +1,6 @@
-import 'package:flutter/widgets.dart';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 
 typedef BrowserRouteLinkBuilder =
     Widget Function(BuildContext context, VoidCallback? followLink);
@@ -24,6 +26,10 @@ class BrowserRouteLinkNavigation {
     }
   }
 
+  static void popBlockAfterEvent() {
+    Timer.run(popBlock);
+  }
+
   static void blockFor(Duration duration) {
     final until =
         DateTime.now().microsecondsSinceEpoch + duration.inMicroseconds;
@@ -31,6 +37,29 @@ class BrowserRouteLinkNavigation {
       _blockedUntilMicros = until;
     }
   }
+}
+
+Future<T?> showBrowserSafeDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) async {
+  BrowserRouteLinkNavigation.pushBlock();
+  try {
+    return await showDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      builder: builder,
+    );
+  } finally {
+    BrowserRouteLinkNavigation.popBlockAfterEvent();
+  }
+}
+
+class BrowserRouteHistory {
+  static Stream<Uri> get changes => const Stream<Uri>.empty();
+
+  static void update(Uri uri, {bool replace = false}) {}
 }
 
 class BrowserRouteLink extends StatelessWidget {

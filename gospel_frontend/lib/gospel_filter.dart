@@ -166,6 +166,8 @@ class ColumnVisibilityState {
     return ColumnVisibilityState(visibleMask: nextMask);
   }
 
+  ColumnVisibilityState reset() => const ColumnVisibilityState();
+
   static ColumnVisibilityState fromQueryValue(String? rawValue) {
     if (rawValue == null || rawValue.trim().isEmpty) {
       return const ColumnVisibilityState();
@@ -185,24 +187,69 @@ class ColumnVisibilityState {
   int get hashCode => visibleMask.hashCode;
 }
 
-class GospelSortState {
-  const GospelSortState({this.gospel = Gospel.matthew});
+enum TopicSortMode {
+  defaultOrder,
+  matthew,
+  mark,
+  luke,
+  john;
 
-  final Gospel gospel;
+  Gospel? get gospel => switch (this) {
+    TopicSortMode.defaultOrder => null,
+    TopicSortMode.matthew => Gospel.matthew,
+    TopicSortMode.mark => Gospel.mark,
+    TopicSortMode.luke => Gospel.luke,
+    TopicSortMode.john => Gospel.john,
+  };
+
+  static TopicSortMode forGospel(Gospel gospel) => switch (gospel) {
+    Gospel.matthew => TopicSortMode.matthew,
+    Gospel.mark => TopicSortMode.mark,
+    Gospel.luke => TopicSortMode.luke,
+    Gospel.john => TopicSortMode.john,
+  };
+}
+
+class GospelSortState {
+  const GospelSortState({TopicSortMode? mode, Gospel? gospel})
+    : assert(mode == null || gospel == null),
+      mode =
+          mode ??
+          (gospel == Gospel.matthew
+              ? TopicSortMode.matthew
+              : gospel == Gospel.mark
+              ? TopicSortMode.mark
+              : gospel == Gospel.luke
+              ? TopicSortMode.luke
+              : gospel == Gospel.john
+              ? TopicSortMode.john
+              : TopicSortMode.defaultOrder);
+
+  GospelSortState.forGospel(Gospel gospel)
+    : mode = TopicSortMode.forGospel(gospel);
+
+  final TopicSortMode mode;
+  Gospel? get gospel => mode.gospel;
+  bool get isDefault => mode == TopicSortMode.defaultOrder;
 
   static GospelSortState fromQueryValue(String? rawValue) {
-    return GospelSortState(
-      gospel: Gospel.fromCanonicalName(rawValue ?? '') ?? Gospel.matthew,
-    );
+    final normalized = rawValue?.trim().toLowerCase() ?? '';
+    if (normalized.isEmpty || normalized == 'default') {
+      return const GospelSortState();
+    }
+    final gospel = Gospel.fromCanonicalName(normalized);
+    return gospel == null
+        ? const GospelSortState()
+        : GospelSortState.forGospel(gospel);
   }
 
   @override
   bool operator ==(Object other) {
-    return other is GospelSortState && other.gospel == gospel;
+    return other is GospelSortState && other.mode == mode;
   }
 
   @override
-  int get hashCode => gospel.hashCode;
+  int get hashCode => mode.hashCode;
 }
 
 Iterable<Gospel> _gospelsInMask(int mask) sync* {
@@ -242,8 +289,7 @@ Map<String, String> harmonyViewQueryParameters({
       if (filter.excludeMask != 0)
         'exclude': gospelMaskToQueryValue(filter.excludeMask),
     },
-    if (sort.gospel != Gospel.matthew)
-      'sort': sort.gospel.canonicalName.toLowerCase(),
+    if (!sort.isDefault) 'sort': sort.gospel!.canonicalName.toLowerCase(),
     if (columns.visibleMask != allGospelsMask)
       'columns': gospelMaskToQueryValue(columns.visibleMask),
   };

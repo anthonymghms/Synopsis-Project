@@ -635,12 +635,15 @@ def get_topics():
         data = doc.to_dict() or {}
         # zero-pad numeric ids, but don't crash if not numeric
         try:
-            padded_id = f"{int(doc.id):02}"
+            canonical_order = int(doc.id)
+            padded_id = f"{canonical_order:02}"
         except ValueError:
+            canonical_order = data.get("canonicalOrder", data.get("order", 0))
             padded_id = doc.id
         topics.append(
             {
                 "id": padded_id,
+                "canonicalOrder": canonical_order,
                 "name": data.get("name", ""),
                 "references": data.get("entries", []),
             }

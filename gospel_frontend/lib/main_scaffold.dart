@@ -1,6 +1,7 @@
 // main_scaffold.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'browser_route_link.dart';
 import 'settings_screen.dart';
 import 'user_profile.dart';
 
@@ -24,6 +25,19 @@ class MainScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    var accountMenuOpen = false;
+    void beginAccountMenu() {
+      if (accountMenuOpen) return;
+      accountMenuOpen = true;
+      BrowserRouteLinkNavigation.pushBlock();
+    }
+
+    void endAccountMenu() {
+      if (!accountMenuOpen) return;
+      accountMenuOpen = false;
+      BrowserRouteLinkNavigation.popBlockAfterEvent();
+    }
+
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -35,7 +49,10 @@ class MainScaffold extends StatelessWidget {
             child: PopupMenuButton<String>(
               tooltip: accountTooltip,
               icon: const Icon(Icons.account_circle, size: 32),
+              onOpened: beginAccountMenu,
+              onCanceled: endAccountMenu,
               onSelected: (value) async {
+                endAccountMenu();
                 if (value == 'logout') {
                   UserProfileController.instance.clear();
                   await FirebaseAuth.instance.signOut();

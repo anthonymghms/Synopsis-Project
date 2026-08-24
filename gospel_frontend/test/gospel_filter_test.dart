@@ -293,7 +293,7 @@ void main() {
       expect(columns.visibleMask, 0x7);
       expect(sort.gospel, Gospel.luke);
       expect(ColumnVisibilityState.fromQueryValue('invalid').visibleMask, 0xf);
-      expect(GospelSortState.fromQueryValue('invalid').gospel, Gospel.matthew);
+      expect(GospelSortState.fromQueryValue('invalid').isDefault, isTrue);
     });
 
     test('combined view URL state encodes only canonical non-defaults', () {
