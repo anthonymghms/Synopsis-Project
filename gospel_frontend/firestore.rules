@@ -6,6 +6,21 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function hasAdminClaim() {
+      return request.auth != null
+          && (request.auth.token.admin == true
+              || request.auth.token.role == 'admin');
+    }
+
+    function hasStoredAdminRole() {
+      return request.auth != null
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isAdmin() {
+      return hasAdminClaim() || hasStoredAdminRole();
+    }
+
     function hasAuthenticatedEmail(data) {
       return request.auth.token.email is string
           && data.email is string
@@ -71,7 +86,44 @@ service cloud.firestore {
     }
 
     function validUserDocument(data) {
-      return data.profileCompleted is bool
+      return data.keys().hasOnly([
+            'firstName',
+            'lastName',
+            'displayName',
+            'email',
+            'country',
+            'timezone',
+            'yearOfBirth',
+            'organization',
+            'bio',
+            'preferences',
+            'profileCompleted',
+            'createdAt',
+            'updatedAt',
+            // Server-managed authorization fields. Clients may preserve these
+            // during profile edits but may never add or change them.
+            'role',
+            'roles',
+            'admin',
+            'isAdmin',
+            // Allowed only so existing legacy profiles can complete setup.
+            'dob',
+            'fullName',
+            'preferredLanguage',
+            'language',
+            'version',
+            'church',
+            'institution',
+            'description',
+            'zoomLevel',
+            'showDiacritics',
+            'interlinearEnabled',
+            'showTopicNamesInChapter',
+            'menuLanguage',
+            'contentLanguage',
+            'preferredVersion'
+          ])
+          && data.profileCompleted is bool
           && hasAuthenticatedEmail(data)
           && validPreferences(data.preferences)
           && data.createdAt is timestamp
@@ -117,6 +169,9 @@ service cloud.firestore {
       allow list: if false;
       allow create: if isOwner(userId)
                     && validUserDocument(request.resource.data)
+                    && !request.resource.data.keys().hasAny([
+                      'role', 'roles', 'admin', 'isAdmin'
+                    ])
                     && validCreateTimestamps();
       allow update: if isOwner(userId)
                     && onlyUserEditableFieldsChanged()
@@ -130,6 +185,24 @@ service cloud.firestore {
     match /bibles/{document=**} {
       allow read: if request.auth != null;
       allow write: if false;
+    }
+
+    match /references/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /admin_imports/{importId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /reference_revisions/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /bible_revisions/{document=**} {
+      allow read, write: if false;
     }
   }
 }

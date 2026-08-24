@@ -2,16 +2,20 @@ from flask import Flask, request, Response
 import json
 import os
 import re
-import firebase_admin
-from firebase_admin import credentials, firestore
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
+
+from admin_api import admin_api
+from services.firebase_service import firestore_client
 
 
-cred = credentials.Certificate("serviceAccountKey.json")
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+db = firestore_client()
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.environ.get("MAX_ADMIN_UPLOAD_BYTES", str(32 * 1024 * 1024))
+)
+app.register_blueprint(admin_api)
 
 
 def _cors_origins():
@@ -33,7 +37,8 @@ CORS(
     resources={
         r"/*": {
             "origins": _cors_origins(),
-            "methods": ["GET", "OPTIONS"],
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Authorization", "Content-Type"],
         }
     },
 )
@@ -50,6 +55,21 @@ def _json_response(payload, status=200, cache_seconds=300):
     else:
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def _upload_too_large(_error):
+    maximum_mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return _json_response(
+        {
+            "error": {
+                "code": "upload_too_large",
+                "message": f"The upload exceeds the {maximum_mb} MB server limit.",
+            }
+        },
+        status=413,
+        cache_seconds=0,
+    )
 
 
 """
@@ -79,7 +99,7 @@ def get_topic(language, version, topic_id):
 
     data = doc.to_dict() or {}
     data["id"] = doc.id
-    return _json_response(data)
+    return _json_response(data, cache_seconds=0)
 
 
 _ARABIC_INDIC_DIGIT_TRANSLATION = str.maketrans(
@@ -105,7 +125,7 @@ def _normalize_book_token(value: str) -> str:
 
 def _select_bible_language(language: str) -> str:
     normalized = (language or "").strip()
-    if normalized.lower().startswith("arabic"):
+    if normalized.lower() in {"arabic", "arabic2", "arabic3", "ar"}:
         return "arabic"
     return normalized
 
@@ -114,7 +134,7 @@ def _select_bible_version(language: str, version: str) -> str:
     normalized_language = (language or "").strip().lower()
     requested_version = (version or "").strip()
 
-    if normalized_language.startswith("arabic"):
+    if normalized_language == "arabic":
         if not requested_version or requested_version.lower() == "kjv":
             return "van dyck"
 
@@ -393,8 +413,18 @@ def _document_book_tokens(doc_id: str):
     return {token for token in _expand_with_synonyms(tokens) if token}
 
 
+def _bible_books_collection(language: str, version: str):
+    language_ref = db.collection("bibles").document(language)
+    version_meta = language_ref.collection("versions").document(version).get()
+    if version_meta.exists:
+        active_path = (version_meta.to_dict() or {}).get("activeBooksPath")
+        if isinstance(active_path, str) and active_path:
+            return db.collection(active_path)
+    return language_ref.collection(version)
+
+
 def _resolve_book_document_id(language: str, version: str, book: str):
-    collection = db.collection("bibles").document(language).collection(version)
+    collection = _bible_books_collection(language, version)
     direct_doc = collection.document(book)
     if direct_doc.get().exists:
         return book
@@ -465,9 +495,7 @@ def _build_verse_payload(verse_identifier, data):
 
 def _load_single_verse(language, version, book_doc_id, chapter, verse_identifier):
     verse_ref = (
-        db.collection("bibles")
-        .document(language)
-        .collection(version)
+        _bible_books_collection(language, version)
         .document(book_doc_id)
         .collection("chapters")
         .document(str(chapter))
@@ -511,7 +539,7 @@ def get_verse():
     else:
         results.append(_load_single_verse(language, version, book, chapter, verse))
 
-    return _json_response(results)
+    return _json_response(results, cache_seconds=0)
 
 
 @app.route("/get_chapter", methods=["GET"])
@@ -535,9 +563,7 @@ def get_chapter():
         )
 
     verses_collection = (
-        db.collection("bibles")
-        .document(language)
-        .collection(version)
+        _bible_books_collection(language, version)
         .document(book)
         .collection("chapters")
         .document(str(chapter))
@@ -550,7 +576,7 @@ def get_chapter():
 
     verses.sort(key=lambda item: item["verse"] if isinstance(item["verse"], int) else 0)
 
-    return _json_response(verses)
+    return _json_response(verses, cache_seconds=0)
 
 
 def _topics_collection(language: str, version: str):
@@ -597,7 +623,11 @@ def _topics_collection(language: str, version: str):
 
     for candidate in candidate_ids:
         doc_ref = references.document(candidate)
-        if doc_ref.get().exists:
+        snapshot = doc_ref.get()
+        if snapshot.exists:
+            active_path = (snapshot.to_dict() or {}).get("activeTopicsPath")
+            if isinstance(active_path, str) and active_path:
+                return db.collection(active_path)
             return doc_ref.collection("topics")
 
     search_language_tokens = [token for token in {normalized_language, base_language} if token]
@@ -615,6 +645,11 @@ def _topics_collection(language: str, version: str):
                 fallback_doc = doc
 
     if fallback_doc is not None:
+        snapshot = fallback_doc.get()
+        if snapshot.exists:
+            active_path = (snapshot.to_dict() or {}).get("activeTopicsPath")
+            if isinstance(active_path, str) and active_path:
+                return db.collection(active_path)
         return fallback_doc.collection("topics")
 
     final_candidate = candidate_ids[0] if candidate_ids else normalized_language
@@ -650,7 +685,7 @@ def get_topics():
         )
 
     topics.sort(key=lambda x: int(x["id"]) if x["id"].isdigit() else x["id"])
-    return _json_response(topics)
+    return _json_response(topics, cache_seconds=0)
 
 
 if __name__ == "__main__":

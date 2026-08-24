@@ -12,6 +12,8 @@ class MainScaffold extends StatelessWidget {
   final String settingsLabel;
   final String logoutLabel;
   final String accountTooltip;
+  final bool showAdmin;
+  final String adminLabel;
 
   const MainScaffold({
     super.key,
@@ -21,6 +23,8 @@ class MainScaffold extends StatelessWidget {
     this.settingsLabel = 'Settings',
     this.logoutLabel = 'Logout',
     this.accountTooltip = 'Account',
+    this.showAdmin = false,
+    this.adminLabel = 'Admin',
   });
 
   @override
@@ -91,6 +95,10 @@ class MainScaffold extends StatelessWidget {
                       );
                     }
                   }
+                } else if (value == 'admin') {
+                  if (context.mounted) {
+                    Navigator.of(context).pushNamed('/admin');
+                  }
                 }
               },
               itemBuilder: (context) => [
@@ -115,6 +123,14 @@ class MainScaffold extends StatelessWidget {
                   ),
                 ),
                 const PopupMenuDivider(),
+                if (showAdmin)
+                  PopupMenuItem<String>(
+                    value: 'admin',
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(adminLabel),
+                    ),
+                  ),
                 PopupMenuItem<String>(
                   value: 'settings',
                   child: Align(

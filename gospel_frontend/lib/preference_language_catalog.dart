@@ -113,6 +113,7 @@ class PreferenceLanguageCatalog {
       final bundled = _bundledFor(code);
       final data = document.data();
       final versionIds = <String>{};
+      final versionLabels = <String, String>{};
       _collectVersions(data, versionIds);
       const manifestPaths = <List<String>>[
         <String>['versions', 'manifest'],
@@ -149,7 +150,15 @@ class PreferenceLanguageCatalog {
               versionId != '_index') {
             versionIds.add(versionId);
           }
-          _collectVersions(versionDocument.data(), versionIds);
+          final versionData = versionDocument.data();
+          final explicitLabel =
+              versionData['label']?.toString().trim() ??
+              versionData['name']?.toString().trim() ??
+              '';
+          if (versionId.isNotEmpty && explicitLabel.isNotEmpty) {
+            versionLabels[versionId] = explicitLabel;
+          }
+          _collectVersions(versionData, versionIds);
         }
       } catch (_) {
         // Some deployments expose versions on the language document only.
@@ -158,7 +167,10 @@ class PreferenceLanguageCatalog {
       final discovered = versionIds
           .map(
             (id) =>
-                PreferenceVersionOption(id: id, label: _versionLabel(code, id)),
+                PreferenceVersionOption(
+                  id: id,
+                  label: versionLabels[id] ?? _versionLabel(code, id),
+                ),
           )
           .toList();
       final versions = _selectableVersions(
@@ -194,6 +206,12 @@ class PreferenceLanguageCatalog {
           versions: versions,
         ),
       );
+    }
+
+    for (final bundled in bundledPreferenceLanguages) {
+      if (!options.any((option) => option.code == bundled.code)) {
+        options.add(bundled);
+      }
     }
 
     options.sort((a, b) {

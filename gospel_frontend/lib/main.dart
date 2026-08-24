@@ -18,6 +18,9 @@ import 'dart:math' as math;
 import 'package:gospel_frontend/utils/format_verse_ref.dart';
 import 'package:gospel_frontend/widgets/verse_ref_text.dart';
 import 'package:gospel_frontend/gospel_filter.dart';
+import 'package:gospel_frontend/admin_portal.dart';
+import 'package:gospel_frontend/catalog_events.dart';
+import 'package:gospel_frontend/admin_access.dart';
 
 // ---- CONFIGURATION ----
 const apiBaseUrl = String.fromEnvironment(
@@ -804,10 +807,10 @@ LanguageOption _fallbackLanguageOption(
   List<BibleVersion> versions,
 ) {
   final template = _baseLanguageLookup['english'] ?? kBaseLanguageOptions.first;
-  final sanitizedVersions = versions.isNotEmpty ? versions : template.versions;
+  final sanitizedVersions = versions;
   final apiVersion = sanitizedVersions.isNotEmpty
       ? sanitizedVersions.first.id
-      : template.apiVersion;
+      : '';
   final normalizedCode = languageId.trim().isEmpty
       ? template.code
       : languageId.trim().toLowerCase();
@@ -872,14 +875,6 @@ void _collectVersionIdsFromData(
       _collectVersionIdsFromField(data[candidate], versionIds);
     }
   }
-
-  for (final entry in data.entries) {
-    final key = entry.key.toString().trim();
-    if (key.isEmpty || key == 'label' || key == 'direction') {
-      continue;
-    }
-    versionIds.add(key);
-  }
 }
 
 Future<void> _collectVersionManifestDocs(
@@ -913,6 +908,7 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
       .collection('bibles')
       .doc(languageId);
   final Set<String> versionIds = {};
+  final Map<String, String> versionLabels = <String, String>{};
 
   try {
     final docSnapshot = await docRef.get();
@@ -932,6 +928,13 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
         versionIds.add(id);
       }
       final versionData = versionDoc.data();
+      final explicitLabel =
+          versionData['label']?.toString().trim() ??
+          versionData['name']?.toString().trim() ??
+          '';
+      if (id.isNotEmpty && explicitLabel.isNotEmpty) {
+        versionLabels[id] = explicitLabel;
+      }
       _collectVersionIdsFromData(versionData, versionIds);
     }
   } catch (_) {
@@ -939,7 +942,12 @@ Future<List<BibleVersion>> _loadVersionsForLanguage(String languageId) async {
   }
 
   final versions = versionIds
-      .map((id) => BibleVersion(id: id, label: _versionLabel(languageId, id)))
+      .map(
+        (id) => BibleVersion(
+          id: id,
+          label: versionLabels[id] ?? _versionLabel(languageId, id),
+        ),
+      )
       .toList();
   versions.sort(
     (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
@@ -1011,6 +1019,25 @@ Future<List<LanguageOption>> _loadLanguagesFromFirestoreUncached() async {
       ),
     );
   }
+
+  for (final bundled in kBaseLanguageOptions) {
+    if (!options.any((option) => option.code == bundled.code)) {
+      options.add(bundled);
+    }
+  }
+
+  options.sort((a, b) {
+    final aBase = kBaseLanguageOptions.indexWhere(
+      (option) => option.code == a.code,
+    );
+    final bBase = kBaseLanguageOptions.indexWhere(
+      (option) => option.code == b.code,
+    );
+    final aOrder = aBase < 0 ? kBaseLanguageOptions.length : aBase;
+    final bOrder = bBase < 0 ? kBaseLanguageOptions.length : bBase;
+    if (aOrder != bOrder) return aOrder.compareTo(bOrder);
+    return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+  });
 
   return options.isNotEmpty ? options : kBaseLanguageOptions;
 }
@@ -4213,54 +4240,6 @@ Future<void> _persistLanguageVersion(
   }
 }
 
-bool _hasAdminFlag(Map<String, dynamic> data) {
-  final role = data['role']?.toString().trim().toLowerCase();
-  final roles = data['roles'];
-  return data['isAdmin'] == true ||
-      data['admin'] == true ||
-      role == 'admin' ||
-      (roles is Iterable &&
-          roles.any((entry) => entry.toString().toLowerCase() == 'admin'));
-}
-
-Future<bool> _isCurrentUserAdmin() async {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null) {
-    return false;
-  }
-  return _adminStateByUser.putIfAbsent(
-    user.uid,
-    () => _loadAdminStateForUser(user),
-  );
-}
-
-final Map<String, Future<bool>> _adminStateByUser = <String, Future<bool>>{};
-
-Future<bool> _loadAdminStateForUser(User user) async {
-  try {
-    final token = await user.getIdTokenResult();
-    final claims = token.claims ?? const <String, dynamic>{};
-    if (_hasAdminFlag(Map<String, dynamic>.from(claims))) {
-      return true;
-    }
-  } catch (_) {
-    // Fall through to the Firestore profile check.
-  }
-
-  // Temporary client-side visibility helper only. Backend endpoints and
-  // Firestore rules must enforce real admin authorization before trusting it.
-  try {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final data = snapshot.data();
-    return data != null && _hasAdminFlag(data);
-  } catch (_) {
-    return false;
-  }
-}
-
 String _combineBookAndReference(
   String book,
   String reference,
@@ -4402,6 +4381,14 @@ class _GospelAppState extends State<GospelApp> {
                 UserProfileController.instance.preferences.menuLanguage,
           ),
         ),
+      );
+    }
+
+    if (path == '/admin') {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) =>
+            AuthGate(builder: (context) => AdminPortal(apiBaseUrl: apiBaseUrl)),
       );
     }
 
@@ -4922,12 +4909,20 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _initializePreferences();
     _refreshLanguagesFromFirestore();
     _loadAdminState();
+    catalogRevision.addListener(_catalogChanged);
   }
 
   @override
   void dispose() {
     _browserHistorySubscription?.cancel();
+    catalogRevision.removeListener(_catalogChanged);
     super.dispose();
+  }
+
+  void _catalogChanged() {
+    _languageOptionsLoadFuture = null;
+    _ApiCache.clear();
+    unawaited(_refreshLanguagesFromFirestore());
   }
 
   void _restoreControlStateFromUri(Uri uri) {
@@ -4948,7 +4943,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
   }
 
   Future<void> _loadAdminState() async {
-    final isAdmin = await _isCurrentUserAdmin();
+    final isAdmin = await adminAccess.currentUserIsAdmin();
     if (!mounted) {
       return;
     }
@@ -5342,6 +5337,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
         settingsLabel: menuLanguage.ui.settings,
         logoutLabel: menuLanguage.ui.logout,
         accountTooltip: menuLanguage.ui.account,
+        showAdmin: _isAdmin,
+        adminLabel: menuLanguage.code == 'arabic' ? 'الإدارة' : 'Admin',
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -10060,6 +10057,12 @@ class _ApiCache {
 
   static String _key(List<Object?> parts) {
     return parts.map((part) => (part ?? '').toString().trim()).join('|');
+  }
+
+  static void clear() {
+    _topicsByTranslation.clear();
+    _chapters.clear();
+    _verseRanges.clear();
   }
 
   static Future<T> _cached<T>(

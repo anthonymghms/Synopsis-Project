@@ -1,128 +1,117 @@
 #!/usr/bin/env python3
-# csv_to_topics_by_language.py
+"""CLI wrapper for the same topic import service used by the Admin Portal."""
 
-import os, re, csv, io, tempfile, argparse
-import firebase_admin
-from firebase_admin import credentials, storage, firestore
+from __future__ import annotations
 
-# ─── CONFIG ─────────────────────────────────────────────────────────────
-SERVICE_ACCOUNT_FILE = "serviceAccountKey.json"
-# For Admin SDK this should be the bucket *name* (often <project-id>.appspot.com).
-BUCKET_NAME = "synopsis-224b0.firebasestorage.app"   # change if your bucket name differs
-DEFAULT_REMOTE_CSV = "arabic3.csv"           # can be overridden with --csv
-# ────────────────────────────────────────────────────────────────────────
+import argparse
+import os
+import re
+import sys
 
-GOSPELS = ["Matthew", "Mark", "Luke", "John"]  # canonical names used in Firestore
+from services.firebase_service import FirebaseImportRepository, new_import_id
+from services.topic_import_service import parse_topic_csv
 
-def initialize_firebase():
-    if not firebase_admin._apps:
-        cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
-        firebase_admin.initialize_app(cred, {"storageBucket": BUCKET_NAME})
 
-def download_csv(remote_path: str) -> str:
-    initialize_firebase()
-    bucket = storage.bucket()
-    blob = bucket.blob(remote_path)
+DEFAULT_REMOTE_CSV = "arabic3.csv"
+
+
+def download_csv(remote_path: str) -> bytes:
+    repository = FirebaseImportRepository()
+    blob = repository.bucket.blob(remote_path)
     if not blob.exists():
-        raise RuntimeError(f"Remote file {remote_path!r} not found in bucket {BUCKET_NAME!r}")
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-    blob.download_to_filename(tmp.name)
-    size = os.path.getsize(tmp.name)
-    print(f"✔ Downloaded “{remote_path}” ({size} bytes) → {tmp.name}")
-    return tmp.name
+        raise RuntimeError(f"Remote CSV {remote_path!r} was not found.")
+    raw = blob.download_as_bytes()
+    print(f"Downloaded {remote_path} ({len(raw)} bytes)")
+    return raw
 
-def parse_refs(cell: str):
-    """'1:6–8;15–28' → [(1,'6-8'), (1,'15-28')] ; also accepts commas/semicolons."""
-    out = []
-    for piece in re.split(r"[;,]", cell or ""):
-        p = (piece or "").strip().replace("–", "-").replace("—", "-")
-        if ":" not in p:
-            continue
-        chap, verses = p.split(":", 1)
-        chap = chap.strip()
-        if chap.isdigit():
-            out.append((int(chap), verses.strip()))
-    return out
 
-def read_rows_any_encoding(path: str):
-    with open(path, "rb") as fb:
-        raw = fb.read()
-    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            txt = raw.decode(enc)
-            txt = txt.replace("\u2013", "-").replace("\u2014", "-")
-            return list(csv.reader(io.StringIO(txt)))
-        except UnicodeDecodeError:
-            continue
-    raise RuntimeError("Could not decode CSV (tried utf-8-sig, utf-8, cp1252, latin-1)")
+def parse_csv_by_position(path: str) -> dict[str, list[dict]]:
+    """Compatibility adapter for callers of the original helper."""
+    with open(path, "rb") as source:
+        result = parse_topic_csv(source.read())
+    if not result.report.valid:
+        messages = "; ".join(issue.message for issue in result.report.errors)
+        raise RuntimeError(messages)
+    return {
+        record.name: [dict(entry) for entry in record.entries]
+        for record in result.records
+    }
 
-def parse_csv_by_position(path: str) -> dict:
-    """
-    Returns { topic: [ {book, chapter, verses}, ... ], ... }
-    Assumes: col A=topic, B=Matthew, C=Mark, D=Luke, E=John (headers can be in any language).
-    """
-    rows = read_rows_any_encoding(path)
-    if len(rows) < 2:
-        raise RuntimeError("CSV needs a header + at least one data row")
 
-    result = {}
-    # start at row 1 to skip header
-    for row in rows[1:]:
-        if not row: 
-            continue
-        # topic in col 0
-        topic = (row[0] if len(row) > 0 else "").strip()
-        if not topic:
-            continue
+def _derived_language(remote_path: str) -> str:
+    stem = os.path.splitext(os.path.basename(remote_path))[0]
+    return re.sub(r"\d+$", "", stem).strip().lower() or "unknown"
 
-        entries = []
-        # cols 1..4 correspond to Matthew, Mark, Luke, John respectively
-        col_indices = [1, 2, 3, 4]
-        for book, ci in zip(GOSPELS, col_indices):
-            if ci >= len(row):
-                continue
-            cell = row[ci]
-            for chap, verses in parse_refs(cell):
-                entries.append({"book": book, "chapter": chap, "verses": verses})
 
-        if entries:
-            result[topic] = entries
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--csv",
+        default=DEFAULT_REMOTE_CSV,
+        help="Existing CSV object path in Firebase Storage",
+    )
+    parser.add_argument("--language", default=None)
+    parser.add_argument("--display-name", default=None)
+    parser.add_argument("--direction", choices=("ltr", "rtl"), default="ltr")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Explicitly replace the active dataset when one exists",
+    )
+    args = parser.parse_args()
 
-    total_refs = sum(len(v) for v in result.values())
-    print(f"✔ Parsed {total_refs} references across {len(result)} topics")
-    return result
+    language = (args.language or _derived_language(args.csv)).strip().lower()
+    raw = download_csv(args.csv)
+    result = parse_topic_csv(raw)
+    for warning in result.report.warnings:
+        print(f"WARNING: {warning.message}", file=sys.stderr)
+    if not result.report.valid:
+        for error in result.report.errors:
+            print(f"ERROR: {error.message}", file=sys.stderr)
+        return 2
 
-def push_to_firestore(language: str, data: dict):
-    """
-    Writes to Firestore: references/<language>/topics/<1..N>
-    """
-    initialize_firebase()
-    db = firestore.client()
-    coll = db.collection("references").document(language).collection("topics")
+    repository = FirebaseImportRepository()
+    import_id = new_import_id()
+    repository.create_import(
+        import_id=import_id,
+        import_type="topics",
+        language=language,
+        uploaded_by="cli",
+        filenames=[os.path.basename(args.csv)],
+        metadata={
+            "displayName": args.display_name or language.title(),
+            "direction": args.direction,
+            "legacyStoragePath": args.csv,
+        },
+    )
+    repository.update_import(
+        import_id,
+        status="importing",
+        stage="Writing topic revision",
+        storagePaths=[args.csv],
+    )
+    outcome = repository.activate_topics(
+        import_id=import_id,
+        language=language,
+        display_name=args.display_name or language.title(),
+        direction=args.direction,
+        records=result.records,
+        replace=args.replace,
+    )
+    repository.update_import(
+        import_id,
+        status="completed",
+        stage="Completed",
+        recordsProcessed=outcome["topicsProcessed"],
+        **outcome,
+    )
+    print(
+        f"Imported {outcome['topicsProcessed']} topics to {outcome['destination']} "
+        f"(audit id {import_id})"
+    )
+    return 0
 
-    count = 1
-    for topic, entries in data.items():
-        coll.document(str(count)).set({"name": topic, "entries": entries})
-        count += 1
-    print(f"✔ Wrote {len(data)} documents → references/{language}/topics")
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", default=DEFAULT_REMOTE_CSV, help="Path in bucket to the CSV (e.g., arabic2.csv)")
-    ap.add_argument("--language", default=None, help="Language key for Firestore (e.g., arabic, english)")
-    args = ap.parse_args()
-
-    # Derive language from filename if not provided (strip extension and trailing digits like 'arabic2' -> 'arabic')
-    if args.language:
-        language = args.language.strip().lower()
-    else:
-        stem = os.path.splitext(os.path.basename(args.csv))[0]
-        language = re.sub(r"\d+$", "", stem).strip().lower() or "unknown"
-
-    local_csv = download_csv(args.csv)
-    data = parse_csv_by_position(local_csv)
-    push_to_firestore(language, data)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
 

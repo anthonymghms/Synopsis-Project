@@ -1,0 +1,17 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Source uploads and staging objects are backend-only. The Firebase Admin
+    // SDK bypasses these client rules after server authorization succeeds.
+    match /imports/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Preserve authenticated read compatibility for existing source assets.
+    match /{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
