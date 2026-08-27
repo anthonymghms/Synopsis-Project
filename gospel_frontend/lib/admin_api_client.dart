@@ -9,6 +9,8 @@ class AdminUploadFile {
 
   final String name;
   final Uint8List bytes;
+
+  int get size => bytes.lengthInBytes;
 }
 
 class AdminApiException implements Exception {
@@ -38,19 +40,27 @@ class AdminApiClient implements AdminClient {
     required this.baseUrl,
     FirebaseAuth? auth,
     http.Client? client,
-  }) : _auth = auth ?? FirebaseAuth.instance,
-       _client = client ?? http.Client();
+    Future<String> Function()? tokenProvider,
+  }) : _auth = auth ?? (tokenProvider == null ? FirebaseAuth.instance : null),
+       _client = client ?? http.Client(),
+       _tokenProvider = tokenProvider;
 
   final String baseUrl;
-  final FirebaseAuth _auth;
+  final FirebaseAuth? _auth;
   final http.Client _client;
+  final Future<String> Function()? _tokenProvider;
 
   Uri _uri(String path, [Map<String, String>? query]) => Uri.parse(
     '${baseUrl.replaceFirst(RegExp(r'/$'), '')}$path',
   ).replace(queryParameters: query);
 
   Future<String> _token() async {
-    final user = _auth.currentUser;
+    final tokenProvider = _tokenProvider;
+    if (tokenProvider != null) {
+      final token = await tokenProvider();
+      if (token.isNotEmpty) return token;
+    }
+    final user = _auth?.currentUser;
     if (user == null) {
       throw const AdminApiException(
         'Sign in with an administrator account to continue.',

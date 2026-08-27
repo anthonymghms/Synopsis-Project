@@ -39,6 +39,7 @@ dependencies:
   http: ^1.2.0
   file_picker: ^8.0.7
   desktop_drop: ^0.4.4
+  web: ^0.5.1
   shared_preferences: ^2.2.2
   url_launcher: ^6.3.1
 

@@ -116,7 +116,9 @@ def _authorization_error(exc: AdminAuthorizationError):
 @admin_api.route("/admin/overview", methods=["GET"])
 def admin_overview():
     _admin()
-    return _response(FirebaseImportRepository().overview())
+    overview = FirebaseImportRepository().overview()
+    overview["maxUploadBytes"] = int(current_app.config["MAX_CONTENT_LENGTH"])
+    return _response(overview)
 
 
 @admin_api.route("/admin/languages", methods=["GET"])

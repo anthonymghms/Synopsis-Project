@@ -3,10 +3,15 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/admin_api_client.dart';
+import 'package:gospel_frontend/admin_file_picker.dart';
 import 'package:gospel_frontend/admin_portal.dart';
 
 class _FakeAdminClient implements AdminClient {
   int uploads = 0;
+  String? uploadPath;
+  Map<String, String>? uploadFields;
+  List<AdminUploadFile>? uploadFiles;
+  String? uploadFileField;
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
@@ -42,6 +47,10 @@ class _FakeAdminClient implements AdminClient {
     required String fileField,
   }) async {
     uploads += 1;
+    uploadPath = path;
+    uploadFields = Map<String, String>.from(fields);
+    uploadFiles = List<AdminUploadFile>.from(files);
+    uploadFileField = fileField;
     return <String, dynamic>{
       'importId': '0123456789abcdef0123456789abcdef',
       'valid': true,
@@ -64,6 +73,57 @@ class _FakeAdminClient implements AdminClient {
     };
   }
 }
+
+class _FakeAdminFilePicker implements AdminFilePicker {
+  _FakeAdminFilePicker({this.result, this.error});
+
+  List<AdminUploadFile>? result;
+  Object? error;
+  int calls = 0;
+  List<String>? allowedExtensions;
+  bool? allowMultiple;
+
+  @override
+  Future<List<AdminUploadFile>?> pickFiles({
+    required List<String> allowedExtensions,
+    bool allowMultiple = false,
+  }) async {
+    calls += 1;
+    this.allowedExtensions = List<String>.from(allowedExtensions);
+    this.allowMultiple = allowMultiple;
+    if (error case final pickerError?) throw pickerError;
+    return result;
+  }
+}
+
+Future<void> _pumpTopicWizard(
+  WidgetTester tester, {
+  required _FakeAdminClient client,
+  AdminFilePicker? filePicker,
+  AdminUploadFile? initialFile,
+  bool arabic = false,
+  int maxUploadBytes = defaultMaxAdminUploadBytes,
+}) async {
+  tester.view.physicalSize = const Size(1200, 1000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: TopicImportWizard(
+        client: client,
+        arabic: arabic,
+        onCompleted: () {},
+        filePicker: filePicker ?? _FakeAdminFilePicker(),
+        initialFile: initialFile,
+        maxUploadBytes: maxUploadBytes,
+      ),
+    ),
+  );
+}
+
+FilledButton _validateTopicButton(WidgetTester tester) =>
+    tester.widget(find.byKey(const ValueKey<String>('validate-topic-upload')));
 
 void main() {
   testWidgets('non-admin cannot open the portal', (tester) async {
@@ -117,18 +177,11 @@ void main() {
     tester,
   ) async {
     final client = _FakeAdminClient();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: TopicImportWizard(
-          client: client,
-          arabic: false,
-          onCompleted: () {},
-          initialFile: AdminUploadFile(
-            name: 'topics.csv',
-            bytes: Uint8List.fromList(<int>[1, 2, 3]),
-          ),
-        ),
-      ),
+    final bytes = Uint8List.fromList(<int>[1, 2, 3]);
+    await _pumpTopicWizard(
+      tester,
+      client: client,
+      initialFile: AdminUploadFile(name: 'topics.csv', bytes: bytes),
     );
 
     await tester.drag(find.byType(ListView), const Offset(0, -650));
@@ -139,6 +192,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(client.uploads, 1);
+    expect(client.uploadPath, '/admin/topics/validate');
+    expect(client.uploadFileField, 'file');
+    expect(client.uploadFields, <String, String>{
+      'language': 'english',
+      'displayName': 'English',
+      'direction': 'ltr',
+      'canonicalDataset': 'english_kjv',
+    });
+    expect(client.uploadFiles?.single.name, 'topics.csv');
+    expect(client.uploadFiles?.single.bytes, orderedEquals(bytes));
     expect(find.text('Validation successful'), findsOneWidget);
     await tester.drag(find.byType(ListView), const Offset(0, -700));
     await tester.pumpAndSettle();
@@ -147,6 +210,242 @@ void main() {
       find.byKey(const ValueKey<String>('import-topic-upload')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Select CSV invokes picker and populates selected-file state', (
+    tester,
+  ) async {
+    final picker = _FakeAdminFilePicker(
+      result: <AdminUploadFile>[
+        AdminUploadFile(
+          name: 'arabic_topics.csv',
+          bytes: Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+      ],
+    );
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      filePicker: picker,
+    );
+
+    expect(_validateTopicButton(tester).onPressed, isNull);
+    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await tester.pumpAndSettle();
+
+    expect(picker.calls, 1);
+    expect(picker.allowedExtensions, <String>['csv']);
+    expect(picker.allowMultiple, isFalse);
+    expect(find.text('arabic_topics.csv'), findsOneWidget);
+    expect(find.text('3 B'), findsOneWidget);
+    expect(find.text('Change file'), findsOneWidget);
+    expect(find.text('Remove file'), findsOneWidget);
+    expect(_validateTopicButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('canceling replacement keeps the existing file and state', (
+    tester,
+  ) async {
+    final picker = _FakeAdminFilePicker(result: null);
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      filePicker: picker,
+      initialFile: AdminUploadFile(
+        name: 'topics.csv',
+        bytes: Uint8List.fromList(<int>[1]),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('change-topic-file')));
+    await tester.pumpAndSettle();
+
+    expect(picker.calls, 1);
+    expect(find.text('topics.csv'), findsOneWidget);
+    expect(
+      find.text('Unable to open the file. Please try again.'),
+      findsNothing,
+    );
+    expect(_validateTopicButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('Change file replaces the selected filename and bytes', (
+    tester,
+  ) async {
+    final replacementBytes = Uint8List.fromList(<int>[7, 8, 9]);
+    final picker = _FakeAdminFilePicker(
+      result: <AdminUploadFile>[
+        AdminUploadFile(name: 'replacement.csv', bytes: replacementBytes),
+      ],
+    );
+    final client = _FakeAdminClient();
+    await _pumpTopicWizard(
+      tester,
+      client: client,
+      filePicker: picker,
+      initialFile: AdminUploadFile(
+        name: 'original.csv',
+        bytes: Uint8List.fromList(<int>[1]),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('change-topic-file')));
+    await tester.pumpAndSettle();
+    expect(find.text('replacement.csv'), findsOneWidget);
+    expect(find.text('original.csv'), findsNothing);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('validate-topic-upload')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('validate-topic-upload')),
+    );
+    await tester.pumpAndSettle();
+    expect(client.uploadFiles?.single.bytes, orderedEquals(replacementBytes));
+  });
+
+  testWidgets('wrong extension is rejected with a localized message', (
+    tester,
+  ) async {
+    final picker = _FakeAdminFilePicker(
+      result: <AdminUploadFile>[
+        AdminUploadFile(
+          name: 'topics.txt',
+          bytes: Uint8List.fromList(<int>[1]),
+        ),
+      ],
+    );
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      filePicker: picker,
+      arabic: true,
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('يرجى اختيار ملف CSV.'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('selected-topic-filename')),
+      findsNothing,
+    );
+    expect(_validateTopicButton(tester).onPressed, isNull);
+  });
+
+  testWidgets('empty and oversized CSV files are rejected', (tester) async {
+    final picker = _FakeAdminFilePicker(
+      result: <AdminUploadFile>[
+        AdminUploadFile(name: 'topics.csv', bytes: Uint8List(0)),
+      ],
+    );
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      filePicker: picker,
+      maxUploadBytes: 2,
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await tester.pumpAndSettle();
+    expect(find.text('The selected CSV file is empty.'), findsOneWidget);
+
+    picker.result = <AdminUploadFile>[
+      AdminUploadFile(
+        name: 'topics.csv',
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    ];
+    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('The selected file is too large. The upload limit is 2 B.'),
+      findsOneWidget,
+    );
+    expect(_validateTopicButton(tester).onPressed, isNull);
+  });
+
+  testWidgets('picker errors are friendly and do not expose exceptions', (
+    tester,
+  ) async {
+    final picker = _FakeAdminFilePicker(error: StateError('browser internals'));
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      filePicker: picker,
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Unable to open the file. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('browser internals'), findsNothing);
+  });
+
+  testWidgets('remove file resets selection and disables validation', (
+    tester,
+  ) async {
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      initialFile: AdminUploadFile(
+        name: 'topics.csv',
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+    expect(_validateTopicButton(tester).onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const ValueKey<String>('remove-topic-file')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('topics.csv'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('select-topic-file')),
+      findsOneWidget,
+    );
+    expect(_validateTopicButton(tester).onPressed, isNull);
+  });
+
+  testWidgets('required metadata controls validation button state', (
+    tester,
+  ) async {
+    await _pumpTopicWizard(
+      tester,
+      client: _FakeAdminClient(),
+      initialFile: AdminUploadFile(
+        name: 'topics.csv',
+        bytes: Uint8List.fromList(<int>[1]),
+      ),
+    );
+    expect(_validateTopicButton(tester).onPressed, isNotNull);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('language-display-name')),
+      '',
+    );
+    await tester.pump();
+    expect(_validateTopicButton(tester).onPressed, isNull);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('language-display-name')),
+      'Arabic',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('language-code')),
+      'Arabic',
+    );
+    await tester.pump();
+    expect(_validateTopicButton(tester).onPressed, isNull);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('language-code')),
+      'arabic',
+    );
+    await tester.pump();
+    expect(_validateTopicButton(tester).onPressed, isNotNull);
   });
 
   testWidgets('Arabic portal uses RTL and localized navigation', (

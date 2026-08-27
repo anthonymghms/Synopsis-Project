@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
 import 'admin_access.dart';
 import 'admin_api_client.dart';
+import 'admin_file_picker.dart';
 import 'catalog_events.dart';
 import 'user_profile.dart';
 
@@ -16,12 +16,14 @@ class AdminPortal extends StatefulWidget {
     this.client,
     this.adminCheck,
     this.arabic,
+    this.filePicker = const PlatformAdminFilePicker(),
   });
 
   final String apiBaseUrl;
   final AdminClient? client;
   final Future<bool>? adminCheck;
   final bool? arabic;
+  final AdminFilePicker filePicker;
 
   @override
   State<AdminPortal> createState() => _AdminPortalState();
@@ -36,6 +38,7 @@ class _AdminPortalState extends State<AdminPortal> {
     '/admin/overview',
   );
   int _section = 0;
+  int _maxUploadBytes = defaultMaxAdminUploadBytes;
 
   bool get _arabic =>
       widget.arabic ??
@@ -61,6 +64,8 @@ class _AdminPortalState extends State<AdminPortal> {
         client: _client,
         arabic: _arabic,
         onCompleted: _importCompleted,
+        filePicker: widget.filePicker,
+        maxUploadBytes: _maxUploadBytes,
       ),
     );
   }
@@ -73,6 +78,7 @@ class _AdminPortalState extends State<AdminPortal> {
         client: _client,
         arabic: _arabic,
         onCompleted: _importCompleted,
+        filePicker: widget.filePicker,
       ),
     );
   }
@@ -181,6 +187,10 @@ class _AdminPortalState extends State<AdminPortal> {
     BuildContext context,
     Map<String, dynamic> overview,
   ) {
+    final configuredLimit = overview['maxUploadBytes'];
+    if (configuredLimit is num && configuredLimit > 0) {
+      _maxUploadBytes = configuredLimit.toInt();
+    }
     final labels = _labels;
     final content = _sectionContent(overview, labels);
     if (MediaQuery.sizeOf(context).width < 820) return content;
@@ -573,11 +583,15 @@ class TopicImportWizard extends StatefulWidget {
     required this.arabic,
     required this.onCompleted,
     this.initialFile,
+    this.filePicker = const PlatformAdminFilePicker(),
+    this.maxUploadBytes = defaultMaxAdminUploadBytes,
   });
   final AdminClient client;
   final bool arabic;
   final VoidCallback onCompleted;
   final AdminUploadFile? initialFile;
+  final AdminFilePicker filePicker;
+  final int maxUploadBytes;
 
   @override
   State<TopicImportWizard> createState() => _TopicImportWizardState();
@@ -596,6 +610,11 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
   String? _error;
 
   _AdminLabels get labels => _AdminLabels(widget.arabic);
+  bool get _metadataValid =>
+      RegExp(r'^[a-z][a-z0-9_-]{1,39}$').hasMatch(_language.text.trim()) &&
+      _displayName.text.trim().isNotEmpty &&
+      (_direction == 'ltr' || _direction == 'rtl');
+  bool get _canValidate => !_busy && _file != null && _metadataValid;
 
   @override
   void initState() {
@@ -611,17 +630,54 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
   }
 
   Future<void> _pick() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['csv'],
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    if (file?.bytes == null) return;
+    try {
+      final files = await widget.filePicker.pickFiles(
+        allowedExtensions: const ['csv'],
+      );
+      if (!mounted || files == null) return;
+      if (files.length != 1) {
+        setState(() => _error = labels.unableToOpenFile);
+        return;
+      }
+      _selectFile(files.single);
+    } catch (_) {
+      if (mounted) setState(() => _error = labels.unableToOpenFile);
+    }
+  }
+
+  void _selectFile(AdminUploadFile file) {
+    final normalizedName = file.name.trim().toLowerCase();
+    if (!normalizedName.endsWith('.csv')) {
+      setState(() => _error = labels.pleaseSelectCsv);
+      return;
+    }
+    if (file.size == 0) {
+      setState(() => _error = labels.emptyCsv);
+      return;
+    }
+    if (file.size > widget.maxUploadBytes) {
+      setState(
+        () => _error = labels.fileTooLarge(
+          _formatFileSize(widget.maxUploadBytes),
+        ),
+      );
+      return;
+    }
     setState(() {
-      _file = AdminUploadFile(name: file!.name, bytes: file.bytes!);
+      _file = file;
       _validation = null;
       _progress = null;
+      _replace = false;
+      _error = null;
+    });
+  }
+
+  void _removeFile() {
+    setState(() {
+      _file = null;
+      _validation = null;
+      _progress = null;
+      _replace = false;
       _error = null;
     });
   }
@@ -631,18 +687,17 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
         .where((file) => file.name.toLowerCase().endsWith('.csv'))
         .toList();
     if (candidates.isEmpty) {
-      setState(() => _error = labels.selectCsv);
+      setState(() => _error = labels.pleaseSelectCsv);
       return;
     }
-    final file = candidates.first;
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _file = AdminUploadFile(name: file.name, bytes: bytes);
-      _validation = null;
-      _progress = null;
-      _error = null;
-    });
+    try {
+      final file = candidates.first;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      _selectFile(AdminUploadFile(name: file.name, bytes: bytes));
+    } catch (_) {
+      if (mounted) setState(() => _error = labels.unableToOpenFile);
+    }
   }
 
   Future<void> _validate() async {
@@ -668,7 +723,14 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
       );
       if (mounted) setState(() => _validation = response);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) {
+        setState(() {
+          _error =
+              error is AdminApiException && error.code == 'upload_too_large'
+              ? labels.fileTooLarge(_formatFileSize(widget.maxUploadBytes))
+              : error.toString();
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -745,24 +807,36 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
               labels,
               (value) => setState(() => _direction = value),
               _direction,
+              onChanged: () => setState(() {}),
             ),
             const SizedBox(height: 20),
             _StepTitle(number: 2, title: labels.uploadCsv),
             Text(labels.csvFormat),
             const SizedBox(height: 8),
             DropTarget(
-              onDragDone: _busy ? null : _acceptDroppedFiles,
-              child: _UploadDropSurface(
-                message: _file?.name ?? labels.dropCsv,
-                buttonLabel: labels.selectCsv,
-                onPressed: _busy ? null : _pick,
-              ),
+              enable: !_busy,
+              onDragDone: _acceptDroppedFiles,
+              child: _file == null
+                  ? _UploadDropSurface(
+                      message: labels.dropCsv,
+                      buttonLabel: labels.selectCsv,
+                      buttonKey: const ValueKey<String>('select-topic-file'),
+                      onPressed: _busy ? null : _pick,
+                    )
+                  : _SelectedUploadSurface(
+                      file: _file!,
+                      selectedLabel: labels.selectedFile,
+                      changeLabel: labels.changeFile,
+                      removeLabel: labels.removeFile,
+                      onChange: _busy ? null : _pick,
+                      onRemove: _busy ? null : _removeFile,
+                    ),
             ),
             const SizedBox(height: 20),
             _StepTitle(number: 3, title: labels.validatePreview),
             FilledButton.icon(
               key: const ValueKey<String>('validate-topic-upload'),
-              onPressed: _busy ? null : _validate,
+              onPressed: _canValidate ? _validate : null,
               icon: const Icon(Icons.fact_check_outlined),
               label: Text(labels.validate),
             ),
@@ -808,10 +882,12 @@ class BibleImportWizard extends StatefulWidget {
     required this.client,
     required this.arabic,
     required this.onCompleted,
+    this.filePicker = const PlatformAdminFilePicker(),
   });
   final AdminClient client;
   final bool arabic;
   final VoidCallback onCompleted;
+  final AdminFilePicker filePicker;
 
   @override
   State<BibleImportWizard> createState() => _BibleImportWizardState();
@@ -854,23 +930,32 @@ class _BibleImportWizardState extends State<BibleImportWizard> {
   }
 
   Future<void> _pick() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['usfm'],
-      allowMultiple: true,
-      withData: true,
-    );
-    if (result == null) return;
-    final files = result.files
-        .where((file) => file.bytes != null)
-        .map((file) => AdminUploadFile(name: file.name, bytes: file.bytes!))
-        .toList();
-    setState(() {
-      _files = files;
-      _validation = null;
-      _progress = null;
-      _error = null;
-    });
+    try {
+      final files = await widget.filePicker.pickFiles(
+        allowedExtensions: const ['usfm'],
+        allowMultiple: true,
+      );
+      if (!mounted || files == null) return;
+      final validFiles = files
+          .where(
+            (file) =>
+                file.name.toLowerCase().endsWith('.usfm') && file.size > 0,
+          )
+          .take(10)
+          .toList();
+      if (validFiles.isEmpty || validFiles.length != files.length) {
+        setState(() => _error = labels.selectUsfm);
+        return;
+      }
+      setState(() {
+        _files = validFiles;
+        _validation = null;
+        _progress = null;
+        _error = null;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = labels.unableToOpenFile);
+    }
   }
 
   Future<void> _acceptDroppedFiles(DropDoneDetails details) async {
@@ -1121,24 +1206,30 @@ Widget _metadataFields(
   TextEditingController displayName,
   _AdminLabels labels,
   ValueChanged<String> onDirection,
-  String direction,
-) => Column(
+  String direction, {
+  VoidCallback? onChanged,
+}) => Column(
   children: [
     TextFormField(
       key: const ValueKey<String>('language-code'),
       controller: language,
       decoration: InputDecoration(labelText: labels.languageCode),
+      autovalidateMode: AutovalidateMode.onUserInteraction,
       validator: (value) =>
           value == null ||
               !RegExp(r'^[a-z][a-z0-9_-]{1,39}$').hasMatch(value.trim())
           ? labels.invalidLanguageCode
           : null,
+      onChanged: (_) => onChanged?.call(),
     ),
     TextFormField(
+      key: const ValueKey<String>('language-display-name'),
       controller: displayName,
       decoration: InputDecoration(labelText: labels.displayName),
+      autovalidateMode: AutovalidateMode.onUserInteraction,
       validator: (value) =>
           value == null || value.trim().isEmpty ? labels.required : null,
+      onChanged: (_) => onChanged?.call(),
     ),
     DropdownButtonFormField<String>(
       initialValue: direction,
@@ -1195,11 +1286,13 @@ class _UploadDropSurface extends StatelessWidget {
     required this.message,
     required this.buttonLabel,
     required this.onPressed,
+    this.buttonKey,
   });
 
   final String message;
   final String buttonLabel;
   final VoidCallback? onPressed;
+  final Key? buttonKey;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1216,10 +1309,95 @@ class _UploadDropSurface extends StatelessWidget {
         const SizedBox(height: 8),
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 8),
-        OutlinedButton(onPressed: onPressed, child: Text(buttonLabel)),
+        OutlinedButton(
+          key: buttonKey,
+          onPressed: onPressed,
+          child: Text(buttonLabel),
+        ),
       ],
     ),
   );
+}
+
+class _SelectedUploadSurface extends StatelessWidget {
+  const _SelectedUploadSurface({
+    required this.file,
+    required this.selectedLabel,
+    required this.changeLabel,
+    required this.removeLabel,
+    required this.onChange,
+    required this.onRemove,
+  });
+
+  final AdminUploadFile file;
+  final String selectedLabel;
+  final String changeLabel;
+  final String removeLabel;
+  final VoidCallback? onChange;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      border: Border.all(color: Theme.of(context).colorScheme.primary),
+      borderRadius: BorderRadius.circular(12),
+      color: Theme.of(
+        context,
+      ).colorScheme.primaryContainer.withValues(alpha: 0.22),
+    ),
+    child: Column(
+      children: [
+        Icon(
+          Icons.check_circle_outline,
+          size: 34,
+          color: Theme.of(context).colorScheme.primary,
+          semanticLabel: selectedLabel,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          file.name,
+          key: const ValueKey<String>('selected-topic-filename'),
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 3),
+        Text(
+          _formatFileSize(file.size),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          alignment: WrapAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey<String>('change-topic-file'),
+              onPressed: onChange,
+              icon: const Icon(Icons.folder_open_outlined),
+              label: Text(changeLabel),
+            ),
+            TextButton.icon(
+              key: const ValueKey<String>('remove-topic-file'),
+              onPressed: onRemove,
+              icon: const Icon(Icons.delete_outline),
+              label: Text(removeLabel),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+String _formatFileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kilobytes = bytes / 1024;
+  if (kilobytes < 1024) return '${kilobytes.toStringAsFixed(1)} KB';
+  final megabytes = kilobytes / 1024;
+  return '${megabytes.toStringAsFixed(1)} MB';
 }
 
 class _StepTitle extends StatelessWidget {
@@ -1501,6 +1679,21 @@ class _AdminLabels {
     'الأعمدة المطلوبة: الموضوع، متى، مرقس، لوقا، يوحنا. يمكن فصل المراجع المتعددة بفاصلة أو فاصلة منقوطة.',
   );
   String get selectCsv => t('Select CSV file', 'اختر ملف CSV');
+  String get changeFile => t('Change file', 'تغيير الملف');
+  String get removeFile => t('Remove file', 'إزالة الملف');
+  String get selectedFile => t('Selected file', 'الملف المحدد');
+  String get pleaseSelectCsv =>
+      t('Please select a CSV file.', 'يرجى اختيار ملف CSV.');
+  String get emptyCsv =>
+      t('The selected CSV file is empty.', 'ملف CSV المحدد فارغ.');
+  String fileTooLarge(String maximum) => t(
+    'The selected file is too large. The upload limit is $maximum.',
+    'الملف المحدد كبير جدًا. الحد الأقصى للرفع هو $maximum.',
+  );
+  String get unableToOpenFile => t(
+    'Unable to open the file. Please try again.',
+    'تعذر فتح الملف. يرجى المحاولة مرة أخرى.',
+  );
   String get dropCsv => t(
     'Drag and drop a CSV here, or choose a file.',
     'اسحب ملف CSV وأفلته هنا، أو اختر ملفًا.',
