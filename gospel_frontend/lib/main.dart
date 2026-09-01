@@ -800,7 +800,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       previousTopic: 'الموضوع السابق',
       nextBook: 'السفر التالي',
       previousBook: 'السفر السابق',
-      chapter: 'فصل',
+      chapter: 'الفصل',
       addDiacritics: 'إضافة الحركات',
       removeDiacritics: 'إزالة الحركات',
       selectVersion: 'اختر الترجمة',
@@ -2841,6 +2841,7 @@ class DraggableDialogShell extends StatefulWidget {
     this.footer,
     this.maxWidth = 600,
     this.maxHeight = 720,
+    this.shrinkWrap = false,
   });
 
   final Widget title;
@@ -2849,6 +2850,7 @@ class DraggableDialogShell extends StatefulWidget {
   final Widget? footer;
   final double maxWidth;
   final double maxHeight;
+  final bool shrinkWrap;
 
   @override
   State<DraggableDialogShell> createState() => _DraggableDialogShellState();
@@ -2870,14 +2872,16 @@ class _DraggableDialogShellState extends State<DraggableDialogShell> {
   @override
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
-    final fullScreen = viewport.width < 600 || viewport.height < 650;
+    final fullScreen =
+        !widget.shrinkWrap && (viewport.width < 600 || viewport.height < 650);
+    final compactInset = viewport.width < 600 ? 16.0 : 24.0;
     final dialogSize = Size(
       fullScreen
           ? viewport.width
-          : math.min(widget.maxWidth, viewport.width - 48),
+          : math.min(widget.maxWidth, viewport.width - (compactInset * 2)),
       fullScreen
           ? viewport.height
-          : math.min(widget.maxHeight, viewport.height - 48),
+          : math.min(widget.maxHeight, viewport.height - (compactInset * 2)),
     );
     if (_lastViewport != viewport) {
       _lastViewport = viewport;
@@ -2917,9 +2921,7 @@ class _DraggableDialogShellState extends State<DraggableDialogShell> {
     );
 
     final dialog = Dialog(
-      insetPadding: fullScreen
-          ? EdgeInsets.zero
-          : const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      insetPadding: fullScreen ? EdgeInsets.zero : EdgeInsets.all(compactInset),
       shape: fullScreen
           ? const RoundedRectangleBorder()
           : RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -3931,16 +3933,9 @@ class HarmonySortButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final labels = uiLanguage.ui;
-    final gospel = state.gospel;
-    final sortLabel = gospel == null
-        ? labels.defaultSort
-        : _localizedGospelName(gospel, labels, uiLanguage);
     final active = !state.isDefault || columns.visibleMask != allGospelsMask;
     final icon = const Icon(Icons.sort, size: 18);
-    final label = Text(
-      '${labels.sort}: $sortLabel',
-      overflow: TextOverflow.ellipsis,
-    );
+    final label = Text(labels.sort, overflow: TextOverflow.ellipsis);
     return active
         ? FilledButton.icon(
             key: const ValueKey<String>('sort-button'),
@@ -4018,13 +4013,14 @@ class _HarmonySortAndColumnsDialogState
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
-        maxWidth: 520,
-        maxHeight: 690,
+        maxWidth: 500,
+        maxHeight: 590,
+        shrinkWrap: true,
         title: Text(
           labels.sort,
           style: Theme.of(
             context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
         ),
         headerTrailing: IconButton(
           tooltip: labels.done,
@@ -4034,7 +4030,7 @@ class _HarmonySortAndColumnsDialogState
         // Kept before footer so the dialog reads header/content/actions.
         // ignore: sort_child_properties_last
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4044,7 +4040,7 @@ class _HarmonySortAndColumnsDialogState
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 2),
               RadioGroup<TopicSortMode>(
                 groupValue: _sort.mode,
                 onChanged: (value) {
@@ -4055,6 +4051,7 @@ class _HarmonySortAndColumnsDialogState
                     RadioListTile<TopicSortMode>(
                       key: const ValueKey<String>('sort-default'),
                       dense: true,
+                      visualDensity: const VisualDensity(vertical: -3),
                       contentPadding: EdgeInsets.zero,
                       value: TopicSortMode.defaultOrder,
                       title: Text(labels.defaultSort),
@@ -4063,6 +4060,7 @@ class _HarmonySortAndColumnsDialogState
                       RadioListTile<TopicSortMode>(
                         key: ValueKey<String>('sort-${gospel.name}'),
                         dense: true,
+                        visualDensity: const VisualDensity(vertical: -3),
                         contentPadding: EdgeInsets.zero,
                         value: TopicSortMode.forGospel(gospel),
                         title: Text(
@@ -4072,43 +4070,72 @@ class _HarmonySortAndColumnsDialogState
                   ],
                 ),
               ),
-              const Divider(height: 28),
+              const Divider(height: 18),
               Text(
                 labels.visibleColumns,
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 6),
-              for (final gospel in Gospel.values)
-                ListTile(
-                  key: ValueKey<String>('column-${gospel.name}'),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    _columns.isVisible(gospel)
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                  ),
-                  title: Text(
-                    _localizedGospelName(gospel, labels, widget.uiLanguage),
-                  ),
-                  trailing: IconButton(
-                    tooltip: _columns.isVisible(gospel)
-                        ? '${labels.columns}: −'
-                        : '${labels.columns}: +',
-                    onPressed:
-                        _columns.isVisible(gospel) && _columns.visibleCount == 1
-                        ? null
-                        : () => _toggleColumn(gospel),
-                    icon: Icon(
-                      _columns.isVisible(gospel)
-                          ? Icons.remove_circle_outline
-                          : Icons.add_circle_outline,
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  const spacing = 8.0;
+                  final columnCount = constraints.maxWidth >= 400 ? 2 : 1;
+                  final itemWidth = columnCount == 1
+                      ? constraints.maxWidth
+                      : (constraints.maxWidth - spacing) / 2;
+                  return Wrap(
+                    spacing: spacing,
+                    runSpacing: 2,
+                    textDirection: widget.uiLanguage.direction,
+                    children: [
+                      for (final gospel in Gospel.values)
+                        SizedBox(
+                          width: itemWidth,
+                          child: ListTile(
+                            key: ValueKey<String>('column-${gospel.name}'),
+                            dense: true,
+                            visualDensity: const VisualDensity(vertical: -2),
+                            minLeadingWidth: 24,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              _columns.isVisible(gospel)
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                              size: 20,
+                            ),
+                            title: Text(
+                              _localizedGospelName(
+                                gospel,
+                                labels,
+                                widget.uiLanguage,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: IconButton(
+                              tooltip: _columns.isVisible(gospel)
+                                  ? '${labels.columns}: −'
+                                  : '${labels.columns}: +',
+                              onPressed:
+                                  _columns.isVisible(gospel) &&
+                                      _columns.visibleCount == 1
+                                  ? null
+                                  : () => _toggleColumn(gospel),
+                              icon: Icon(
+                                _columns.isVisible(gospel)
+                                    ? Icons.remove_circle_outline
+                                    : Icons.add_circle_outline,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 4),
               OutlinedButton.icon(
                 key: const ValueKey<String>('reset-columns'),
                 onPressed: _columns.visibleMask == allGospelsMask
@@ -4117,7 +4144,7 @@ class _HarmonySortAndColumnsDialogState
                 icon: const Icon(Icons.restart_alt, size: 18),
                 label: Text(labels.resetColumns),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 labels.atLeastOneColumnVisible,
                 style: Theme.of(context).textTheme.bodySmall,
@@ -4127,7 +4154,7 @@ class _HarmonySortAndColumnsDialogState
         ),
         footer: SafeArea(
           top: false,
-          minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          minimum: const EdgeInsets.fromLTRB(12, 6, 12, 8),
           child: Align(
             alignment: AlignmentDirectional.centerEnd,
             child: FilledButton(
@@ -7170,7 +7197,8 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     return '${widget.language}|${_previewVersionForRequest()}|${_previewWithDiacritics()}|${_bookParam(reference)}|${reference.chapter}|${reference.verses.trim()}';
   }
 
-  String _previewHeading(GospelReference reference) {
+  String _previewHeading(List<GospelReference> references) {
+    final reference = references.first;
     final languageOption = _languageOptionForApiLanguage(widget.language);
     final book = widget.displayBook.trim().isNotEmpty
         ? widget.displayBook.trim()
@@ -7185,10 +7213,15 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         isArabic: _isArabicLanguage(widget.language),
       );
     }
-    final verses = reference.verses.trim();
-    final formattedReference = verses.isEmpty
-        ? '${reference.chapter}'
-        : '${reference.chapter}:$verses';
+    final formattedReference = formatReferencePreviewSection(
+      references.map(
+        (item) => HarmonyReferenceSegment(
+          chapter: item.chapter,
+          verses: item.verses.trim(),
+          separatorBefore: ReferenceSeparator.fromSymbol(item.separatorBefore),
+        ),
+      ),
+    );
     return _combineBookAndReference(
       book,
       formattedReference,
@@ -7215,16 +7248,11 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   }
 
   List<List<GospelReference>> _previewGroups(List<GospelReference> references) {
-    final groups = <List<GospelReference>>[];
-    for (final reference in references) {
-      if (groups.isNotEmpty &&
-          reference.separatorBefore == ReferenceSeparator.continuous.symbol) {
-        groups.last.add(reference);
-      } else {
-        groups.add(<GospelReference>[reference]);
-      }
-    }
-    return groups;
+    return groupReferencePreviewSections<GospelReference>(
+      references,
+      separatorBefore: (reference) =>
+          ReferenceSeparator.fromSymbol(reference.separatorBefore),
+    );
   }
 
   void _cancelHideTimer() {
@@ -7572,7 +7600,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       children: [
         Expanded(
           child: Text(
-            references.map(_previewHeading).join('\u00a0\u00a0\u00a0'),
+            _previewHeading(references),
             style: headingStyle,
             textAlign: TextAlign.start,
             maxLines: 1,
@@ -7789,6 +7817,7 @@ class ReferenceViewerPage extends StatefulWidget {
 class ChapterNav extends StatelessWidget {
   const ChapterNav({
     super.key,
+    required this.bookTitle,
     required this.chapter,
     required this.previousBookUri,
     required this.previousChapterUri,
@@ -7796,6 +7825,7 @@ class ChapterNav extends StatelessWidget {
     required this.nextBookUri,
   });
 
+  final String bookTitle;
   final int chapter;
   final Uri? previousBookUri;
   final Uri? previousChapterUri;
@@ -7811,6 +7841,10 @@ class ChapterNav extends StatelessWidget {
     final chapterNumber = uiLanguage.code == 'arabic'
         ? toArabicIndicDigits(chapter.toString())
         : chapter.toString();
+    final chapterTitle = '${labels.chapter} $chapterNumber';
+    final title = bookTitle.trim().isEmpty
+        ? chapterTitle
+        : '${bookTitle.trim()} — $chapterTitle';
 
     Widget fixedDirectionIcon(IconData icon) {
       return Directionality(
@@ -7886,9 +7920,9 @@ class ChapterNav extends StatelessWidget {
           ];
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      margin: const EdgeInsets.symmetric(vertical: 4),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
           textDirection: TextDirection.ltr,
           children: [
@@ -7897,7 +7931,7 @@ class ChapterNav extends StatelessWidget {
               child: Directionality(
                 textDirection: uiLanguage.direction,
                 child: Text(
-                  '${labels.chapter} $chapterNumber',
+                  title,
                   textAlign: TextAlign.center,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
@@ -7907,6 +7941,88 @@ class ChapterNav extends StatelessWidget {
             ),
             ...trailingControls,
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class TranslationPanelCard extends StatelessWidget {
+  const TranslationPanelCard({
+    super.key,
+    required this.title,
+    required this.textDirection,
+    required this.body,
+    this.headerControls = const <Widget>[],
+    this.isMain = false,
+  });
+
+  final String title;
+  final TextDirection textDirection;
+  final Widget body;
+  final List<Widget> headerControls;
+  final bool isMain;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titleWidget = Text(
+      title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Directionality(
+          textDirection: textDirection,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!isMain) ...[
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compactHeader = constraints.maxWidth < 430;
+                    if (compactHeader) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          titleWidget,
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 2,
+                            textDirection: textDirection,
+                            children: headerControls,
+                          ),
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: titleWidget),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 2,
+                          textDirection: textDirection,
+                          children: headerControls,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+              body,
+            ],
+          ),
         ),
       ),
     );
@@ -8141,45 +8257,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return trimmedBookId;
     }
     return widget.displayBook.trim();
-  }
-
-  String get _referenceHeading {
-    final book = _displayBookLabel;
-    final override = widget.referenceLabelOverride.trim();
-    final direction =
-        _languageOptionForApiLanguage(widget.language)?.direction ??
-        TextDirection.ltr;
-    if (override.isNotEmpty) {
-      if (book.isEmpty) {
-        return _formatReferenceForLanguage(
-          override,
-          direction,
-          isArabic: _isArabicLanguage(widget.language),
-        );
-      }
-      return _combineBookAndReference(
-        book,
-        override,
-        direction,
-        isArabic: _isArabicLanguage(widget.language),
-      );
-    }
-    if (book.isEmpty) {
-      return _labels.reference;
-    }
-    if (widget.chapter <= 0) {
-      return book;
-    }
-    final verses = widget.verses.trim();
-    final reference = verses.isEmpty
-        ? '${widget.chapter}'
-        : '${widget.chapter}:$verses';
-    return _combineBookAndReference(
-      book,
-      reference,
-      direction,
-      isArabic: _isArabicLanguage(widget.language),
-    );
   }
 
   String get _displayBookLabel {
@@ -8760,6 +8837,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         (maxChapter == null ? true : widget.chapter < maxChapter);
 
     return ChapterNav(
+      bookTitle: _harmonyAppBarTitle,
       chapter: widget.chapter,
       previousBookUri: hasPreviousBook
           ? _referenceUri(book: orderedGospels[bookIndex - 1], chapter: 1)
@@ -8924,7 +9002,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildChapterNavigation(),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         ..._buildVerseGroupWidgets(
           verses: _chapterVerses,
           theme: theme,
@@ -8943,81 +9021,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final option = _languageOptionForVersion(version);
     final match = _versionOptionFor(option, version);
     return match?.label ?? option.versionLabel;
-  }
-
-  void _showVersionPicker() {
-    final versions = _selectableVersions(_languageOption);
-    var selectedVersion =
-        versions.any((version) {
-          return _selectionVersionValue(
-                _languageOption,
-                version.id,
-              ).toLowerCase() ==
-              _selectionVersionValue(
-                _languageOption,
-                _activeVersion,
-              ).toLowerCase();
-        })
-        ? versions.firstWhere((version) {
-            return _selectionVersionValue(
-                  _languageOption,
-                  version.id,
-                ).toLowerCase() ==
-                _selectionVersionValue(
-                  _languageOption,
-                  _activeVersion,
-                ).toLowerCase();
-          }).id
-        : (versions.isNotEmpty ? versions.first.id : '');
-    final labels = _labels;
-    showBrowserSafeDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('${labels.selectVersion} (${_languageOption.label})'),
-          content: StatefulBuilder(
-            builder: (context, setModalState) {
-              return DropdownButtonFormField<String>(
-                key: ValueKey('reference-main-version-$selectedVersion'),
-                initialValue: selectedVersion.isEmpty ? null : selectedVersion,
-                decoration: InputDecoration(labelText: labels.version),
-                items: versions
-                    .map(
-                      (version) => DropdownMenuItem<String>(
-                        value: version.id,
-                        child: Text(version.label),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setModalState(() {
-                    selectedVersion = value;
-                  });
-                },
-              );
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(labels.cancel),
-            ),
-            FilledButton(
-              onPressed: selectedVersion.isEmpty
-                  ? null
-                  : () {
-                      Navigator.of(context).pop();
-                      _updateSelectedVersion(selectedVersion);
-                    },
-              child: Text(labels.save),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Widget _buildAddComparisonButton() {
@@ -9580,77 +9583,27 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
     final headerControls = <Widget>[
       TextButton(
-        onPressed: isMain
-            ? _showVersionPicker
-            : entry == null
+        onPressed: entry == null
             ? null
             : () => _showComparisonColumnSelector(entry),
-        child: Text(labels.change),
+        child: Text(labels.changeTranslation),
       ),
-      if (!isMain && entry != null)
+      if (entry != null)
         IconButton(
           onPressed: () => _removeComparison(entry),
           icon: const Icon(Icons.close),
           tooltip: labels.removeComparison,
         ),
     ];
-    final titleWidget = Text(
-      title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-    );
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
+    return TranslationPanelCard(
+      key: ValueKey<String>(
+        isMain ? 'translation-panel-main' : 'translation-panel-comparison',
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        child: Directionality(
-          textDirection: language.direction,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final compactHeader = constraints.maxWidth < 430;
-                  if (compactHeader) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        titleWidget,
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 4,
-                          textDirection: language.direction,
-                          children: headerControls,
-                        ),
-                      ],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: titleWidget),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        textDirection: language.direction,
-                        children: headerControls,
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              body,
-            ],
-          ),
-        ),
-      ),
+      title: title,
+      textDirection: language.direction,
+      headerControls: headerControls,
+      isMain: isMain,
+      body: body,
     );
   }
 
@@ -9704,7 +9657,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildChapterNavigation(),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         if (_loadingHarmonyTopics) ...[
           const LinearProgressIndicator(),
           const SizedBox(height: 8),
@@ -9869,10 +9822,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (book.isEmpty) {
       return _labels.reference;
     }
-    if (_languageOption.code == 'arabic') {
+    if (MenuLanguageScope.of(context).code == 'arabic') {
       return 'إنجيل $book';
     }
-    return 'Book of $book';
+    return 'Gospel of $book';
   }
 
   @override
@@ -9897,9 +9850,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Widget _buildBody(BuildContext context) {
     final theme = Theme.of(context);
     final direction = MenuLanguageScope.of(context).direction;
-    final toolbarTitle = _isHarmonySource
-        ? _harmonyAppBarTitle
-        : _referenceHeading;
     final primaryActions = <Widget>[
       _buildAddComparisonButton(),
       _buildInterlinearToggleButton(),
@@ -9916,7 +9866,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             elevation: 1,
             surfaceTintColor: theme.colorScheme.surfaceTint,
             child: AppToolbar(
-              title: toolbarTitle,
               language: _languageOption,
               version: _activeVersion,
               languages: _supportedLanguages,
@@ -9941,7 +9890,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                   horizontal: _responsiveHorizontalInset(
                     MediaQuery.sizeOf(context).width,
                   ),
-                  vertical: 14,
+                  vertical: 8,
                 ),
                 child: Directionality(
                   textDirection: _languageOption.direction,
@@ -9960,7 +9909,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                               child: _buildInterlinearReferenceSection(theme),
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 14),
                           Align(
                             alignment: AlignmentDirectional.topCenter,
                             child: ConstrainedBox(

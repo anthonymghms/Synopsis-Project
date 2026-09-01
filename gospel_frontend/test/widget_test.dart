@@ -1476,12 +1476,81 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 1500));
 
-    expect(
-      find.text('Luke 4:42-44\u00a0\u00a0\u00a0Luke 5:1-2'),
-      findsOneWidget,
-    );
+    expect(find.text('Luke 4:42-44\u00a0\u00a0\u00a05:1-2'), findsOneWidget);
     expect(find.text('Click to read in chapter'), findsOneWidget);
     expect(find.text('+'), findsNothing);
+
+    await moveOutsideAndRemove(tester, gesture);
+  });
+
+  testWidgets('comma preview uses one compact heading and no divider', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 1, verses: '40'),
+        GospelReference(
+          book: 'Luke',
+          chapter: 1,
+          verses: '52',
+          separatorBefore: ',',
+        ),
+      ]),
+    );
+
+    final referenceLinks = tester.widgetList<ReferenceHoverText>(
+      find.byType(ReferenceHoverText),
+    );
+    expect(referenceLinks, hasLength(2));
+    expect(referenceLinks.map((link) => link.reference.verses), ['40', '52']);
+    final routeLinks = tester
+        .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+        .where((link) => link.uri?.path == '/reference');
+    expect(
+      routeLinks.map((link) => link.uri?.queryParameters['verses']).toSet(),
+      {'40', '52'},
+    );
+
+    final gesture = await hoverOver(
+      tester,
+      find.byType(ReferenceCellHoverPreview),
+    );
+    await tester.pump(const Duration(milliseconds: 1500));
+
+    expect(find.text('Luke 1:40 & 52'), findsOneWidget);
+    expect(find.text('Luke 1:40'), findsNothing);
+    expect(find.text('Luke 1:52'), findsNothing);
+    expect(find.byType(Divider), findsNothing);
+    expect(find.text('Click to read in chapter'), findsOneWidget);
+
+    await moveOutsideAndRemove(tester, gesture);
+  });
+
+  testWidgets('semicolon preview keeps separate sections and a divider', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'John', chapter: 8, verses: '1-12'),
+        GospelReference(
+          book: 'John',
+          chapter: 8,
+          verses: '20-25',
+          separatorBefore: ';',
+        ),
+      ]),
+    );
+
+    final gesture = await hoverOver(
+      tester,
+      find.byType(ReferenceCellHoverPreview),
+    );
+    await tester.pump(const Duration(milliseconds: 1500));
+
+    expect(find.text('John 8:1-12'), findsOneWidget);
+    expect(find.text('John 8:20-25'), findsOneWidget);
+    expect(find.byType(Divider), findsOneWidget);
+    expect(find.text('Click to read in chapter'), findsNWidgets(2));
 
     await moveOutsideAndRemove(tester, gesture);
   });
@@ -1570,9 +1639,19 @@ void main() {
       ),
     );
 
-    expect(find.textContaining('Sort & Columns'), findsOneWidget);
+    expect(find.text('Sort & Columns'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
+    expect(
+      tester
+          .getTopLeft(find.byKey(const ValueKey<String>('column-matthew')))
+          .dy,
+      tester.getTopLeft(find.byKey(const ValueKey<String>('column-mark'))).dy,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey<String>('column-luke'))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey<String>('column-john'))).dy,
+    );
     Future<void> toggle(Gospel gospel) async {
       final button = find.descendant(
         of: find.byKey(ValueKey<String>('column-${gospel.name}')),
@@ -1607,7 +1686,7 @@ void main() {
     expect(sort.isDefault, isTrue);
   });
 
-  testWidgets('Arabic combined sort control uses the expanded label', (
+  testWidgets('Arabic combined sort control uses the compact label', (
     tester,
   ) async {
     final arabic = kBaseLanguageOptions.firstWhere(
@@ -1627,7 +1706,130 @@ void main() {
       ),
     );
 
-    expect(find.textContaining('الترتيب والأعمدة'), findsOneWidget);
+    expect(find.text('الترتيب والأعمدة'), findsOneWidget);
+  });
+
+  testWidgets('sort button never includes the active chronology', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonySortButton(
+            state: const GospelSortState(mode: TopicSortMode.luke),
+            columns: const ColumnVisibilityState(),
+            uiLanguage: kBaseLanguageOptions.first,
+            onChanged: (_) {},
+            onColumnsChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Sort & Columns'), findsOneWidget);
+    expect(find.textContaining('Luke'), findsNothing);
+  });
+
+  testWidgets('chapter navigation combines the book and chapter title', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('english'),
+          child: const Scaffold(
+            body: ChapterNav(
+              bookTitle: 'Gospel of Matthew',
+              chapter: 10,
+              previousBookUri: null,
+              previousChapterUri: null,
+              nextChapterUri: null,
+              nextBookUri: null,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Gospel of Matthew — Chapter 10'), findsOneWidget);
+  });
+
+  testWidgets('Arabic chapter navigation localizes its combined title', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('arabic'),
+          child: const Scaffold(
+            body: ChapterNav(
+              bookTitle: 'إنجيل متى',
+              chapter: 10,
+              previousBookUri: null,
+              previousChapterUri: null,
+              nextChapterUri: null,
+              nextBookUri: null,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('إنجيل متى — الفصل ١٠'), findsOneWidget);
+  });
+
+  testWidgets('main chapter translation has no duplicated card header', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TranslationPanelCard(
+            title: 'English · KJV',
+            textDirection: TextDirection.ltr,
+            isMain: true,
+            headerControls: [
+              TextButton(
+                onPressed: () {},
+                child: const Text('Change translation'),
+              ),
+            ],
+            body: const Text('In the beginning of the chapter.'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('English · KJV'), findsNothing);
+    expect(find.text('Change translation'), findsNothing);
+    expect(find.textContaining('In the beginning'), findsOneWidget);
+  });
+
+  testWidgets('added translations retain their header and change action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TranslationPanelCard(
+            title: 'العربية · البستاني فاندايك',
+            textDirection: TextDirection.rtl,
+            headerControls: [
+              TextButton(
+                onPressed: () {},
+                child: const Text('Change translation'),
+              ),
+              IconButton(onPressed: () {}, icon: const Icon(Icons.close)),
+            ],
+            body: const Text('نص المقارنة.'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('العربية · البستاني فاندايك'), findsOneWidget);
+    expect(find.text('Change translation'), findsOneWidget);
+    expect(find.text('نص المقارنة.'), findsOneWidget);
   });
 
   testWidgets('combined sort picker exposes Default and all chronologies', (

@@ -66,5 +66,35 @@ void main() {
       expect(restored.logicalSelectionCount, 3);
       expect(restored.relation, HarmonyReferenceRelation.mixed);
     });
+
+    test('preview sections group comma and plus but split on semicolon', () {
+      final cell = HarmonyReferenceCell.parse(
+        'Luke 1:40, 52; 4:42-44 + 5:1-2',
+        book: 'Luke',
+      );
+
+      final groups = groupReferencePreviewSections<HarmonyReferenceSegment>(
+        cell.segments,
+        separatorBefore: (segment) => segment.separatorBefore,
+      );
+
+      expect(groups.map((group) => group.length), [2, 2]);
+      expect(formatReferencePreviewSection(groups.first), '1:40 & 52');
+      expect(
+        formatReferencePreviewSection(groups.last),
+        '4:42-44\u00a0\u00a0\u00a05:1-2',
+      );
+    });
+
+    test('same-chapter preview headings show the chapter only once', () {
+      for (final entry in const <String, String>{
+        'Luke 1:40,52': '1:40 & 52',
+        'John 8:1,34': '8:1 & 34',
+        'John 8:1-12,20-25': '8:1-12 & 20-25',
+      }.entries) {
+        final cell = HarmonyReferenceCell.parse(entry.key, book: 'Test');
+        expect(formatReferencePreviewSection(cell.segments), entry.value);
+      }
+    });
   });
 }

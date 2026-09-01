@@ -18,6 +18,14 @@ enum ReferenceSeparator {
     }
     return null;
   }
+
+  /// Whether the segment after this separator belongs in the same preview
+  /// section as the segment before it.
+  ///
+  /// A comma keeps multiple selections from one chapter together, while a
+  /// plus keeps the pieces of one continuous passage together. A semicolon
+  /// deliberately starts a new, visibly separated preview section.
+  bool get continuesPreviewSection => this == continuous || this == sameChapter;
 }
 
 enum HarmonyReferenceRelation {
@@ -101,6 +109,47 @@ class HarmonyReferenceSegment {
       separatorBefore: ReferenceSeparator.fromSymbol(json['separatorBefore']),
     );
   }
+}
+
+/// Groups parsed reference segments into the logical sections shown by
+/// previews. Callers supply already-parsed separator metadata; display code
+/// must not infer reference grammar by splitting formatted strings.
+List<List<T>> groupReferencePreviewSections<T>(
+  Iterable<T> values, {
+  required ReferenceSeparator? Function(T value) separatorBefore,
+}) {
+  final groups = <List<T>>[];
+  for (final value in values) {
+    final separator = separatorBefore(value);
+    if (groups.isNotEmpty && separator?.continuesPreviewSection == true) {
+      groups.last.add(value);
+    } else {
+      groups.add(<T>[value]);
+    }
+  }
+  return groups;
+}
+
+/// Formats one preview section without repeating a shared chapter for comma
+/// selections. Continuous cross-chapter pieces remain in the same heading.
+String formatReferencePreviewSection(Iterable<HarmonyReferenceSegment> values) {
+  final segments = values.toList(growable: false);
+  if (segments.isEmpty) return '';
+
+  String display(HarmonyReferenceSegment segment) => segment.verses.isEmpty
+      ? segment.chapter.toString()
+      : segment.displayReference;
+
+  final buffer = StringBuffer(display(segments.first));
+  for (final segment in segments.skip(1)) {
+    if (segment.separatorBefore == ReferenceSeparator.sameChapter &&
+        segment.chapter == segments.first.chapter) {
+      buffer.write(' & ${segment.verses}');
+    } else {
+      buffer.write('\u00a0\u00a0\u00a0${display(segment)}');
+    }
+  }
+  return buffer.toString();
 }
 
 class HarmonyReferenceCell {
