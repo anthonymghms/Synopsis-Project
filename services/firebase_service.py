@@ -5,6 +5,7 @@ import os
 import posixpath
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -12,6 +13,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore, storage
 
 from .bible_import_service import BibleParseResult
+from .localization_import_service import TopicLocalizationRecord
 from .topic_import_service import TopicRecord, records_from_firestore
 
 
@@ -79,10 +81,16 @@ def _utc_path_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _subcollection_path(document_ref, collection_name: str) -> str:
+    """Build a Firestore collection path without private client attributes."""
+    return f"{document_ref.path}/{collection_name}"
+
+
 class FirebaseImportRepository:
     def __init__(self, db=None, bucket=None):
         self.db = db or firestore_client()
         self.bucket = bucket or storage_bucket()
+        self._chapter_count_cache: dict[tuple[str, str, str, int], int | None] = {}
 
     def create_import(
         self,
@@ -151,7 +159,13 @@ class FirebaseImportRepository:
         files: Iterable[tuple[str, bytes]],
         version: str | None = None,
     ) -> list[str]:
-        prefix_parts = ["imports", "topics" if import_type == "topics" else "bibles", language]
+        import_folder = {
+            "topics": "topics",
+            "harmony": "harmony",
+            "topic_localization": "localizations",
+            "bible": "bibles",
+        }.get(import_type, import_type)
+        prefix_parts = ["imports", import_folder, language]
         if version:
             prefix_parts.append(version)
         prefix_parts.append(f"{_utc_path_stamp()}-{import_id}")
@@ -216,6 +230,467 @@ class FirebaseImportRepository:
             else document.collection("topics")
         )
         return records_from_firestore(collection.stream())
+
+    def load_canonical_topics(
+        self, *, fallback_dataset_id: str = "english_kjv"
+    ) -> tuple[list[TopicRecord], str]:
+        canonical_ref = self.db.collection("harmony").document("canonical")
+        snapshot = canonical_ref.get()
+        data = snapshot.to_dict() if snapshot.exists else {}
+        active_path = (data or {}).get("activeTopicsPath")
+        collection = (
+            self.db.collection(active_path)
+            if isinstance(active_path, str) and active_path
+            else canonical_ref.collection("topics")
+        )
+        records = records_from_firestore(collection.stream())
+        if records:
+            base_language = os.environ.get(
+                "HARMONY_BASE_LOCALIZATION", "arabic"
+            ).strip()
+            if base_language:
+                names = self.load_topic_localizations(base_language)
+                if names:
+                    records = [
+                        replace(record, name=names.get(record.topic_id, record.name))
+                        for record in records
+                    ]
+            return records, "harmony/canonical"
+        if not fallback_dataset_id:
+            return [], ""
+        return self.load_topics(fallback_dataset_id), f"references/{fallback_dataset_id}"
+
+    def canonical_topics_exist(self) -> bool:
+        records, source = self.load_canonical_topics(fallback_dataset_id="")
+        return bool(records) and source == "harmony/canonical"
+
+    def localization_exists(self, language: str) -> bool:
+        document = self.db.collection("harmony_localizations").document(language)
+        snapshot = document.get()
+        if snapshot.exists and (snapshot.to_dict() or {}).get("activeTopicsPath"):
+            return True
+        return next(document.collection("topics").limit(1).stream(), None) is not None
+
+    def load_topic_localizations(self, language: str) -> dict[str, str]:
+        document = self.db.collection("harmony_localizations").document(language)
+        snapshot = document.get()
+        data = snapshot.to_dict() if snapshot.exists else {}
+        active_path = (data or {}).get("activeTopicsPath")
+        collection = (
+            self.db.collection(active_path)
+            if isinstance(active_path, str) and active_path
+            else document.collection("topics")
+        )
+        return {
+            topic.id: str((topic.to_dict() or {}).get("name") or "").strip()
+            for topic in collection.stream()
+        }
+
+    def chapter_verse_count(
+        self,
+        book: str,
+        chapter: int,
+        *,
+        language: str = "english",
+        version: str = "kjv",
+    ) -> int | None:
+        key = (language, version, book, chapter)
+        if key in self._chapter_count_cache:
+            return self._chapter_count_cache[key]
+        language_ref = self.db.collection("bibles").document(language)
+        version_meta = language_ref.collection("versions").document(version).get()
+        active_path = (
+            (version_meta.to_dict() or {}).get("activeBooksPath")
+            if version_meta.exists
+            else None
+        )
+        books = (
+            self.db.collection(active_path)
+            if isinstance(active_path, str) and active_path
+            else language_ref.collection(version)
+        )
+        codes = {
+            "Matthew": "MAT",
+            "Mark": "MRK",
+            "Luke": "LUK",
+            "John": "JHN",
+        }
+        candidates = [book]
+        code = codes.get(book)
+        for document in books.list_documents():
+            normalized = document.id.strip().casefold()
+            if normalized == book.casefold() or (
+                code is not None and normalized.startswith(code.casefold())
+            ):
+                candidates.insert(0, document.id)
+                break
+        count: int | None = None
+        for candidate in candidates:
+            chapter_ref = (
+                books.document(candidate)
+                .collection("chapters")
+                .document(str(chapter))
+            )
+            snapshot = chapter_ref.get()
+            if snapshot.exists:
+                stored = (snapshot.to_dict() or {}).get("verseCount")
+                if isinstance(stored, int) and stored > 0:
+                    count = stored
+                else:
+                    count = sum(1 for _ in chapter_ref.collection("verses").stream())
+                break
+        self._chapter_count_cache[key] = count
+        return count
+
+    def activate_canonical_topics(
+        self,
+        *,
+        import_id: str,
+        records: list[TopicRecord],
+        replace: bool,
+    ) -> dict[str, Any]:
+        if self.canonical_topics_exist() and not replace:
+            raise ImportCollisionError(
+                "Canonical Harmony references already exist. Confirm replacement to continue."
+            )
+        revision_ref = self.db.collection("harmony_revisions").document(import_id)
+        topics_ref = revision_ref.collection("topics")
+        revision_ref.set(
+            {
+                "topicCount": len(records),
+                "status": "writing",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "referenceGrammarVersion": 2,
+            }
+        )
+        self._write_documents(
+            (
+                topics_ref.document(record.topic_id),
+                record.to_canonical_firestore(),
+            )
+            for record in records
+        )
+        revision_ref.set(
+            {"status": "ready", "completedAt": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        active_path = _subcollection_path(revision_ref, "topics")
+        activation = self.db.batch()
+        activation.set(
+            self.db.collection("harmony").document("canonical"),
+            {
+                "activeRevision": import_id,
+                "activeTopicsPath": active_path,
+                "topicCount": len(records),
+                "referenceGrammarVersion": 2,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        activation.set(
+            self.db.collection("admin_imports").document(import_id),
+            {
+                "status": "completed",
+                "stage": "Completed",
+                "recordsProcessed": len(records),
+                "topicsProcessed": len(records),
+                "referencesProcessed": sum(
+                    record.logical_reference_count for record in records
+                ),
+                "physicalSegmentsProcessed": sum(
+                    record.physical_segment_count for record in records
+                ),
+                "destination": "harmony/canonical",
+                "activeTopicsPath": active_path,
+                "completedAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        activation.commit()
+        return {
+            "destination": "harmony/canonical",
+            "activeTopicsPath": active_path,
+            "topicsProcessed": len(records),
+            "referencesProcessed": sum(
+                record.logical_reference_count for record in records
+            ),
+            "physicalSegmentsProcessed": sum(
+                record.physical_segment_count for record in records
+            ),
+        }
+
+    def activate_topic_localization(
+        self,
+        *,
+        import_id: str,
+        language: str,
+        display_name: str,
+        direction: str,
+        gospel_labels: dict[str, str],
+        canonical_source: str,
+        records: list[TopicLocalizationRecord],
+        replace: bool,
+    ) -> dict[str, Any]:
+        if self.localization_exists(language) and not replace:
+            raise ImportCollisionError(
+                f"A Harmony localization for {language} already exists. Confirm replacement to continue."
+            )
+        revision_ref = self.db.collection(
+            "harmony_localization_revisions"
+        ).document(import_id)
+        topics_ref = revision_ref.collection("topics")
+        revision_ref.set(
+            {
+                "language": language,
+                "topicCount": len(records),
+                "status": "writing",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        self._write_documents(
+            (topics_ref.document(record.topic_id), record.to_firestore())
+            for record in records
+        )
+        revision_ref.set(
+            {"status": "ready", "completedAt": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        active_path = _subcollection_path(revision_ref, "topics")
+        metadata = {
+            "language": language,
+            "label": display_name,
+            "direction": direction,
+            "gospels": gospel_labels,
+            "activeRevision": import_id,
+            "activeTopicsPath": active_path,
+            "topicCount": len(records),
+            "canonicalSource": canonical_source,
+            "active": True,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        activation = self.db.batch()
+        activation.set(
+            self.db.collection("harmony_localizations").document(language),
+            metadata,
+            merge=True,
+        )
+        activation.set(
+            self.db.collection("admin_imports").document(import_id),
+            {
+                "status": "completed",
+                "stage": "Completed",
+                "recordsProcessed": len(records),
+                "topicsProcessed": len(records),
+                "destination": f"harmony_localizations/{language}",
+                "activeTopicsPath": active_path,
+                "completedAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        activation.commit()
+        return {
+            "destination": f"harmony_localizations/{language}",
+            "activeTopicsPath": active_path,
+            "topicsProcessed": len(records),
+        }
+
+    def activate_canonical_with_localization(
+        self,
+        *,
+        import_id: str,
+        language: str,
+        display_name: str,
+        direction: str,
+        gospel_labels: dict[str, str],
+        canonical_records: list[TopicRecord],
+        records: list[TopicLocalizationRecord],
+        replace: bool,
+    ) -> dict[str, Any]:
+        canonical_exists = self.canonical_topics_exist()
+        localization_exists = self.localization_exists(language)
+        if (canonical_exists or localization_exists) and not replace:
+            raise ImportCollisionError(
+                "Canonical Harmony references or this language localization already exist. Confirm replacement to continue."
+            )
+
+        canonical_revision = self.db.collection("harmony_revisions").document(
+            import_id
+        )
+        canonical_topics = canonical_revision.collection("topics")
+        localization_revision = self.db.collection(
+            "harmony_localization_revisions"
+        ).document(import_id)
+        localization_topics = localization_revision.collection("topics")
+
+        canonical_revision.set(
+            {
+                "topicCount": len(canonical_records),
+                "status": "writing",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "referenceGrammarVersion": 2,
+                "sourceLanguage": language,
+            }
+        )
+        localization_revision.set(
+            {
+                "language": language,
+                "topicCount": len(records),
+                "status": "writing",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        self._write_documents(
+            (
+                canonical_topics.document(record.topic_id),
+                record.to_canonical_firestore(),
+            )
+            for record in canonical_records
+        )
+        self._write_documents(
+            (
+                localization_topics.document(record.topic_id),
+                record.to_firestore(),
+            )
+            for record in records
+        )
+        ready = {
+            "status": "ready",
+            "completedAt": firestore.SERVER_TIMESTAMP,
+        }
+        canonical_revision.set(ready, merge=True)
+        localization_revision.set(ready, merge=True)
+
+        canonical_path = _subcollection_path(canonical_revision, "topics")
+        localization_path = _subcollection_path(localization_revision, "topics")
+        localization_metadata = {
+            "language": language,
+            "label": display_name,
+            "direction": direction,
+            "gospels": gospel_labels,
+            "activeRevision": import_id,
+            "activeTopicsPath": localization_path,
+            "topicCount": len(records),
+            "canonicalSource": "harmony/canonical",
+            "active": True,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        logical_references = sum(
+            record.logical_reference_count for record in canonical_records
+        )
+        physical_segments = sum(
+            record.physical_segment_count for record in canonical_records
+        )
+        activation = self.db.batch()
+        activation.set(
+            self.db.collection("harmony").document("canonical"),
+            {
+                "activeRevision": import_id,
+                "activeTopicsPath": canonical_path,
+                "topicCount": len(canonical_records),
+                "referenceGrammarVersion": 2,
+                "sourceLanguage": language,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        activation.set(
+            self.db.collection("harmony_localizations").document(language),
+            localization_metadata,
+            merge=True,
+        )
+        activation.set(
+            self.db.collection("admin_imports").document(import_id),
+            {
+                "status": "completed",
+                "stage": "Completed",
+                "recordsProcessed": len(canonical_records),
+                "topicsProcessed": len(canonical_records),
+                "referencesProcessed": logical_references,
+                "physicalSegmentsProcessed": physical_segments,
+                "destination": (
+                    f"harmony/canonical + harmony_localizations/{language}"
+                ),
+                "canonicalTopicsPath": canonical_path,
+                "localizationTopicsPath": localization_path,
+                "completedAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        activation.commit()
+        return {
+            "destination": (
+                f"harmony/canonical + harmony_localizations/{language}"
+            ),
+            "canonicalTopicsPath": canonical_path,
+            "localizationTopicsPath": localization_path,
+            "topicsProcessed": len(canonical_records),
+            "referencesProcessed": logical_references,
+            "physicalSegmentsProcessed": physical_segments,
+        }
+
+    def harmony_migration_report(self, trusted_dataset: str = "canonical") -> dict[str, Any]:
+        if trusted_dataset == "canonical":
+            trusted, trusted_source = self.load_canonical_topics(
+                fallback_dataset_id="english_kjv"
+            )
+        else:
+            trusted = self.load_topics(trusted_dataset)
+            trusted_source = f"references/{trusted_dataset}"
+
+        def signature(record: TopicRecord) -> tuple[tuple[Any, ...], ...]:
+            return tuple(
+                (
+                    entry.get("book"),
+                    entry.get("chapter"),
+                    entry.get("verses"),
+                    entry.get("separatorBefore", ""),
+                )
+                for entry in record.entries
+            )
+
+        trusted_signatures = {
+            record.topic_id: signature(record)
+            for record in trusted
+        }
+        datasets = []
+        for reference_ref in self.db.collection("references").list_documents():
+            records = self.load_topics(reference_ref.id)
+            mismatches = []
+            for record in records:
+                actual = signature(record)
+                if trusted_signatures.get(record.topic_id) != actual:
+                    mismatches.append(record.topic_id)
+            missing = sorted(
+                set(trusted_signatures) - {record.topic_id for record in records},
+                key=int,
+            )
+            additional = sorted(
+                {record.topic_id for record in records} - set(trusted_signatures),
+                key=int,
+            )
+            datasets.append(
+                {
+                    "id": reference_ref.id,
+                    "topicCount": len(records),
+                    "referenceMismatchCount": len(mismatches),
+                    "firstReferenceMismatches": mismatches[:50],
+                    "missingTopicIds": missing[:50],
+                    "additionalTopicIds": additional[:50],
+                    "matchesTrustedReferences": not mismatches and not missing and not additional,
+                }
+            )
+        return {
+            "trustedDataset": trusted_dataset,
+            "trustedSource": trusted_source,
+            "trustedTopicCount": len(trusted),
+            "canonicalActive": self.canonical_topics_exist(),
+            "datasets": datasets,
+            "safeToAutoMigrate": bool(trusted)
+            and all(item["matchesTrustedReferences"] for item in datasets),
+        }
 
     def bible_version_exists(self, language: str, version: str) -> bool:
         version = self.resolve_version_id(language, version)
@@ -283,7 +758,7 @@ class FirebaseImportRepository:
             {"status": "ready", "completedAt": firestore.SERVER_TIMESTAMP},
             merge=True,
         )
-        active_path = topics_ref.path
+        active_path = _subcollection_path(revision_ref, "topics")
         activation = self.db.batch()
         activation.set(
             self.db.collection("references").document(dataset_id),
@@ -299,19 +774,10 @@ class FirebaseImportRepository:
             },
             merge=True,
         )
-        activation.set(
-            self.db.collection("bibles").document(language),
-            {
-                "id": language,
-                "label": display_name,
-                "direction": direction,
-                "active": True,
-                "hasTopics": True,
-                "topicsDatasetId": dataset_id,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            },
-            merge=True,
-        )
+        # This legacy writer is retained only for old clients that still call
+        # /admin/topics. Topic-table metadata must not be copied into
+        # bibles/{language}; Bible discovery and Harmony localization are now
+        # independent dimensions.
         activation.set(
             self.db.collection("admin_imports").document(import_id),
             {
@@ -320,7 +786,10 @@ class FirebaseImportRepository:
                 "recordsProcessed": len(records),
                 "topicsProcessed": len(records),
                 "referencesProcessed": sum(
-                    len(record.entries) for record in records
+                    record.logical_reference_count for record in records
+                ),
+                "physicalSegmentsProcessed": sum(
+                    record.physical_segment_count for record in records
                 ),
                 "destination": f"references/{dataset_id}",
                 "activeTopicsPath": active_path,
@@ -335,7 +804,12 @@ class FirebaseImportRepository:
             "destination": f"references/{dataset_id}",
             "activeTopicsPath": active_path,
             "topicsProcessed": len(records),
-            "referencesProcessed": sum(len(record.entries) for record in records),
+            "referencesProcessed": sum(
+                record.logical_reference_count for record in records
+            ),
+            "physicalSegmentsProcessed": sum(
+                record.physical_segment_count for record in records
+            ),
         }
 
     def activate_bible(
@@ -402,7 +876,7 @@ class FirebaseImportRepository:
             merge=True,
         )
 
-        active_path = books_ref.path
+        active_path = _subcollection_path(revision_ref, "books")
         language_ref = self.db.collection("bibles").document(language)
         versions = set(self.available_versions(language))
         versions.add(version)
@@ -495,6 +969,27 @@ class FirebaseImportRepository:
             )
 
         topic_languages: list[dict[str, Any]] = []
+        legacy_topic_datasets: list[dict[str, Any]] = []
+        localized_language_ids: set[str] = set()
+        for localization_ref in self.db.collection(
+            "harmony_localizations"
+        ).list_documents():
+            snapshot = localization_ref.get()
+            data = snapshot.to_dict() if snapshot.exists else {}
+            localized_language_ids.add(localization_ref.id)
+            topic_languages.append(
+                {
+                    "id": localization_ref.id,
+                    "language": localization_ref.id,
+                    "name": (data or {}).get("label", localization_ref.id.title()),
+                    "topics": (data or {}).get("topicCount", 0),
+                    "direction": (data or {}).get("direction", "ltr"),
+                    "gospels": (data or {}).get("gospels", {}),
+                    "active": (data or {}).get("active", True),
+                    "updatedAt": (data or {}).get("updatedAt"),
+                    "source": "canonical-localization",
+                }
+            )
         for reference_ref in self.db.collection("references").list_documents():
             snapshot = reference_ref.get()
             data = snapshot.to_dict() if snapshot.exists else {}
@@ -502,7 +997,7 @@ class FirebaseImportRepository:
                 count = data.get("topicCount")
             else:
                 count = sum(1 for _ in reference_ref.collection("topics").stream())
-            topic_languages.append(
+            legacy_topic_datasets.append(
                 {
                     "id": reference_ref.id,
                     "language": (data or {}).get("language", reference_ref.id.split("_")[0]),
@@ -510,8 +1005,11 @@ class FirebaseImportRepository:
                     "topics": count,
                     "active": (data or {}).get("active", True),
                     "updatedAt": (data or {}).get("updatedAt"),
+                    "source": "legacy-duplicated-references",
                 }
             )
+        canonical_snapshot = self.db.collection("harmony").document("canonical").get()
+        canonical_data = canonical_snapshot.to_dict() if canonical_snapshot.exists else {}
         recent = self.list_imports(limit=10)
         return {
             "counts": {
@@ -522,6 +1020,16 @@ class FirebaseImportRepository:
             },
             "bibleLanguages": bible_languages,
             "topicLanguages": topic_languages,
+            "legacyTopicDatasets": legacy_topic_datasets,
+            "harmony": {
+                "canonicalActive": bool(
+                    (canonical_data or {}).get("activeTopicsPath")
+                ),
+                "canonicalTopicCount": (canonical_data or {}).get("topicCount", 0),
+                "localizationCount": len(localized_language_ids),
+                "legacyDatasetCount": len(legacy_topic_datasets),
+                "updatedAt": (canonical_data or {}).get("updatedAt"),
+            },
             "recentImports": recent,
         }
 

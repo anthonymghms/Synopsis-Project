@@ -10,6 +10,7 @@ void main() {
       final preferences = UserPreferences.fromMap(null);
 
       expect(preferences.menuLanguage, 'english');
+      expect(preferences.topicLanguage, 'english');
       expect(preferences.contentLanguage, 'english');
       expect(preferences.preferredVersion, 'kjv');
       expect(preferences.zoomLevel, 1.0);
@@ -31,15 +32,45 @@ void main() {
       );
 
       expect(preferences.contentLanguage, 'arabic');
+      expect(preferences.topicLanguage, 'arabic');
       expect(preferences.menuLanguage, 'arabic');
       expect(preferences.preferredVersion, 'Van Dyke-');
       expect(preferences.zoomLevel, maximumProfileZoom);
       expect(preferences.showDiacritics, isTrue);
     });
 
+    test('stores topic and Bible selections independently', () {
+      final preferences = UserPreferences.fromMap({
+        'topicLanguage': 'english',
+        'bibleLanguage': 'arabic',
+        'bibleVersion': 'Van Dyke-',
+        'contentLanguage': 'english',
+        'preferredVersion': 'kjv',
+      });
+
+      expect(preferences.topicLanguage, 'english');
+      expect(preferences.menuLanguage, 'english');
+      expect(preferences.bibleLanguage, 'arabic');
+      expect(preferences.bibleVersion, 'Van Dyke-');
+    });
+
+    test('topic language is the single table and menu language source', () {
+      final preferences = UserPreferences.fromMap({
+        'topicLanguage': 'english',
+        'menuLanguage': 'arabic',
+        'bibleLanguage': 'arabic',
+      });
+
+      expect(preferences.topicLanguage, 'english');
+      expect(preferences.menuLanguage, 'english');
+      expect(preferences.bibleLanguage, 'arabic');
+      expect(preferences.toMap()['menuLanguage'], 'english');
+    });
+
     test('serializes the complete preference schema', () {
       final map = const UserPreferences(
         menuLanguage: 'arabic',
+        topicLanguage: 'arabic',
         contentLanguage: 'english',
         preferredVersion: 'ASV',
         zoomLevel: 1.2,
@@ -49,6 +80,9 @@ void main() {
 
       expect(map.keys, {
         'menuLanguage',
+        'topicLanguage',
+        'bibleLanguage',
+        'bibleVersion',
         'contentLanguage',
         'preferredVersion',
         'showDiacritics',
@@ -88,7 +122,7 @@ void main() {
       displayName: '',
       email: 'reader@example.com',
       preferences: UserPreferences(
-        menuLanguage: 'arabic',
+        topicLanguage: 'arabic',
         contentLanguage: 'arabic',
         preferredVersion: 'Van Dyke-',
       ),
@@ -112,6 +146,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('الملف الشخصي'), findsOneWidget);
+    expect(find.text('لغة جدول المواضيع'), findsOneWidget);
+    expect(find.text('لغة القوائم'), findsNothing);
     final editorDirection = tester.widget<Directionality>(
       find
           .descendant(

@@ -92,12 +92,31 @@ def get_topics(language, version):
 
 @app.route("/<language>/<version>/topic/<topic_id>", methods=["GET"])
 def get_topic(language, version, topic_id):
-    doc_ref = _topics_collection(language, version).document(topic_id)
+    selected_language = _select_bible_language(language)
+    selected_version = _select_bible_version(selected_language, version)
+    topic_language = _requested_topic_language(selected_language)
+    localization_names, localization_source = _topic_localization_context(
+        topic_language
+    )
+    canonical_topics = _canonical_topics_collection()
+    if canonical_topics is None and localization_names:
+        canonical_topics = _reference_source_collection(localization_source)
+    topics = (
+        canonical_topics
+        if canonical_topics is not None
+        else _topics_collection(selected_language, selected_version)
+    )
+    normalized_topic_id = _normalize_topic_id(topic_id)
+    doc_ref = topics.document(normalized_topic_id)
     doc = doc_ref.get()
     if not doc.exists:
         return _json_response({"error": "Topic not found"}, status=404)
 
     data = doc.to_dict() or {}
+    if canonical_topics is not None:
+        localized_name = localization_names.get(normalized_topic_id)
+        if localized_name:
+            data["name"] = localized_name
     data["id"] = doc.id
     return _json_response(data, cache_seconds=0)
 
@@ -656,6 +675,263 @@ def _topics_collection(language: str, version: str):
     return references.document(final_candidate).collection("topics")
 
 
+def _active_child_collection(document_ref, legacy_child: str):
+    snapshot = document_ref.get()
+    data = snapshot.to_dict() if snapshot.exists else {}
+    active_path = (data or {}).get("activeTopicsPath")
+    if isinstance(active_path, str) and active_path:
+        return db.collection(active_path)
+    return document_ref.collection(legacy_child)
+
+
+def _canonical_topics_collection():
+    canonical_ref = db.collection("harmony").document("canonical")
+    snapshot = canonical_ref.get()
+    data = snapshot.to_dict() if snapshot.exists else {}
+    active_path = (data or {}).get("activeTopicsPath")
+    if isinstance(active_path, str) and active_path:
+        return db.collection(active_path)
+    legacy_topics = canonical_ref.collection("topics")
+    if next(legacy_topics.limit(1).stream(), None) is not None:
+        return legacy_topics
+    return None
+
+
+def _reference_source_collection(source: str):
+    match = re.fullmatch(r"references/([A-Za-z0-9_-]{1,80})", source or "")
+    if match is None:
+        return None
+    reference = db.collection("references").document(match.group(1))
+    snapshot = reference.get()
+    data = snapshot.to_dict() if snapshot.exists else {}
+    active_path = (data or {}).get("activeTopicsPath")
+    if isinstance(active_path, str) and active_path:
+        return db.collection(active_path)
+    legacy_topics = reference.collection("topics")
+    if next(legacy_topics.limit(1).stream(), None) is not None:
+        return legacy_topics
+    return None
+
+
+def _topic_localization_context(language: str) -> tuple[dict[str, str], str]:
+    language = _normalize_topic_language(language)
+    localization_ref = db.collection("harmony_localizations").document(language)
+    snapshot = localization_ref.get()
+    if not snapshot.exists:
+        return {}, ""
+    metadata = snapshot.to_dict() or {}
+    collection = _active_child_collection(localization_ref, "topics")
+    names = {
+        _normalize_topic_id(document.id): str(
+            (document.to_dict() or {}).get("name") or ""
+        ).strip()
+        for document in collection.stream()
+    }
+    source = str(metadata.get("canonicalSource") or "").strip()
+    if not source:
+        fallback = os.environ.get(
+            "HARMONY_CANONICAL_FALLBACK", "english_kjv"
+        ).strip()
+        source = f"references/{fallback}" if fallback else ""
+    return names, source
+
+
+def _topic_localization_names(language: str) -> dict[str, str]:
+    names, _ = _topic_localization_context(language)
+    return names
+
+
+def _normalize_topic_language(language: str) -> str:
+    normalized = (language or "").strip().lower()
+    aliases = {"ar": "arabic", "arabic2": "arabic", "arabic3": "arabic", "en": "english"}
+    return aliases.get(normalized, normalized or "english")
+
+
+def _requested_topic_language(legacy_language: str = "english") -> str:
+    """Resolve the table-language dimension without breaking legacy links.
+
+    New callers send ``topicLanguage`` (or ``tableLanguage``).  Historic URLs
+    only have ``language`` and used that value for both table and Bible text, so
+    the legacy Bible language remains the fallback when no explicit table
+    language is present.
+    """
+
+    explicit = request.args.get("topicLanguage") or request.args.get("tableLanguage")
+    return _normalize_topic_language(explicit or legacy_language)
+
+
+def _normalize_topic_id(topic_id: str) -> str:
+    value = str(topic_id or "").strip()
+    if value.isdigit():
+        return str(int(value))
+    return value
+
+
+def _topic_order(value, fallback: str) -> int:
+    try:
+        return int(value if value not in (None, "") else fallback)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _canonical_topic_payload(document) -> dict:
+    data = document.to_dict() or {}
+    topic_id = _normalize_topic_id(document.id)
+    canonical_order = _topic_order(
+        data.get("canonicalOrder", data.get("order")), topic_id
+    )
+    return {
+        "id": topic_id,
+        "canonicalOrder": canonical_order,
+        "references": data.get("entries", []),
+        "referenceCells": data.get("referenceCells", []),
+        "referenceGrammarVersion": data.get("referenceGrammarVersion", 1),
+    }
+
+
+def _canonical_topic_payloads(collection_ref) -> list[dict]:
+    payloads = [_canonical_topic_payload(document) for document in collection_ref.stream()]
+    payloads.sort(key=lambda item: (item["canonicalOrder"], item["id"]))
+    return payloads
+
+
+def _topic_language_metadata(language: str) -> dict | None:
+    language = _normalize_topic_language(language)
+    document = db.collection("harmony_localizations").document(language)
+    snapshot = document.get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    topic_count = int(data.get("topicCount") or 0)
+    updated_at = data.get("updatedAt")
+    if hasattr(updated_at, "isoformat"):
+        updated_at = updated_at.isoformat()
+    elif updated_at is not None:
+        updated_at = str(updated_at)
+    return {
+        "id": language,
+        "label": str(data.get("label") or language.title()),
+        "direction": str(data.get("direction") or "ltr").lower(),
+        "gospels": data.get("gospels") if isinstance(data.get("gospels"), dict) else {},
+        "active": data.get("active", True) is not False,
+        "topicCount": topic_count,
+        "canonicalSource": str(data.get("canonicalSource") or "harmony/canonical"),
+        "updatedAt": updated_at,
+    }
+
+
+def _legacy_localization_payload(language: str) -> tuple[dict | None, list[dict]]:
+    """Read-only bridge for installations not yet migrated to localizations."""
+
+    normalized = _normalize_topic_language(language)
+    candidates = []
+    for reference in db.collection("references").list_documents():
+        snapshot = reference.get()
+        data = snapshot.to_dict() if snapshot.exists else {}
+        dataset_language = _normalize_topic_language(
+            str((data or {}).get("language") or reference.id.split("_")[0])
+        )
+        if dataset_language == normalized:
+            candidates.append((reference, data or {}))
+    if not candidates:
+        return None, []
+    reference, data = candidates[0]
+    collection = _active_child_collection(reference, "topics")
+    topics = []
+    for document in collection.stream():
+        value = document.to_dict() or {}
+        topics.append(
+            {
+                "id": _normalize_topic_id(document.id),
+                "canonicalOrder": _topic_order(
+                    value.get("canonicalOrder"), _normalize_topic_id(document.id)
+                ),
+                "name": str(value.get("name") or "").strip(),
+            }
+        )
+    topics.sort(key=lambda item: (item["canonicalOrder"], item["id"]))
+    metadata = {
+        "id": normalized,
+        "label": str(data.get("label") or normalized.title()),
+        "direction": str(data.get("direction") or ("rtl" if normalized == "arabic" else "ltr")),
+        "gospels": data.get("gospels") if isinstance(data.get("gospels"), dict) else {},
+        "active": data.get("active", True) is not False,
+        "topicCount": len(topics),
+        "canonicalSource": f"references/{reference.id}",
+        "legacyFallback": True,
+    }
+    return metadata, topics
+
+
+@app.route("/harmony/topics", methods=["GET"])
+def get_canonical_harmony_topics():
+    topics_ref = _canonical_topics_collection()
+    source = "harmony/canonical"
+    if topics_ref is None:
+        fallback = os.environ.get("HARMONY_CANONICAL_FALLBACK", "english_kjv").strip()
+        topics_ref = _reference_source_collection(f"references/{fallback}")
+        source = f"references/{fallback}"
+    if topics_ref is None:
+        return _json_response(
+            {"error": "Canonical Harmony topics are not available."},
+            status=404,
+            cache_seconds=0,
+        )
+    return _json_response(
+        {"source": source, "topics": _canonical_topic_payloads(topics_ref)},
+        cache_seconds=60,
+    )
+
+
+@app.route("/topic-languages", methods=["GET"])
+def get_topic_languages():
+    languages = []
+    for document in db.collection("harmony_localizations").list_documents():
+        metadata = _topic_language_metadata(document.id)
+        if metadata is not None and metadata["active"]:
+            languages.append(metadata)
+    languages.sort(key=lambda item: (item["label"].casefold(), item["id"]))
+    return _json_response({"languages": languages}, cache_seconds=60)
+
+
+@app.route("/topic-localizations/<language>", methods=["GET"])
+def get_topic_localization(language):
+    normalized = _normalize_topic_language(language)
+    metadata = _topic_language_metadata(normalized)
+    topics = []
+    if metadata is not None:
+        localization_ref = db.collection("harmony_localizations").document(normalized)
+        collection = _active_child_collection(localization_ref, "topics")
+        for document in collection.stream():
+            data = document.to_dict() or {}
+            topics.append(
+                {
+                    "id": _normalize_topic_id(document.id),
+                    "canonicalOrder": _topic_order(
+                        data.get("canonicalOrder"), _normalize_topic_id(document.id)
+                    ),
+                    "name": str(data.get("name") or "").strip(),
+                }
+            )
+    else:
+        metadata, topics = _legacy_localization_payload(normalized)
+    if metadata is None:
+        return _json_response(
+            {"error": f'Topic language "{normalized}" is not available.'},
+            status=404,
+            cache_seconds=0,
+        )
+    topics.sort(key=lambda item: (item["canonicalOrder"], item["id"]))
+    canonical_ref = _canonical_topics_collection()
+    canonical_count = len(_canonical_topic_payloads(canonical_ref)) if canonical_ref else 0
+    metadata = dict(metadata)
+    metadata["canonicalTopicCount"] = canonical_count
+    metadata["complete"] = canonical_count > 0 and len(topics) == canonical_count
+    return _json_response(
+        {"language": metadata, "topics": topics}, cache_seconds=60
+    )
+
+
 @app.route("/topics", methods=["GET"])
 def get_topics():
     language = request.args.get("language", "english")
@@ -663,28 +939,36 @@ def get_topics():
 
     language = _select_bible_language(language)
     version = _select_bible_version(language, version)
+    topic_language = _requested_topic_language(language)
 
-    topics_ref = _topics_collection(language, version)
+    localization_names, localization_source = _topic_localization_context(topic_language)
+    canonical_topics_ref = _canonical_topics_collection()
+    if canonical_topics_ref is None and localization_names:
+        canonical_topics_ref = _reference_source_collection(localization_source)
+    topics_ref = (
+        canonical_topics_ref
+        if canonical_topics_ref is not None
+        else _topics_collection(language, version)
+    )
     topics = []
     for doc in topics_ref.stream():
         data = doc.to_dict() or {}
-        # zero-pad numeric ids, but don't crash if not numeric
-        try:
-            canonical_order = int(doc.id)
-            padded_id = f"{canonical_order:02}"
-        except ValueError:
-            canonical_order = data.get("canonicalOrder", data.get("order", 0))
-            padded_id = doc.id
+        topic_id = _normalize_topic_id(doc.id)
+        canonical_order = _topic_order(
+            data.get("canonicalOrder", data.get("order")), topic_id
+        )
         topics.append(
             {
-                "id": padded_id,
+                "id": topic_id,
                 "canonicalOrder": canonical_order,
-                "name": data.get("name", ""),
+                "name": localization_names.get(topic_id) or data.get("name", ""),
                 "references": data.get("entries", []),
+                "referenceCells": data.get("referenceCells", []),
+                "referenceGrammarVersion": data.get("referenceGrammarVersion", 1),
             }
         )
 
-    topics.sort(key=lambda x: int(x["id"]) if x["id"].isdigit() else x["id"])
+    topics.sort(key=lambda x: (x["canonicalOrder"], x["id"]))
     return _json_response(topics, cache_seconds=0)
 
 

@@ -5,11 +5,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/gospel_filter.dart';
 import 'package:gospel_frontend/main.dart';
+import 'package:gospel_frontend/topic_language_catalog.dart';
 
 void main() {
   test('placeholder smoke test', () {
     expect(true, isTrue);
   });
+
+  testWidgets(
+    'topic language also drives menus while Bible stays independent',
+    (tester) async {
+      TopicLanguageSelectionController.instance.update('arabic');
+      LanguageSelectionController.instance.update('english');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MenuLanguageScope(
+            notifier: MenuLanguageController.instance.notifier,
+            child: Builder(
+              builder: (context) =>
+                  Text(MenuLanguageScope.of(context).ui.settings),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('الإعدادات'), findsOneWidget);
+
+      TopicLanguageSelectionController.instance.update('english');
+      LanguageSelectionController.instance.update('arabic');
+      await tester.pump();
+      expect(find.text('Settings'), findsOneWidget);
+      expect(MenuLanguageController.instance.languageCode, 'english');
+    },
+  );
 
   Topic topicWith(String id, List<String> gospels) {
     return Topic(
@@ -35,6 +63,8 @@ void main() {
     double width = 1000,
     double height = 500,
     LanguageOption? languageOption,
+    TopicLanguageOption? topicLanguage,
+    String topicName = 'Teaching and healings',
     List<Gospel>? visibleGospels,
   }) {
     final option = languageOption ?? kBaseLanguageOptions.first;
@@ -47,13 +77,14 @@ void main() {
             height: height,
             child: HarmonyTable(
               topics: [
-                Topic(
-                  id: '34',
-                  name: 'Teaching and healings',
-                  references: references,
-                ),
+                Topic(id: '34', name: topicName, references: references),
               ],
               languageOption: option,
+              topicLanguage:
+                  topicLanguage ??
+                  (option.code == 'arabic'
+                      ? bundledTopicLanguages.last
+                      : bundledTopicLanguages.first),
               apiVersion: option.apiVersion,
               visibleGospels: visibleGospels,
             ),
@@ -487,6 +518,46 @@ void main() {
       expect(result.visibleTopicCount, 1);
       expect(result.visibleReferenceCount, 3);
     });
+
+    test('structured separators count logical selections', () {
+      Topic structuredTopic(String raw, List<Map<String, Object?>> segments) {
+        return Topic.fromJson({
+          'id': '1',
+          'name': 'Structured',
+          'referenceCells': [
+            {'book': 'Luke', 'raw': raw, 'segments': segments},
+          ],
+        });
+      }
+
+      final continuous = structuredTopic('1:78-80 + 2:1-7', [
+        {'chapter': 1, 'verses': '78-80'},
+        {'chapter': 2, 'verses': '1-7', 'separatorBefore': '+'},
+      ]);
+      final sameChapter = structuredTopic('6:17-19, 27-36', [
+        {'chapter': 6, 'verses': '17-19'},
+        {'chapter': 6, 'verses': '27-36', 'separatorBefore': ','},
+      ]);
+      final nonContinuous = structuredTopic('5:31-32; 19:9', [
+        {'chapter': 5, 'verses': '31-32'},
+        {'chapter': 19, 'verses': '9', 'separatorBefore': ';'},
+      ]);
+
+      expect(continuous.references, hasLength(2));
+      expect(continuous.referenceCells.single.logicalSelectionCount, 1);
+      expect(
+        countVisibleReferences([continuous], const ColumnVisibilityState()),
+        1,
+      );
+      expect(
+        countVisibleReferences([sameChapter], const ColumnVisibilityState()),
+        2,
+      );
+      expect(
+        countVisibleReferences([nonContinuous], const ColumnVisibilityState()),
+        2,
+      );
+    });
   });
 
   group('cross-language canonical reference presence', () {
@@ -634,6 +705,35 @@ void main() {
       expect(hasGospelReference(topic, Gospel.mark), isFalse);
       expect(countVisibleReferences([topic], const ColumnVisibilityState()), 2);
     });
+
+    test('malformed structured cells fall back to complete legacy entries', () {
+      final topic = Topic.fromJson({
+        'id': '1',
+        'name': 'Fallback',
+        'referenceCells': [
+          {
+            'book': 'Luke',
+            'segments': [
+              {'chapter': 1, 'verses': '1'},
+            ],
+          },
+          {
+            'book': 'John',
+            'segments': [
+              {'chapter': 0, 'verses': 'invalid'},
+            ],
+          },
+        ],
+        'references': [
+          {'book': 'Luke', 'chapter': 1, 'verses': '1'},
+          {'book': 'John', 'chapter': 8, 'verses': '34'},
+        ],
+      });
+
+      expect(topic.referenceCells, isEmpty);
+      expect(topic.references, hasLength(2));
+      expect(topic.gospelPresenceMask, Gospel.luke.bit | Gospel.john.bit);
+    });
   });
 
   testWidgets('interlinear rows apply zoom to LTR and RTL text immediately', (
@@ -711,7 +811,7 @@ void main() {
 
     expect(find.text('العملية'), findsOneWidget);
     expect(find.text('اتحاد'), findsOneWidget);
-    expect(find.text('تقاطع'), findsOneWidget);
+    expect(find.text('تقاطع'), findsWidgets);
     expect(find.text('إزالة التصفية'), findsWidgets);
     expect(find.text('٣ موضوعًا'), findsWidgets);
     expect(
@@ -725,11 +825,12 @@ void main() {
       GospelFilterMode.intersection,
       GospelFilterMode.union,
     ]);
+    expect(operation.selected, {GospelFilterMode.intersection});
     expect(operation.showSelectedIcon, isFalse);
     expect(find.byIcon(Icons.join_full), findsOneWidget);
     expect(find.byIcon(Icons.join_inner), findsOneWidget);
 
-    await tester.tap(find.text('تقاطع'));
+    await tester.tap(find.text('تقاطع').first);
     await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
     await tester.tap(find.byKey(const ValueKey<String>('include-luke')));
     await tester.pump();
@@ -737,7 +838,7 @@ void main() {
     expect(selected.mode, GospelFilterMode.intersection);
     expect(find.byIcon(Icons.join_inner), findsOneWidget);
     expect(selected.includeMask, Gospel.mark.bit | Gospel.luke.bit);
-    expect(find.text('مرقس ∩ لوقا'), findsNWidgets(2));
+    expect(find.text('مرقس ∩ لوقا'), findsOneWidget);
     expect(find.text('١ موضوعًا'), findsWidgets);
   });
 
@@ -778,6 +879,9 @@ void main() {
       await tester.tap(find.text('Filter'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.text('Union').first);
+      await tester.pump();
+
       await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
       await tester.pump();
       expect(find.text('Mark'), findsWidgets);
@@ -785,7 +889,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('include-luke')));
       await tester.pump();
-      expect(find.text('Mark ∪ Luke'), findsNWidgets(2));
+      expect(find.text('Mark ∪ Luke'), findsOneWidget);
       expect(find.text('4 topics'), findsWidgets);
 
       await tester.tap(find.byKey(const ValueKey<String>('exclude-john')));
@@ -800,6 +904,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Operation'), findsNothing);
       expect(commits, 1);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HarmonyFilterButton(
+              filterState: selected,
+              uiLanguage: kBaseLanguageOptions.first,
+              topics: topicsFromMasks(masks),
+              columns: const ColumnVisibilityState(),
+              onChanged: (state) => selected = state,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Filter'));
+      await tester.pumpAndSettle();
+      final reopenedOperation = tester
+          .widget<SegmentedButton<GospelFilterMode>>(
+            find.byKey(const ValueKey<String>('filter-operation')),
+          );
+      expect(reopenedOperation.selected, {GospelFilterMode.union});
     },
   );
 
@@ -975,6 +1100,8 @@ void main() {
       'book': 'luke',
       'bookDisplay': 'Luke',
       'chapter': '4',
+      'topicLanguage': 'english',
+      'bibleLanguage': option.apiLanguage,
       'language': option.apiLanguage,
       'version': option.apiVersion,
       'label': '4:42-44',
@@ -990,6 +1117,64 @@ void main() {
         .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
         .singleWhere((link) => link.uri?.path == '/topic');
     expect(topicLink.openInNewTab, isFalse);
+  });
+
+  testWidgets('topic-table and Bible language dimensions are independent', (
+    tester,
+  ) async {
+    const reference = GospelReference(
+      book: 'Luke',
+      bookId: 'luke',
+      chapter: 2,
+      verses: '1-7',
+    );
+    final combinations = <(TopicLanguageOption, LanguageOption, String)>[
+      (bundledTopicLanguages.last, kBaseLanguageOptions.last, 'ميلاد يسوع'),
+      (
+        bundledTopicLanguages.first,
+        kBaseLanguageOptions.last,
+        'Birth of Jesus',
+      ),
+      (bundledTopicLanguages.last, kBaseLanguageOptions.first, 'ميلاد يسوع'),
+      (
+        bundledTopicLanguages.first,
+        kBaseLanguageOptions.first,
+        'Birth of Jesus',
+      ),
+    ];
+
+    for (final (topicLanguage, bibleLanguage, title) in combinations) {
+      await tester.pumpWidget(
+        harmonyTableFor(
+          const [reference],
+          languageOption: bibleLanguage,
+          topicLanguage: topicLanguage,
+          topicName: title,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text(title), findsOneWidget);
+      expect(find.text(topicLanguage.subjectsLabel), findsOneWidget);
+      expect(find.text(topicLanguage.gospelNames[2]), findsOneWidget);
+      final hover = tester.widget<ReferenceHoverText>(
+        find.byType(ReferenceHoverText),
+      );
+      expect(hover.language, bibleLanguage.apiLanguage);
+      expect(hover.version, bibleLanguage.apiVersion);
+
+      final link = tester.widget<BrowserRouteLink>(
+        find.descendant(
+          of: find.byType(ReferenceHoverText),
+          matching: find.byType(BrowserRouteLink),
+        ),
+      );
+      expect(link.uri?.queryParameters['topicLanguage'], topicLanguage.code);
+      expect(
+        link.uri?.queryParameters['bibleLanguage'],
+        bibleLanguage.apiLanguage,
+      );
+    }
   });
 
   testWidgets('single-reference preview waits and cancels an early hover', (
@@ -1067,6 +1252,7 @@ void main() {
   ) async {
     LanguageOption? selectedLanguage;
     String? selectedVersion;
+    var translationChanges = 0;
     MenuLanguageController.instance.notifier.value = 'english';
 
     await tester.pumpWidget(
@@ -1081,6 +1267,7 @@ void main() {
               onLanguageChanged: (_) {},
               onVersionChanged: (_) {},
               onTranslationChanged: (language, version) {
+                translationChanges++;
                 selectedLanguage = language;
                 selectedVersion = version;
               },
@@ -1093,13 +1280,13 @@ void main() {
     await tester.tap(find.byTooltip('Language: English'));
     await tester.pumpAndSettle();
     expect(BrowserRouteLinkNavigation.isBlocked, isTrue);
-    await tester.tap(find.text('العربية').last);
+    await tester.tap(find.text('Arabic').last);
     await tester.pumpAndSettle();
 
     expect(selectedLanguage, isNull);
     expect(selectedVersion, isNull);
     expect(BrowserRouteLinkNavigation.isBlocked, isTrue);
-    expect(find.text('الترجمة: اختر الترجمة'), findsOneWidget);
+    expect(find.text('Translation: Select version'), findsOneWidget);
     expect(find.byIcon(Icons.check), findsNothing);
 
     await tester.tap(find.text('كتاب الحياة').last);
@@ -1107,6 +1294,38 @@ void main() {
 
     expect(selectedLanguage?.code, 'arabic');
     expect(selectedVersion, 'New Arabic Version');
+    expect(translationChanges, 1);
+  });
+
+  testWidgets('language selector caption and names follow Arabic UI', (
+    tester,
+  ) async {
+    TopicLanguageSelectionController.instance.update('arabic');
+
+    await tester.pumpWidget(
+      MenuLanguageScope(
+        notifier: MenuLanguageController.instance.notifier,
+        child: MaterialApp(
+          home: Scaffold(
+            body: AppToolbar(
+              language: kBaseLanguageOptions.last,
+              version: 'Van Dyke-',
+              languages: kBaseLanguageOptions,
+              onLanguageChanged: (_) {},
+              onVersionChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byTooltip('اللغة: العربية'), findsOneWidget);
+    await tester.tap(find.byTooltip('اللغة: العربية'));
+    await tester.pumpAndSettle();
+    expect(find.text('الإنجليزية'), findsOneWidget);
+    expect(find.text('العربية'), findsWidgets);
+
+    TopicLanguageSelectionController.instance.update('english');
   });
 
   testWidgets('desktop configuration dialogs drag and stay in the viewport', (
@@ -1200,6 +1419,73 @@ void main() {
     );
   });
 
+  testWidgets('reference relation separators stay hidden in table cells', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+        GospelReference(
+          book: 'Luke',
+          chapter: 5,
+          verses: '1-2',
+          separatorBefore: '+',
+        ),
+        GospelReference(
+          book: 'Luke',
+          chapter: 6,
+          verses: '17-19',
+          separatorBefore: ';',
+        ),
+        GospelReference(
+          book: 'Luke',
+          chapter: 6,
+          verses: '27-36',
+          separatorBefore: ',',
+        ),
+      ]),
+    );
+
+    expect(find.text('+'), findsNothing);
+    expect(find.text(';'), findsNothing);
+    expect(find.text(','), findsNothing);
+    expect(find.text('4:42-44'), findsOneWidget);
+    expect(find.text('5:1-2'), findsOneWidget);
+    expect(find.text('6:17-19'), findsOneWidget);
+    expect(find.text('6:27-36'), findsOneWidget);
+  });
+
+  testWidgets('continuous preview uses one symbol-free reference header', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+        GospelReference(
+          book: 'Luke',
+          chapter: 5,
+          verses: '1-2',
+          separatorBefore: '+',
+        ),
+      ]),
+    );
+
+    final gesture = await hoverOver(
+      tester,
+      find.byType(ReferenceCellHoverPreview),
+    );
+    await tester.pump(const Duration(milliseconds: 1500));
+
+    expect(
+      find.text('Luke 4:42-44\u00a0\u00a0\u00a0Luke 5:1-2'),
+      findsOneWidget,
+    );
+    expect(find.text('Click to read in chapter'), findsOneWidget);
+    expect(find.text('+'), findsNothing);
+
+    await moveOutsideAndRemove(tester, gesture);
+  });
+
   testWidgets('combined preview also waits for the hover delay', (
     tester,
   ) async {
@@ -1284,6 +1570,7 @@ void main() {
       ),
     );
 
+    expect(find.textContaining('Sort & Columns'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
     Future<void> toggle(Gospel gospel) async {
@@ -1318,6 +1605,29 @@ void main() {
     await tester.pump();
     expect(columns, const ColumnVisibilityState());
     expect(sort.isDefault, isTrue);
+  });
+
+  testWidgets('Arabic combined sort control uses the expanded label', (
+    tester,
+  ) async {
+    final arabic = kBaseLanguageOptions.firstWhere(
+      (option) => option.code == 'arabic',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonySortButton(
+            state: const GospelSortState(),
+            columns: const ColumnVisibilityState(),
+            uiLanguage: arabic,
+            onChanged: (_) {},
+            onColumnsChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('الترتيب والأعمدة'), findsOneWidget);
   });
 
   testWidgets('combined sort picker exposes Default and all chronologies', (

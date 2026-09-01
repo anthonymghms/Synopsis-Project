@@ -34,14 +34,16 @@ void main() {
     });
   });
 
-
   group('formatVerseMarker', () {
     test('uses arabic-indic digits for arabic language', () {
       expect(formatVerseMarker(12, language: 'arabic', version: 'KJV'), '١٢');
     });
 
     test('uses arabic-indic digits for Arabic version', () {
-      expect(formatVerseMarker(7, language: 'english', version: 'Van Dyke-'), '٧');
+      expect(
+        formatVerseMarker(7, language: 'english', version: 'Van Dyke-'),
+        '٧',
+      );
     });
 
     test('keeps western digits for non-arabic language/version', () {
@@ -50,11 +52,14 @@ void main() {
   });
 
   group('formatVerseRef', () {
-    test('formats range 1:1-4 in Arabic with RTL isolation and RLM separators', () {
-      final formatted = formatVerseRef('1:1-4', 'arabic');
-      expect(formatted.text, '\u2067١\u200F:\u200F١\u200F-\u200F٤\u2069');
-      expect(formatted.dir, TextDirection.rtl);
-    });
+    test(
+      'formats range 1:1-4 in Arabic with RTL isolation and RLM separators',
+      () {
+        final formatted = formatVerseRef('1:1-4', 'arabic');
+        expect(formatted.text, '\u2067١\u200F:\u200F١\u200F-\u200F٤\u2069');
+        expect(formatted.dir, TextDirection.rtl);
+      },
+    );
 
     test('formats range 1:2-24 in Arabic with correct order', () {
       final formatted = formatVerseRef('1:2-24', 'ar');
@@ -87,25 +92,29 @@ void main() {
     });
   });
 
-  testWidgets('VerseRefText applies isolated RTL direction for Arabic references',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: VerseRefText(value: '1:2-24', lang: 'arabic'),
+  testWidgets(
+    'VerseRefText applies isolated RTL direction for Arabic references',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: VerseRefText(value: '1:2-24', lang: 'arabic'),
+          ),
         ),
-      ),
-    );
+      );
 
-    final directionality = tester.widget<Directionality>(
-      find.descendant(
-        of: find.byType(VerseRefText),
-        matching: find.byType(Directionality),
-      ).first,
-    );
-    expect(directionality.textDirection, TextDirection.rtl);
+      final directionality = tester.widget<Directionality>(
+        find
+            .descendant(
+              of: find.byType(VerseRefText),
+              matching: find.byType(Directionality),
+            )
+            .first,
+      );
+      expect(directionality.textDirection, TextDirection.rtl);
 
-    final textWidget = tester.widget<Text>(find.byType(Text));
-    expect(textWidget.data, '\u2067١\u200F:\u200F٢\u200F-\u200F٢٤\u2069');
-  });
+      final textWidget = tester.widget<Text>(find.byType(Text));
+      expect(textWidget.data, '\u2067١\u200F:\u200F٢\u200F-\u200F٢٤\u2069');
+    },
+  );
 }

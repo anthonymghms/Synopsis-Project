@@ -34,6 +34,22 @@ class TopicImportValidationTests(unittest.TestCase):
         self.assertEqual(result.records[0].name, "المقدمة")
         self.assertEqual(result.records[0].entries[0]["verses"], "1")
 
+    def test_explicit_master_topic_numbers_are_validated_and_preserved(self):
+        result = parse_topic_csv(
+            b"TopicNumber,Topic,Matthew,Mark,Luke,John\n2,Second,2:1,,,\n1,First,1:1,,,\n"
+        )
+
+        self.assertTrue(result.report.valid)
+        self.assertEqual([record.topic_id for record in result.records], ["1", "2"])
+
+        invalid = parse_topic_csv(
+            b"TopicNumber,Topic,Matthew,Mark,Luke,John\n1,First,1:1,,,\n3,Third,3:1,,,\n3,Duplicate,4:1,,,\n"
+        )
+        self.assertFalse(invalid.report.valid)
+        codes = {issue.code for issue in invalid.report.errors}
+        self.assertIn("duplicate_topic_id", codes)
+        self.assertIn("missing_topic_numbers", codes)
+
     def test_missing_columns_and_invalid_reference_are_errors(self):
         raw = b"Topic,Matthew\nBroken,3:x-12\n"
 
@@ -74,18 +90,24 @@ class TopicImportValidationTests(unittest.TestCase):
             {issue.code for issue in translated.report.warnings},
         )
 
-    def test_excel_time_and_cross_chapter_values_do_not_reach_firestore(self):
+    def test_legacy_time_and_cross_chapter_values_are_explicitly_normalized(self):
         raw = (
             "Topic,Matthew,Mark,Luke,John\n"
             "Bad,26:30:00,,,18:39-19:16\n"
         ).encode()
 
-        result = parse_topic_csv(raw)
+        result = parse_topic_csv(
+            raw,
+            verse_count_resolver=lambda book, chapter: 40
+            if (book, chapter) == ("John", 18)
+            else None,
+        )
 
-        self.assertFalse(result.report.valid)
+        self.assertTrue(result.report.valid)
+        self.assertEqual(result.records[0].physical_segment_count, 3)
         self.assertEqual(
-            sum(issue.code == "invalid_reference" for issue in result.report.errors),
-            2,
+            {issue.code for issue in result.report.warnings},
+            {"spreadsheet_time_normalized", "legacy_cross_chapter_syntax"},
         )
 
 
@@ -150,4 +172,3 @@ class BibleImportValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

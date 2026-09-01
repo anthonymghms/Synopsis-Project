@@ -7,6 +7,10 @@ import 'package:gospel_frontend/admin_file_picker.dart';
 import 'package:gospel_frontend/admin_portal.dart';
 
 class _FakeAdminClient implements AdminClient {
+  _FakeAdminClient({this.uploadResponse, this.importResponse});
+
+  final Map<String, dynamic>? uploadResponse;
+  final Map<String, dynamic>? importResponse;
   int uploads = 0;
   String? uploadPath;
   Map<String, String>? uploadFields;
@@ -28,9 +32,13 @@ class _FakeAdminClient implements AdminClient {
         'recentImports': <dynamic>[],
       };
     }
-    return <String, dynamic>{
-      'import': <String, dynamic>{'status': 'completed', 'stage': 'Completed'},
-    };
+    return importResponse ??
+        <String, dynamic>{
+          'import': <String, dynamic>{
+            'status': 'completed',
+            'stage': 'Completed',
+          },
+        };
   }
 
   @override
@@ -51,26 +59,22 @@ class _FakeAdminClient implements AdminClient {
     uploadFields = Map<String, String>.from(fields);
     uploadFiles = List<AdminUploadFile>.from(files);
     uploadFileField = fileField;
-    return <String, dynamic>{
-      'importId': '0123456789abcdef0123456789abcdef',
-      'valid': true,
-      'collision': false,
-      'errors': <dynamic>[],
-      'warnings': <dynamic>[],
-      'stats': <String, dynamic>{'topics': 1, 'references': 4},
-      'preview': <dynamic>[
+    return uploadResponse ??
         <String, dynamic>{
-          'id': '1',
-          'name': 'Prologue',
-          'references': <String, dynamic>{
-            'Matthew': '1:1',
-            'Mark': '1:1',
-            'Luke': '1:1-4',
-            'John': '1:1',
-          },
-        },
-      ],
-    };
+          'importId': '0123456789abcdef0123456789abcdef',
+          'valid': true,
+          'collision': false,
+          'errors': <dynamic>[],
+          'warnings': <dynamic>[],
+          'stats': <String, dynamic>{'topics': 1, 'references': 4},
+          'preview': <dynamic>[
+            <String, dynamic>{
+              'id': '1',
+              'canonicalName': 'Prologue',
+              'localizedName': 'Localized Prologue',
+            },
+          ],
+        };
   }
 }
 
@@ -102,6 +106,7 @@ Future<void> _pumpTopicWizard(
   AdminFilePicker? filePicker,
   AdminUploadFile? initialFile,
   bool arabic = false,
+  bool canonicalReferences = false,
   int maxUploadBytes = defaultMaxAdminUploadBytes,
 }) async {
   tester.view.physicalSize = const Size(1200, 1000);
@@ -117,6 +122,7 @@ Future<void> _pumpTopicWizard(
         filePicker: filePicker ?? _FakeAdminFilePicker(),
         initialFile: initialFile,
         maxUploadBytes: maxUploadBytes,
+        canonicalReferences: canonicalReferences,
       ),
     ),
   );
@@ -124,6 +130,12 @@ Future<void> _pumpTopicWizard(
 
 FilledButton _validateTopicButton(WidgetTester tester) =>
     tester.widget(find.byKey(const ValueKey<String>('validate-topic-upload')));
+
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+}
 
 void main() {
   testWidgets('non-admin cannot open the portal', (tester) async {
@@ -169,6 +181,10 @@ void main() {
       find.byKey(const ValueKey<String>('add-topic-dataset')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey<String>('update-harmony-references')),
+      findsOneWidget,
+    );
     expect(find.text('2'), findsNWidgets(2));
     expect(find.text('6'), findsOneWidget);
   });
@@ -186,19 +202,24 @@ void main() {
 
     await tester.drag(find.byType(ListView), const Offset(0, -650));
     await tester.pumpAndSettle();
-    await tester.tap(
+    await _tapVisible(
+      tester,
       find.byKey(const ValueKey<String>('validate-topic-upload')),
     );
     await tester.pumpAndSettle();
 
     expect(client.uploads, 1);
-    expect(client.uploadPath, '/admin/topics/validate');
+    expect(client.uploadPath, '/admin/localizations/validate');
     expect(client.uploadFileField, 'file');
     expect(client.uploadFields, <String, String>{
       'language': 'english',
       'displayName': 'English',
       'direction': 'ltr',
       'canonicalDataset': 'english_kjv',
+      'gospelMatthew': 'Matthew',
+      'gospelMark': 'Mark',
+      'gospelLuke': 'Luke',
+      'gospelJohn': 'John',
     });
     expect(client.uploadFiles?.single.name, 'topics.csv');
     expect(client.uploadFiles?.single.bytes, orderedEquals(bytes));
@@ -210,6 +231,137 @@ void main() {
       find.byKey(const ValueKey<String>('import-topic-upload')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('canonical Harmony validation uses the restricted endpoint', (
+    tester,
+  ) async {
+    final client = _FakeAdminClient();
+    await _pumpTopicWizard(
+      tester,
+      client: client,
+      canonicalReferences: true,
+      initialFile: AdminUploadFile(
+        name: 'harmony.csv',
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('validate-topic-upload')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.uploadPath, '/admin/harmony/validate');
+    expect(client.uploadFields, {
+      'localizationLanguage': 'arabic',
+      'localizationDisplayName': 'العربية',
+      'localizationDirection': 'rtl',
+      'gospelMatthew': 'متى',
+      'gospelMark': 'مرقس',
+      'gospelLuke': 'لوقا',
+      'gospelJohn': 'يوحنا',
+    });
+    expect(client.uploadFiles?.single.name, 'harmony.csv');
+  });
+
+  testWidgets('first full language table shows atomic bootstrap notice', (
+    tester,
+  ) async {
+    final client = _FakeAdminClient(
+      uploadResponse: <String, dynamic>{
+        'importId': '0123456789abcdef0123456789abcdef',
+        'valid': true,
+        'collision': false,
+        'bootstrapCanonical': true,
+        'errors': <dynamic>[],
+        'warnings': <dynamic>[],
+        'stats': <String, dynamic>{
+          'topics': 289,
+          'canonicalTopics': 289,
+          'references': 591,
+          'physicalSegments': 596,
+        },
+        'preview': <dynamic>[
+          <String, dynamic>{
+            'id': '1',
+            'canonicalName': 'المقدمة',
+            'localizedName': 'المقدمة',
+          },
+        ],
+      },
+    );
+    await _pumpTopicWizard(
+      tester,
+      client: client,
+      initialFile: AdminUploadFile(
+        name: 'Topics.csv',
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, -650));
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('validate-topic-upload')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Main Harmony table detected'), findsOneWidget);
+    expect(find.text('Import Main Table & Language'), findsOneWidget);
+    expect(find.text('المقدمة'), findsOneWidget);
+  });
+
+  testWidgets('failed imports stop loading and display their reason', (
+    tester,
+  ) async {
+    const reason = 'The active pointers could not be updated.';
+    final client = _FakeAdminClient(
+      uploadResponse: <String, dynamic>{
+        'importId': '0123456789abcdef0123456789abcdef',
+        'valid': true,
+        'collision': false,
+        'errors': <dynamic>[],
+        'warnings': <dynamic>[],
+        'stats': <String, dynamic>{'topics': 1},
+        'preview': <dynamic>[],
+      },
+      importResponse: <String, dynamic>{
+        'import': <String, dynamic>{
+          'status': 'failed',
+          'stage': 'Failed',
+          'errors': <dynamic>[
+            <String, dynamic>{'message': reason},
+          ],
+        },
+      },
+    );
+    await _pumpTopicWizard(
+      tester,
+      client: client,
+      initialFile: AdminUploadFile(
+        name: 'Topics.csv',
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('validate-topic-upload')),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('import-topic-upload')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text(reason), findsWidgets);
   });
 
   testWidgets('Select CSV invokes picker and populates selected-file state', (
@@ -230,7 +382,10 @@ void main() {
     );
 
     expect(_validateTopicButton(tester).onPressed, isNull);
-    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('select-topic-file')),
+    );
     await tester.pumpAndSettle();
 
     expect(picker.calls, 1);
@@ -257,7 +412,10 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('change-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('change-topic-file')),
+    );
     await tester.pumpAndSettle();
 
     expect(picker.calls, 1);
@@ -289,15 +447,18 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('change-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('change-topic-file')),
+    );
     await tester.pumpAndSettle();
     expect(find.text('replacement.csv'), findsOneWidget);
     expect(find.text('original.csv'), findsNothing);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey<String>('validate-topic-upload')),
-    );
-    await tester.tap(
+    await tester.drag(find.byType(ListView), const Offset(0, -650));
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
       find.byKey(const ValueKey<String>('validate-topic-upload')),
     );
     await tester.pumpAndSettle();
@@ -322,7 +483,10 @@ void main() {
       arabic: true,
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('select-topic-file')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('يرجى اختيار ملف CSV.'), findsOneWidget);
@@ -346,7 +510,10 @@ void main() {
       maxUploadBytes: 2,
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('select-topic-file')),
+    );
     await tester.pumpAndSettle();
     expect(find.text('The selected CSV file is empty.'), findsOneWidget);
 
@@ -356,7 +523,10 @@ void main() {
         bytes: Uint8List.fromList(<int>[1, 2, 3]),
       ),
     ];
-    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('select-topic-file')),
+    );
     await tester.pumpAndSettle();
     expect(
       find.text('The selected file is too large. The upload limit is 2 B.'),
@@ -375,7 +545,10 @@ void main() {
       filePicker: picker,
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('select-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('select-topic-file')),
+    );
     await tester.pumpAndSettle();
 
     expect(
@@ -398,7 +571,10 @@ void main() {
     );
     expect(_validateTopicButton(tester).onPressed, isNotNull);
 
-    await tester.tap(find.byKey(const ValueKey<String>('remove-topic-file')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('remove-topic-file')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('topics.csv'), findsNothing);

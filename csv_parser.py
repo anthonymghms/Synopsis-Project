@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""CLI wrapper for the same topic import service used by the Admin Portal."""
+"""CLI wrapper for the canonical Harmony importer used by the Admin Portal.
+
+The source CSV may contain the base language topic names, but its Gospel
+coordinates are activated once under ``harmony/canonical`` and the names are
+activated separately under ``harmony_localizations/{language}``.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import re
 import sys
 
 from services.firebase_service import FirebaseImportRepository, new_import_id
+from services.localization_import_service import parse_topic_localization_csv
 from services.topic_import_service import parse_topic_csv
 
 
@@ -52,7 +58,11 @@ def main() -> int:
     )
     parser.add_argument("--language", default=None)
     parser.add_argument("--display-name", default=None)
-    parser.add_argument("--direction", choices=("ltr", "rtl"), default="ltr")
+    parser.add_argument("--direction", choices=("ltr", "rtl"), default=None)
+    parser.add_argument("--gospel-matthew", default=None)
+    parser.add_argument("--gospel-mark", default=None)
+    parser.add_argument("--gospel-luke", default=None)
+    parser.add_argument("--gospel-john", default=None)
     parser.add_argument(
         "--replace",
         action="store_true",
@@ -61,6 +71,7 @@ def main() -> int:
     args = parser.parse_args()
 
     language = (args.language or _derived_language(args.csv)).strip().lower()
+    direction = args.direction or ("rtl" if language == "arabic" else "ltr")
     raw = download_csv(args.csv)
     result = parse_topic_csv(raw)
     for warning in result.report.warnings:
@@ -70,32 +81,60 @@ def main() -> int:
             print(f"ERROR: {error.message}", file=sys.stderr)
         return 2
 
+    localization = parse_topic_localization_csv(raw, result.records)
+    for warning in localization.report.warnings:
+        print(f"WARNING: {warning.message}", file=sys.stderr)
+    if not localization.report.valid:
+        for error in localization.report.errors:
+            print(f"ERROR: {error.message}", file=sys.stderr)
+        return 2
+
+    default_gospels = (
+        {
+            "Matthew": "متى",
+            "Mark": "مرقس",
+            "Luke": "لوقا",
+            "John": "يوحنا",
+        }
+        if language == "arabic"
+        else {book: book for book in ("Matthew", "Mark", "Luke", "John")}
+    )
+    gospel_labels = {
+        "Matthew": args.gospel_matthew or default_gospels["Matthew"],
+        "Mark": args.gospel_mark or default_gospels["Mark"],
+        "Luke": args.gospel_luke or default_gospels["Luke"],
+        "John": args.gospel_john or default_gospels["John"],
+    }
+
     repository = FirebaseImportRepository()
     import_id = new_import_id()
     repository.create_import(
         import_id=import_id,
-        import_type="topics",
+        import_type="harmony",
         language=language,
         uploaded_by="cli",
         filenames=[os.path.basename(args.csv)],
         metadata={
             "displayName": args.display_name or language.title(),
-            "direction": args.direction,
+            "direction": direction,
+            "gospels": gospel_labels,
             "legacyStoragePath": args.csv,
         },
     )
     repository.update_import(
         import_id,
         status="importing",
-        stage="Writing topic revision",
+        stage="Writing canonical Harmony and base localization revisions",
         storagePaths=[args.csv],
     )
-    outcome = repository.activate_topics(
+    outcome = repository.activate_canonical_with_localization(
         import_id=import_id,
         language=language,
         display_name=args.display_name or language.title(),
-        direction=args.direction,
-        records=result.records,
+        direction=direction,
+        gospel_labels=gospel_labels,
+        canonical_records=result.records,
+        records=localization.records,
         replace=args.replace,
     )
     repository.update_import(
@@ -106,7 +145,8 @@ def main() -> int:
         **outcome,
     )
     print(
-        f"Imported {outcome['topicsProcessed']} topics to {outcome['destination']} "
+        f"Imported {outcome['topicsProcessed']} canonical topics and {language} "
+        f"localizations to {outcome['destination']} "
         f"(audit id {import_id})"
     )
     return 0
@@ -114,4 +154,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

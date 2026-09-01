@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'preference_language_catalog.dart';
+import 'topic_language_catalog.dart';
 import 'user_profile.dart';
 
 typedef ProfileSaveCallback = Future<void> Function(UserProfile profile);
@@ -36,7 +37,9 @@ class ProfileEditorLabels {
   String get bio => arabic ? 'نبذة قصيرة' : 'Short profile description';
   String get email => arabic ? 'البريد الإلكتروني' : 'Email';
   String get menuLanguage => arabic ? 'لغة القوائم' : 'Menu language';
-  String get contentLanguage => arabic ? 'لغة المحتوى' : 'Content language';
+  String get topicLanguage =>
+      arabic ? 'لغة جدول المواضيع' : 'Topic table language';
+  String get contentLanguage => arabic ? 'اللغة' : 'Language';
   String get preferredVersion =>
       arabic ? 'الترجمة المفضلة' : 'Preferred translation';
   String get defaultZoom => arabic ? 'التكبير الافتراضي' : 'Default zoom';
@@ -104,15 +107,17 @@ class ProfileEditorState extends State<ProfileEditor> {
   late final TextEditingController _bio;
 
   List<PreferenceLanguageOption> _languages = bundledPreferenceLanguages;
+  List<TopicLanguageOption> _topicLanguages = bundledTopicLanguages;
   bool _catalogLoading = true;
+  bool _topicCatalogLoading = true;
   bool _catalogFallback = false;
   bool _saving = false;
   bool _dirty = false;
-  bool _menuManuallyChanged = false;
   late bool _requiresExplicitInitialVersion;
   String? _saveError;
   String? _versionWarning;
   late String _menuLanguage;
+  late String _topicLanguage;
   late String _contentLanguage;
   late String _preferredVersion;
   late String _timezone;
@@ -126,6 +131,21 @@ class ProfileEditorState extends State<ProfileEditor> {
 
   PreferenceLanguageOption get _contentOption =>
       PreferenceLanguageCatalog.resolve(_languages, _contentLanguage);
+
+  String _localizedLanguageLabel(String code, String fallbackLabel) {
+    if (_labels.arabic) {
+      return switch (code.toLowerCase()) {
+        'english' => 'الإنجليزية',
+        'arabic' => 'العربية',
+        _ => fallbackLabel,
+      };
+    }
+    return switch (code.toLowerCase()) {
+      'english' => 'English',
+      'arabic' => 'Arabic',
+      _ => fallbackLabel,
+    };
+  }
 
   @override
   void initState() {
@@ -143,6 +163,7 @@ class ProfileEditorState extends State<ProfileEditor> {
       controller.addListener(_markDirty);
     }
     _loadCatalog();
+    _loadTopicCatalog();
   }
 
   void _initializeFrom(UserProfile profile) {
@@ -155,7 +176,8 @@ class ProfileEditorState extends State<ProfileEditor> {
     );
     _organization = TextEditingController(text: profile.organization);
     _bio = TextEditingController(text: profile.bio);
-    _menuLanguage = profile.preferences.menuLanguage;
+    _topicLanguage = profile.preferences.topicLanguage;
+    _menuLanguage = _topicLanguage;
     _contentLanguage = profile.preferences.contentLanguage;
     _preferredVersion = profile.preferences.preferredVersion;
     _requiresExplicitInitialVersion =
@@ -199,10 +221,6 @@ class ProfileEditorState extends State<ProfileEditor> {
           );
           _versionWarning = _labels.unavailableVersion;
         }
-        _menuLanguage = PreferenceLanguageCatalog.resolve(
-          languages,
-          _menuLanguage,
-        ).code;
         _catalogLoading = false;
       });
     } catch (_) {
@@ -213,6 +231,24 @@ class ProfileEditorState extends State<ProfileEditor> {
         _catalogLoading = false;
         _catalogFallback = true;
       });
+    }
+  }
+
+  Future<void> _loadTopicCatalog() async {
+    try {
+      final languages = await TopicLanguageCatalog().load();
+      if (!mounted) return;
+      final selected = TopicLanguageCatalog.resolve(languages, _topicLanguage);
+      setState(() {
+        _topicLanguages = languages;
+        _topicLanguage = selected.code;
+        _menuLanguage = selected.code;
+        _topicCatalogLoading = false;
+      });
+      widget.onMenuLanguagePreview?.call(selected.code);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _topicCatalogLoading = false);
     }
   }
 
@@ -257,7 +293,8 @@ class ProfileEditorState extends State<ProfileEditor> {
     _organization.text = profile.organization;
     _bio.text = profile.bio;
     setState(() {
-      _menuLanguage = profile.preferences.menuLanguage;
+      _topicLanguage = profile.preferences.topicLanguage;
+      _menuLanguage = _topicLanguage;
       _contentLanguage = profile.preferences.contentLanguage;
       final option = PreferenceLanguageCatalog.resolve(
         _languages,
@@ -277,7 +314,6 @@ class ProfileEditorState extends State<ProfileEditor> {
           ? null
           : _labels.unavailableVersion;
       _dirty = false;
-      _menuManuallyChanged = false;
     });
     widget.onMenuLanguagePreview?.call(_menuLanguage);
     widget.onDirtyChanged?.call(false);
@@ -337,7 +373,7 @@ class ProfileEditorState extends State<ProfileEditor> {
       bio: _bio.text.trim(),
       profileCompleted: true,
       preferences: UserPreferences(
-        menuLanguage: _menuLanguage,
+        topicLanguage: _topicLanguage,
         contentLanguage: contentOption.code,
         preferredVersion: contentOption.sanitizeVersion(_preferredVersion),
         showDiacritics: contentOption.code == 'arabic' && _showDiacritics,
@@ -375,9 +411,9 @@ class ProfileEditorState extends State<ProfileEditor> {
   @override
   Widget build(BuildContext context) {
     final labels = _labels;
-    final direction = PreferenceLanguageCatalog.resolve(
-      _languages,
-      _menuLanguage,
+    final direction = TopicLanguageCatalog.resolve(
+      _topicLanguages,
+      _topicLanguage,
     ).direction;
     final timezoneOptions = <String>{
       'UTC',
@@ -509,29 +545,32 @@ class ProfileEditorState extends State<ProfileEditor> {
                   width: constraints.maxWidth,
                   children: [
                     DropdownButtonFormField<String>(
-                      key: ValueKey('profile-menu-language-$_menuLanguage'),
-                      initialValue: _menuLanguage,
+                      key: ValueKey('profile-topic-language-$_topicLanguage'),
+                      initialValue: _topicLanguage,
                       isExpanded: true,
                       decoration: InputDecoration(
-                        labelText: labels.menuLanguage,
+                        labelText: labels.topicLanguage,
                       ),
-                      items: _languages
+                      items: _topicLanguages
                           .map(
                             (language) => DropdownMenuItem<String>(
                               value: language.code,
-                              child: Text(language.label),
+                              child: Text(
+                                _localizedLanguageLabel(
+                                  language.code,
+                                  language.label,
+                                ),
+                              ),
                             ),
                           )
                           .toList(),
-                      onChanged: _catalogLoading
+                      onChanged: _topicCatalogLoading
                           ? null
                           : (value) {
-                              if (value == null) {
-                                return;
-                              }
+                              if (value == null) return;
                               setState(() {
+                                _topicLanguage = value;
                                 _menuLanguage = value;
-                                _menuManuallyChanged = true;
                               });
                               widget.onMenuLanguagePreview?.call(value);
                               _setDirty();
@@ -553,7 +592,12 @@ class ProfileEditorState extends State<ProfileEditor> {
                           .map(
                             (language) => DropdownMenuItem<String>(
                               value: language.code,
-                              child: Text(language.label),
+                              child: Text(
+                                _localizedLanguageLabel(
+                                  language.code,
+                                  language.label,
+                                ),
+                              ),
                             ),
                           )
                           .toList(),
@@ -577,13 +621,7 @@ class ProfileEditorState extends State<ProfileEditor> {
                                 _showDiacritics =
                                     option.code == 'arabic' && _showDiacritics;
                                 _versionWarning = null;
-                                if (!_menuManuallyChanged) {
-                                  _menuLanguage = option.code;
-                                }
                               });
-                              if (!_menuManuallyChanged) {
-                                widget.onMenuLanguagePreview?.call(option.code);
-                              }
                               _setDirty();
                             },
                     ),

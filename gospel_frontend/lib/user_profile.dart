@@ -7,13 +7,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const String defaultProfileMenuLanguage = 'english';
 const String defaultProfileContentLanguage = 'english';
+const String defaultProfileTopicLanguage = 'english';
 const String defaultProfileVersion = 'kjv';
 const double minimumProfileZoom = 0.8;
 const double maximumProfileZoom = 1.6;
 
 class UserPreferences {
   const UserPreferences({
-    this.menuLanguage = defaultProfileMenuLanguage,
+    String? menuLanguage,
+    this.topicLanguage = defaultProfileTopicLanguage,
     this.contentLanguage = defaultProfileContentLanguage,
     this.preferredVersion = defaultProfileVersion,
     this.showDiacritics = false,
@@ -22,7 +24,7 @@ class UserPreferences {
     this.showTopicNamesInChapter = false,
   });
 
-  final String menuLanguage;
+  final String topicLanguage;
   final String contentLanguage;
   final String preferredVersion;
   final bool showDiacritics;
@@ -30,21 +32,34 @@ class UserPreferences {
   final bool interlinearEnabled;
   final bool showTopicNamesInChapter;
 
+  String get bibleLanguage => contentLanguage;
+  String get bibleVersion => preferredVersion;
+  // Kept as a compatibility alias for stored profiles and older callers.
+  // The topic-table language is now the single UI/menu language source.
+  String get menuLanguage => topicLanguage;
+
   factory UserPreferences.fromMap(
     Map<String, dynamic>? preferences, {
     Map<String, dynamic> legacy = const <String, dynamic>{},
   }) {
     final data = preferences ?? const <String, dynamic>{};
     final contentLanguage = _nonEmptyString(
-      data['contentLanguage'] ??
+      data['bibleLanguage'] ??
+          data['contentLanguage'] ??
           legacy['contentLanguage'] ??
           legacy['preferredLanguage'] ??
           legacy['language'],
       defaultProfileContentLanguage,
     ).toLowerCase();
-    final menuLanguage = _nonEmptyString(
-      data['menuLanguage'] ?? legacy['menuLanguage'],
-      defaultProfileMenuLanguage,
+    final topicLanguage = _nonEmptyString(
+      data['topicLanguage'] ??
+          data['preferredTopicLanguage'] ??
+          legacy['topicLanguage'] ??
+          legacy['preferredTopicLanguage'] ??
+          data['menuLanguage'] ??
+          legacy['menuLanguage'] ??
+          contentLanguage,
+      defaultProfileTopicLanguage,
     ).toLowerCase();
     final fallbackVersion = contentLanguage == 'arabic'
         ? 'Van Dyke-'
@@ -52,10 +67,12 @@ class UserPreferences {
     final zoom = _asDouble(data['zoomLevel'] ?? legacy['zoomLevel']) ?? 1.0;
 
     return UserPreferences(
-      menuLanguage: menuLanguage,
+      topicLanguage: topicLanguage,
       contentLanguage: contentLanguage,
       preferredVersion: _nonEmptyString(
-        data['preferredVersion'] ??
+        data['bibleVersion'] ??
+            data['preferredBibleVersion'] ??
+            data['preferredVersion'] ??
             legacy['preferredVersion'] ??
             legacy['version'],
         fallbackVersion,
@@ -76,7 +93,11 @@ class UserPreferences {
   }
 
   Map<String, dynamic> toMap() => <String, dynamic>{
-    'menuLanguage': menuLanguage,
+    'menuLanguage': topicLanguage,
+    'topicLanguage': topicLanguage,
+    'bibleLanguage': contentLanguage,
+    'bibleVersion': preferredVersion,
+    // Keep the two legacy keys while deployed clients transition.
     'contentLanguage': contentLanguage,
     'preferredVersion': preferredVersion,
     'showDiacritics': showDiacritics,
@@ -87,6 +108,9 @@ class UserPreferences {
 
   UserPreferences copyWith({
     String? menuLanguage,
+    String? topicLanguage,
+    String? bibleLanguage,
+    String? bibleVersion,
     String? contentLanguage,
     String? preferredVersion,
     bool? showDiacritics,
@@ -94,10 +118,13 @@ class UserPreferences {
     bool? interlinearEnabled,
     bool? showTopicNamesInChapter,
   }) {
+    final nextTopicLanguage =
+        topicLanguage ?? menuLanguage ?? this.topicLanguage;
     return UserPreferences(
-      menuLanguage: menuLanguage ?? this.menuLanguage,
-      contentLanguage: contentLanguage ?? this.contentLanguage,
-      preferredVersion: preferredVersion ?? this.preferredVersion,
+      topicLanguage: nextTopicLanguage,
+      contentLanguage: bibleLanguage ?? contentLanguage ?? this.contentLanguage,
+      preferredVersion:
+          bibleVersion ?? preferredVersion ?? this.preferredVersion,
       showDiacritics: showDiacritics ?? this.showDiacritics,
       zoomLevel: (zoomLevel ?? this.zoomLevel)
           .clamp(minimumProfileZoom, maximumProfileZoom)
@@ -430,6 +457,10 @@ class UserProfileController extends ChangeNotifier {
       final local = await SharedPreferences.getInstance();
       await Future.wait(<Future<bool>>[
         local.setString('selected_language_code', preferences.contentLanguage),
+        local.setString(
+          'selected_topic_language_code',
+          preferences.topicLanguage,
+        ),
         local.setString(
           'selected_menu_language_code',
           preferences.menuLanguage,

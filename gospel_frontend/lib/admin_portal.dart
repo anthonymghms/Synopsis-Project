@@ -70,6 +70,21 @@ class _AdminPortalState extends State<AdminPortal> {
     );
   }
 
+  Future<void> _openHarmony() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TopicImportWizard(
+        client: _client,
+        arabic: _arabic,
+        onCompleted: _importCompleted,
+        filePicker: widget.filePicker,
+        maxUploadBytes: _maxUploadBytes,
+        canonicalReferences: true,
+      ),
+    );
+  }
+
   Future<void> _openBible() async {
     await showDialog<void>(
       context: context,
@@ -234,8 +249,13 @@ class _AdminPortalState extends State<AdminPortal> {
       case 2:
         return _TopicList(
           data: _listOfMaps(overview['topicLanguages']),
+          harmony: overview['harmony'] is Map
+              ? Map<String, dynamic>.from(overview['harmony'] as Map)
+              : const <String, dynamic>{},
+          legacyDatasets: _listOfMaps(overview['legacyTopicDatasets']),
           labels: labels,
           onAdd: _openTopics,
+          onUpdateHarmony: _openHarmony,
         );
       case 3:
         return _HistoryList(
@@ -248,6 +268,7 @@ class _AdminPortalState extends State<AdminPortal> {
           labels: labels,
           addBible: _openBible,
           addTopics: _openTopics,
+          updateHarmony: _openHarmony,
         );
     }
   }
@@ -272,12 +293,14 @@ class _Dashboard extends StatelessWidget {
     required this.labels,
     required this.addBible,
     required this.addTopics,
+    required this.updateHarmony,
   });
 
   final Map<String, dynamic> overview;
   final _AdminLabels labels;
   final VoidCallback addBible;
   final VoidCallback addTopics;
+  final VoidCallback updateHarmony;
 
   @override
   Widget build(BuildContext context) {
@@ -318,6 +341,12 @@ class _Dashboard extends StatelessWidget {
               onPressed: addTopics,
               icon: const Icon(Icons.add),
               label: Text(labels.addTopics),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey<String>('update-harmony-references'),
+              onPressed: updateHarmony,
+              icon: const Icon(Icons.edit_note_outlined),
+              label: Text(labels.updateHarmony),
             ),
           ],
         ),
@@ -419,20 +448,59 @@ class _BibleList extends StatelessWidget {
 class _TopicList extends StatelessWidget {
   const _TopicList({
     required this.data,
+    required this.harmony,
+    required this.legacyDatasets,
     required this.labels,
     required this.onAdd,
+    required this.onUpdateHarmony,
   });
   final List<Map<String, dynamic>> data;
+  final Map<String, dynamic> harmony;
+  final List<Map<String, dynamic>> legacyDatasets;
   final _AdminLabels labels;
   final VoidCallback onAdd;
+  final VoidCallback onUpdateHarmony;
 
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            Text(
+              labels.harmonyTopics,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+          ],
+        ),
+      ),
+      Text(labels.masterHarmony, style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 8),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.account_tree_outlined),
+          title: Text(labels.masterHarmony),
+          subtitle: Text(
+            '${harmony['canonicalTopicCount'] ?? 0} ${labels.topicRecords.toLowerCase()}'
+            '${harmony['updatedAt'] == null ? '' : ' · ${harmony['updatedAt']}'}',
+          ),
+          trailing: OutlinedButton.icon(
+            onPressed: onUpdateHarmony,
+            icon: const Icon(Icons.upload_file_outlined),
+            label: Text(labels.updateMaster),
+          ),
+        ),
+      ),
+      const SizedBox(height: 24),
       _SectionHeader(
-        title: labels.topics,
-        action: labels.addTopics,
+        title: labels.topicLanguages,
+        action: labels.addTopicLanguage,
         onAction: onAdd,
       ),
       for (final item in data)
@@ -441,7 +509,8 @@ class _TopicList extends StatelessWidget {
             leading: const Icon(Icons.table_chart_outlined),
             title: Text(item['name']?.toString() ?? item['id'].toString()),
             subtitle: Text(
-              '${item['topics'] ?? 0} ${labels.topicRecords.toLowerCase()}',
+              '${item['topics'] ?? 0} / ${harmony['canonicalTopicCount'] ?? 0} ${labels.topicRecords.toLowerCase()} · '
+              '${(item['direction'] ?? 'ltr').toString().toUpperCase()}',
             ),
             trailing: _StatusChip(
               active: item['active'] != false,
@@ -449,6 +518,29 @@ class _TopicList extends StatelessWidget {
             ),
           ),
         ),
+      if (legacyDatasets.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        Card(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: ExpansionTile(
+            leading: const Icon(Icons.archive_outlined),
+            title: Text(labels.legacyDatasets),
+            subtitle: Text(labels.legacyDatasetsNotice),
+            children: [
+              for (final item in legacyDatasets)
+                ListTile(
+                  dense: true,
+                  title: Text(
+                    item['name']?.toString() ?? item['id'].toString(),
+                  ),
+                  subtitle: Text(
+                    '${item['topics'] ?? 0} ${labels.topicRecords.toLowerCase()}',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     ],
   );
 }
@@ -585,6 +677,7 @@ class TopicImportWizard extends StatefulWidget {
     this.initialFile,
     this.filePicker = const PlatformAdminFilePicker(),
     this.maxUploadBytes = defaultMaxAdminUploadBytes,
+    this.canonicalReferences = false,
   });
   final AdminClient client;
   final bool arabic;
@@ -592,6 +685,7 @@ class TopicImportWizard extends StatefulWidget {
   final AdminUploadFile? initialFile;
   final AdminFilePicker filePicker;
   final int maxUploadBytes;
+  final bool canonicalReferences;
 
   @override
   State<TopicImportWizard> createState() => _TopicImportWizardState();
@@ -601,6 +695,12 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
   final _formKey = GlobalKey<FormState>();
   final _language = TextEditingController(text: 'english');
   final _displayName = TextEditingController(text: 'English');
+  final Map<String, TextEditingController> _gospelNames = {
+    'Matthew': TextEditingController(text: 'Matthew'),
+    'Mark': TextEditingController(text: 'Mark'),
+    'Luke': TextEditingController(text: 'Luke'),
+    'John': TextEditingController(text: 'John'),
+  };
   String _direction = 'ltr';
   AdminUploadFile? _file;
   Map<String, dynamic>? _validation;
@@ -611,21 +711,36 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
 
   _AdminLabels get labels => _AdminLabels(widget.arabic);
   bool get _metadataValid =>
-      RegExp(r'^[a-z][a-z0-9_-]{1,39}$').hasMatch(_language.text.trim()) &&
+      (RegExp(r'^[a-z][a-z0-9_-]{1,39}$').hasMatch(_language.text.trim()) &&
       _displayName.text.trim().isNotEmpty &&
-      (_direction == 'ltr' || _direction == 'rtl');
+      _gospelNames.values.every(
+        (controller) => controller.text.trim().isNotEmpty,
+      ) &&
+      (_direction == 'ltr' || _direction == 'rtl'));
   bool get _canValidate => !_busy && _file != null && _metadataValid;
 
   @override
   void initState() {
     super.initState();
     _file = widget.initialFile;
+    if (widget.canonicalReferences) {
+      _language.text = 'arabic';
+      _displayName.text = 'العربية';
+      _direction = 'rtl';
+      _gospelNames['Matthew']!.text = 'متى';
+      _gospelNames['Mark']!.text = 'مرقس';
+      _gospelNames['Luke']!.text = 'لوقا';
+      _gospelNames['John']!.text = 'يوحنا';
+    }
   }
 
   @override
   void dispose() {
     _language.dispose();
     _displayName.dispose();
+    for (final controller in _gospelNames.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -711,13 +826,25 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
     });
     try {
       final response = await widget.client.upload(
-        '/admin/topics/validate',
-        fields: <String, String>{
-          'language': _language.text.trim(),
-          'displayName': _displayName.text.trim(),
-          'direction': _direction,
-          'canonicalDataset': 'english_kjv',
-        },
+        widget.canonicalReferences
+            ? '/admin/harmony/validate'
+            : '/admin/localizations/validate',
+        fields: widget.canonicalReferences
+            ? <String, String>{
+                'localizationLanguage': _language.text.trim(),
+                'localizationDisplayName': _displayName.text.trim(),
+                'localizationDirection': _direction,
+                for (final entry in _gospelNames.entries)
+                  'gospel${entry.key}': entry.value.text.trim(),
+              }
+            : <String, String>{
+                'language': _language.text.trim(),
+                'displayName': _displayName.text.trim(),
+                'direction': _direction,
+                'canonicalDataset': 'english_kjv',
+                for (final entry in _gospelNames.entries)
+                  'gospel${entry.key}': entry.value.text.trim(),
+              },
         files: [_file!],
         fileField: 'file',
       );
@@ -754,11 +881,16 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
       _error = null;
     });
     try {
-      await widget.client.postJson('/admin/topics/import', <String, dynamic>{
-        'importId': validation['importId'],
-        'confirm': true,
-        'replace': _replace,
-      });
+      await widget.client.postJson(
+        widget.canonicalReferences
+            ? '/admin/harmony/import'
+            : '/admin/localizations/import',
+        <String, dynamic>{
+          'importId': validation['importId'],
+          'confirm': true,
+          'replace': _replace,
+        },
+      );
       await _poll(validation['importId'].toString());
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
@@ -792,7 +924,9 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
   @override
   Widget build(BuildContext context) {
     return _WizardDialog(
-      title: labels.addTopics,
+      title: widget.canonicalReferences
+          ? labels.updateHarmony
+          : labels.addTopics,
       closeLabel: labels.close,
       busy: _busy,
       child: Form(
@@ -800,75 +934,129 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _StepTitle(number: 1, title: labels.language),
-            _metadataFields(
-              _language,
-              _displayName,
-              labels,
-              (value) => setState(() => _direction = value),
-              _direction,
-              onChanged: () => setState(() {}),
-            ),
-            const SizedBox(height: 20),
-            _StepTitle(number: 2, title: labels.uploadCsv),
-            Text(labels.csvFormat),
-            const SizedBox(height: 8),
-            DropTarget(
-              enable: !_busy,
-              onDragDone: _acceptDroppedFiles,
-              child: _file == null
-                  ? _UploadDropSurface(
-                      message: labels.dropCsv,
-                      buttonLabel: labels.selectCsv,
-                      buttonKey: const ValueKey<String>('select-topic-file'),
-                      onPressed: _busy ? null : _pick,
-                    )
-                  : _SelectedUploadSurface(
-                      file: _file!,
-                      selectedLabel: labels.selectedFile,
-                      changeLabel: labels.changeFile,
-                      removeLabel: labels.removeFile,
-                      onChange: _busy ? null : _pick,
-                      onRemove: _busy ? null : _removeFile,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...[
+                  _StepTitle(
+                    number: 1,
+                    title: widget.canonicalReferences
+                        ? labels.includedTopicLanguage
+                        : labels.language,
+                  ),
+                  _metadataFields(
+                    _language,
+                    _displayName,
+                    labels,
+                    (value) => setState(() => _direction = value),
+                    _direction,
+                    onChanged: () => setState(() {}),
+                  ),
+                  const SizedBox(height: 20),
+                  _StepTitle(number: 2, title: labels.gospelNames),
+                  for (final entry in _gospelNames.entries)
+                    TextFormField(
+                      key: ValueKey<String>(
+                        'gospel-name-${entry.key.toLowerCase()}',
+                      ),
+                      controller: entry.value,
+                      decoration: InputDecoration(labelText: entry.key),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? labels.required
+                          : null,
+                      onChanged: (_) => setState(() {}),
                     ),
-            ),
-            const SizedBox(height: 20),
-            _StepTitle(number: 3, title: labels.validatePreview),
-            FilledButton.icon(
-              key: const ValueKey<String>('validate-topic-upload'),
-              onPressed: _canValidate ? _validate : null,
-              icon: const Icon(Icons.fact_check_outlined),
-              label: Text(labels.validate),
-            ),
-            if (_error != null) _InlineError(_error!),
-            if (_validation != null) ...[
-              const SizedBox(height: 16),
-              _ValidationSummary(data: _validation!, labels: labels),
-              _TopicPreview(
-                data: _listOfMaps(_validation!['preview']),
-                labels: labels,
-              ),
-              if (_validation!['collision'] == true)
-                CheckboxListTile(
-                  value: _replace,
-                  onChanged: _busy
-                      ? null
-                      : (value) => setState(() => _replace = value == true),
-                  title: Text(labels.replaceExisting),
-                  subtitle: Text(labels.replaceWarning),
+                  const SizedBox(height: 20),
+                ],
+                _StepTitle(number: 3, title: labels.uploadCsv),
+                Text(
+                  widget.canonicalReferences
+                      ? labels.harmonyCsvFormat
+                      : labels.localizationCsvFormat,
                 ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                key: const ValueKey<String>('import-topic-upload'),
-                onPressed: _busy || _validation!['valid'] != true
-                    ? null
-                    : _import,
-                icon: const Icon(Icons.cloud_upload_outlined),
-                label: Text(labels.importTopics),
-              ),
-            ],
-            if (_progress != null)
-              _ProgressCard(data: _progress!, labels: labels),
+                const SizedBox(height: 8),
+                DropTarget(
+                  enable: !_busy,
+                  onDragDone: _acceptDroppedFiles,
+                  child: _file == null
+                      ? _UploadDropSurface(
+                          message: labels.dropCsv,
+                          buttonLabel: labels.selectCsv,
+                          buttonKey: const ValueKey<String>(
+                            'select-topic-file',
+                          ),
+                          onPressed: _busy ? null : _pick,
+                        )
+                      : _SelectedUploadSurface(
+                          file: _file!,
+                          selectedLabel: labels.selectedFile,
+                          changeLabel: labels.changeFile,
+                          removeLabel: labels.removeFile,
+                          onChange: _busy ? null : _pick,
+                          onRemove: _busy ? null : _removeFile,
+                        ),
+                ),
+                const SizedBox(height: 20),
+                _StepTitle(number: 4, title: labels.validatePreview),
+                FilledButton.icon(
+                  key: const ValueKey<String>('validate-topic-upload'),
+                  onPressed: _canValidate ? _validate : null,
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: Text(labels.validate),
+                ),
+                if (_error != null) _InlineError(_error!),
+                if (_validation != null) ...[
+                  const SizedBox(height: 16),
+                  _ValidationSummary(data: _validation!, labels: labels),
+                  if (_validation!['bootstrapCanonical'] == true)
+                    Card(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      child: ListTile(
+                        leading: const Icon(Icons.table_chart_outlined),
+                        title: Text(labels.masterTableDetected),
+                        subtitle: Text(labels.masterTableActivationNotice),
+                      ),
+                    ),
+                  if (widget.canonicalReferences)
+                    _TopicPreview(
+                      data: _listOfMaps(_validation!['preview']),
+                      labels: labels,
+                    )
+                  else
+                    _LocalizationPreview(
+                      data: _listOfMaps(_validation!['preview']),
+                      labels: labels,
+                    ),
+                  if (_validation!['collision'] == true)
+                    CheckboxListTile(
+                      value: _replace,
+                      onChanged: _busy
+                          ? null
+                          : (value) => setState(() => _replace = value == true),
+                      title: Text(labels.replaceExisting),
+                      subtitle: Text(labels.replaceWarning),
+                    ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    key: const ValueKey<String>('import-topic-upload'),
+                    onPressed: _busy || _validation!['valid'] != true
+                        ? null
+                        : _import,
+                    icon: const Icon(Icons.cloud_upload_outlined),
+                    label: Text(
+                      widget.canonicalReferences
+                          ? labels.importHarmony
+                          : _validation!['bootstrapCanonical'] == true
+                          ? labels.importMasterAndLanguage
+                          : labels.importLocalization,
+                    ),
+                  ),
+                ],
+                if (_progress != null)
+                  _ProgressCard(data: _progress!, labels: labels),
+              ],
+            ),
           ],
         ),
       ),
@@ -1564,6 +1752,41 @@ class _TopicPreview extends StatelessWidget {
   }
 }
 
+class _LocalizationPreview extends StatelessWidget {
+  const _LocalizationPreview({required this.data, required this.labels});
+  final List<Map<String, dynamic>> data;
+  final _AdminLabels labels;
+
+  @override
+  Widget build(BuildContext context) {
+    if (data.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        Text(labels.preview, style: Theme.of(context).textTheme.titleMedium),
+        for (final row in data) _localizationRow(row),
+      ],
+    );
+  }
+
+  Widget _localizationRow(Map<String, dynamic> row) {
+    final localized =
+        row['localizedName']?.toString().trim() ??
+        row['name']?.toString().trim() ??
+        '';
+    final canonical = row['canonicalName']?.toString().trim() ?? '';
+    return ListTile(
+      dense: true,
+      leading: CircleAvatar(child: Text(row['id']?.toString() ?? '')),
+      title: Text(localized),
+      subtitle: canonical.isNotEmpty && canonical != localized
+          ? Text(canonical)
+          : null,
+    );
+  }
+}
+
 class _BiblePreview extends StatelessWidget {
   const _BiblePreview({required this.data, required this.labels});
   final List<Map<String, dynamic>> data;
@@ -1595,15 +1818,30 @@ class _ProgressCard extends StatelessWidget {
   final _AdminLabels labels;
   @override
   Widget build(BuildContext context) {
-    final completed = data['status'] == 'completed';
+    final status = data['status']?.toString() ?? '';
+    final completed = status == 'completed';
+    final failed = status == 'failed' || status == 'validation_failed';
+    final errors = _listOfMaps(data['errors']);
+    final failureMessage = errors.isEmpty
+        ? labels.importFailed
+        : errors.first['message']?.toString() ?? labels.importFailed;
     return Card(
       margin: const EdgeInsets.only(top: 16),
       child: ListTile(
         leading: completed
             ? const Icon(Icons.check_circle, color: Colors.green)
+            : failed
+            ? Icon(
+                Icons.error_outline,
+                color: Theme.of(context).colorScheme.error,
+              )
             : const CircularProgressIndicator(),
         title: Text(data['stage']?.toString() ?? labels.preparing),
-        subtitle: completed ? Text(labels.importCompleted) : null,
+        subtitle: completed
+            ? Text(labels.importCompleted)
+            : failed
+            ? Text(failureMessage)
+            : null,
       ),
     );
   }
@@ -1640,11 +1878,26 @@ class _AdminLabels {
   String get admin => t('Admin', 'الإدارة');
   String get dashboard => t('Dashboard', 'لوحة المعلومات');
   String get bibles => t('Bible Translations', 'ترجمات الكتاب المقدس');
-  String get topics => t('Topic Datasets', 'بيانات المواضيع');
+  String get topics => t('Harmony Topics', 'مواضيع التناغم');
+  String get harmonyTopics => t('Harmony Topics', 'مواضيع التناغم');
+  String get masterHarmony => t('Master Harmony', 'جدول التناغم الرئيسي');
+  String get updateMaster =>
+      t('Import / Replace Master', 'استيراد / استبدال الجدول الرئيسي');
+  String get addTopicLanguage => t('Add Topic Language', 'إضافة لغة مواضيع');
+  String get legacyDatasets =>
+      t('Legacy duplicated datasets', 'مجموعات البيانات القديمة المكررة');
+  String get legacyDatasetsNotice => t(
+    'Preserved for compatibility. Review the migration report before any later cleanup.',
+    'محفوظة للتوافق. راجع تقرير الترحيل قبل أي تنظيف لاحق.',
+  );
   String get history => t('Import History', 'سجل الاستيراد');
   String get addBible =>
       t('Add Bible Translation', 'إضافة ترجمة للكتاب المقدس');
-  String get addTopics => t('Add Topic Dataset', 'إضافة بيانات مواضيع');
+  String get addTopics => t('Add Topic Language', 'إضافة لغة مواضيع');
+  String get updateHarmony => t(
+    'Import / Replace Master Harmony',
+    'استيراد / استبدال جدول التناغم الرئيسي',
+  );
   String get bibleLanguages => t('Bible languages', 'لغات الكتاب المقدس');
   String get bibleVersions => t('Bible versions', 'ترجمات الكتاب المقدس');
   String get topicLanguages => t('Topic languages', 'لغات المواضيع');
@@ -1663,6 +1916,10 @@ class _AdminLabels {
   String get noImports => t('No imports yet.', 'لا توجد عمليات استيراد بعد.');
   String get close => t('Close', 'إغلاق');
   String get language => t('Language', 'اللغة');
+  String get includedTopicLanguage => t(
+    'Topic language included in this master file',
+    'لغة المواضيع المضمّنة في هذا الملف الرئيسي',
+  );
   String get languageCode => t('Language code', 'رمز اللغة');
   String get displayName => t('Display name', 'اسم العرض');
   String get direction => t('Text direction', 'اتجاه النص');
@@ -1674,9 +1931,14 @@ class _AdminLabels {
     'استخدم أحرفًا لاتينية صغيرة وأرقامًا وشرطة سفلية أو واصلة.',
   );
   String get uploadCsv => t('Upload CSV', 'رفع ملف CSV');
-  String get csvFormat => t(
-    'Expected columns: Topic, Matthew, Mark, Luke, John. Multiple references may use commas or semicolons.',
-    'الأعمدة المطلوبة: الموضوع، متى، مرقس، لوقا، يوحنا. يمكن فصل المراجع المتعددة بفاصلة أو فاصلة منقوطة.',
+  String get gospelNames => t('Gospel display names', 'أسماء الأناجيل');
+  String get localizationCsvFormat => t(
+    'Upload TopicNumber,TopicName (recommended), or one ordered topic-name column such as Subjects. References always come from Master Harmony.',
+    'ارفع TopicNumber,TopicName (موصى به)، أو عمودًا واحدًا مرتبًا لأسماء المواضيع. تأتي المراجع دائمًا من جدول التناغم الرئيسي.',
+  );
+  String get harmonyCsvFormat => t(
+    "Expected columns: Topic, Matthew, Mark, Luke, John. Use '+' for continuous chapter boundaries, ';' for separate passages, and ',' for same-chapter selections. Quote CSV cells that contain ','.",
+    "الأعمدة المطلوبة: الموضوع، متى، مرقس، لوقا، يوحنا. استخدم '+' للاستمرار بين فصلين و';' للمقاطع المنفصلة و',' لاختيارات الفصل نفسه. ضع خلية CSV التي تحتوي على ',' بين علامتي اقتباس.",
   );
   String get selectCsv => t('Select CSV file', 'اختر ملف CSV');
   String get changeFile => t('Change file', 'تغيير الملف');
@@ -1719,8 +1981,18 @@ class _AdminLabels {
     'Confirm replacement before importing.',
     'أكد الاستبدال قبل الاستيراد.',
   );
-  String get importTopics =>
-      t('Import Topic Dataset', 'استيراد بيانات المواضيع');
+  String get importLocalization =>
+      t('Import Language Localization', 'استيراد ترجمة اللغة');
+  String get importHarmony =>
+      t('Import Canonical References', 'استيراد المراجع الأساسية');
+  String get importMasterAndLanguage =>
+      t('Import Main Table & Language', 'استيراد الجدول الرئيسي واللغة');
+  String get masterTableDetected =>
+      t('Main Harmony table detected', 'تم اكتشاف جدول التناغم الرئيسي');
+  String get masterTableActivationNotice => t(
+    'This first import will activate the canonical references and this language localization together. Existing legacy datasets will not be deleted.',
+    'سيؤدي هذا الاستيراد الأول إلى تفعيل المراجع الأساسية وترجمة هذه اللغة معًا. لن تُحذف مجموعات البيانات القديمة.',
+  );
   String get importBible =>
       t('Import Bible Translation', 'استيراد ترجمة الكتاب المقدس');
   String get translationMetadata =>

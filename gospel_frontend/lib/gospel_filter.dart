@@ -32,7 +32,7 @@ enum GospelFilterMode { union, intersection }
 /// applied to the completed result.
 class GospelFilterState {
   const GospelFilterState({
-    this.mode = GospelFilterMode.union,
+    this.mode = GospelFilterMode.intersection,
     this.includeMask = 0,
     this.excludeMask = 0,
   }) : assert(includeMask & ~allGospelsMask == 0),

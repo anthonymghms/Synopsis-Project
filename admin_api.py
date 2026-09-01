@@ -15,6 +15,7 @@ from services.admin_auth import (
     verify_admin_authorization,
 )
 from services.bible_import_service import parse_usfm_files
+from services.localization_import_service import parse_topic_localization_csv
 from services.firebase_service import (
     FirebaseImportRepository,
     ImportCollisionError,
@@ -25,6 +26,7 @@ from services.firebase_service import (
 from services.topic_import_service import (
     add_structural_comparison,
     parse_topic_csv,
+    reference_structure_mismatch_ids,
 )
 
 
@@ -165,6 +167,322 @@ def topic_template():
     return response
 
 
+@admin_api.route("/admin/localizations/template", methods=["GET"])
+def localization_template():
+    _admin()
+    content = "\ufeffTopicNumber,TopicName\r\n1,Localized topic 1\r\n2,Localized topic 2\r\n"
+    response = Response(content, content_type="text/csv; charset=utf-8")
+    response.headers["Content-Disposition"] = "attachment; filename=topic_localization_template.csv"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_api.route("/admin/harmony/migration-report", methods=["GET"])
+def harmony_migration_report():
+    _admin()
+    trusted = str(request.args.get("trustedDataset") or "canonical").strip()
+    if not trusted or "/" in trusted or len(trusted) > 80:
+        return _error("invalid_dataset", "Trusted dataset identifier is invalid.", 400)
+    return _response(FirebaseImportRepository().harmony_migration_report(trusted))
+
+
+def _gospel_labels_from_form() -> dict[str, str]:
+    labels = {}
+    for gospel in ("Matthew", "Mark", "Luke", "John"):
+        labels[gospel] = _clean_text(
+            request.form.get(f"gospel{gospel}") or gospel,
+            f"{gospel} display name",
+            max_length=80,
+        )
+    return labels
+
+
+def _parse_language_upload(
+    raw: bytes,
+    *,
+    repository: FirebaseImportRepository,
+    canonical_records,
+    canonical_active: bool,
+):
+    localization = parse_topic_localization_csv(raw, canonical_records)
+    master = None
+    bootstrap_canonical = False
+    if localization.source_format == "harmonyTable":
+        master = parse_topic_csv(
+            raw,
+            verse_count_resolver=repository.chapter_verse_count,
+        )
+        bootstrap_canonical = not canonical_active
+        if bootstrap_canonical:
+            localization = parse_topic_localization_csv(raw, master.records)
+        localization.report.extend(master.report.errors)
+        localization.report.extend(master.report.warnings)
+        if canonical_active and master.report.valid:
+            mismatches = reference_structure_mismatch_ids(
+                master.records,
+                canonical_records,
+            )
+            if mismatches:
+                preview = ", ".join(mismatches[:20])
+                suffix = "…" if len(mismatches) > 20 else ""
+                localization.report.error(
+                    "canonical_reference_mismatch",
+                    f"The uploaded full table differs from the active canonical references at topic IDs {preview}{suffix}. Use Update Harmony References for reference changes.",
+                    field="References",
+                )
+            else:
+                localization.report.warning(
+                    "reference_columns_unchanged",
+                    "The five-column file matches the active Harmony references. Add/Edit Language will update only topic and Gospel display names.",
+                )
+    return localization, master, bootstrap_canonical
+
+
+@admin_api.route("/admin/localizations/validate", methods=["POST"])
+def validate_topic_localization():
+    admin = _admin()
+    upload = request.files.get("file")
+    if upload is None:
+        return _error("missing_file", "Select one localization CSV file.", 400)
+    try:
+        filename = safe_filename(upload.filename or "")
+        if not filename.lower().endswith(".csv"):
+            raise ValueError("Localization uploads must use the .csv extension.")
+        language = _language_id(request.form.get("language"))
+        display_name = _clean_text(
+            request.form.get("displayName") or language.title(),
+            "Language display name",
+            max_length=80,
+        )
+        direction = _direction(request.form.get("direction"))
+        gospel_labels = _gospel_labels_from_form()
+        canonical_id = str(
+            request.form.get("canonicalDataset") or "english_kjv"
+        ).strip()
+        if "/" in canonical_id or len(canonical_id) > 80:
+            raise ValueError("Canonical fallback dataset identifier is invalid.")
+    except ValueError as exc:
+        return _error("invalid_metadata", str(exc), 400)
+
+    raw = upload.read()
+    repository = FirebaseImportRepository()
+    canonical_records, canonical_source = repository.load_canonical_topics(
+        fallback_dataset_id=canonical_id
+    )
+    canonical_active = repository.canonical_topics_exist()
+    result, master_result, bootstrap_canonical = _parse_language_upload(
+        raw,
+        repository=repository,
+        canonical_records=canonical_records,
+        canonical_active=canonical_active,
+    )
+    if bootstrap_canonical:
+        canonical_source = "harmony/canonical"
+    import_id = new_import_id()
+    metadata = {
+        "displayName": display_name,
+        "direction": direction,
+        "gospels": gospel_labels,
+        "canonicalDataset": canonical_id,
+        "canonicalSource": canonical_source,
+        "bootstrapCanonical": bootstrap_canonical,
+        "sourceFormat": result.source_format,
+    }
+    repository.create_import(
+        import_id=import_id,
+        import_type="topic_localization",
+        language=language,
+        uploaded_by=admin["uid"],
+        filenames=[filename],
+        metadata=metadata,
+    )
+    try:
+        paths = repository.upload_sources(
+            import_id=import_id,
+            import_type="topic_localization",
+            language=language,
+            files=[(filename, raw)],
+        )
+        errors, warnings = _issue_payload(result)
+        collision = repository.localization_exists(language) or (
+            bootstrap_canonical and repository.canonical_topics_exist()
+        )
+        status = "validated" if result.report.valid else "validation_failed"
+        summary = result.summary(preview_limit=len(result.records))
+        if bootstrap_canonical and master_result is not None:
+            summary["stats"].update(
+                {
+                    "canonicalTopics": len(master_result.records),
+                    "references": sum(
+                        record.logical_reference_count
+                        for record in master_result.records
+                    ),
+                    "physicalSegments": sum(
+                        record.physical_segment_count
+                        for record in master_result.records
+                    ),
+                }
+            )
+        destination = (
+            f"harmony/canonical + harmony_localizations/{language}"
+            if bootstrap_canonical
+            else f"harmony_localizations/{language}"
+        )
+        repository.update_import(
+            import_id,
+            status=status,
+            stage="Ready to import" if result.report.valid else "Validation failed",
+            errors=errors,
+            warnings=warnings,
+            validation=summary["stats"],
+            collision=collision,
+            destination=destination,
+            storagePaths=paths,
+        )
+        return _response(
+            {
+                "importId": import_id,
+                "collision": collision,
+                "destination": destination,
+                "canonicalSource": canonical_source,
+                "bootstrapCanonical": bootstrap_canonical,
+                **summary,
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Topic localization validation failed")
+        repository.update_import(
+            import_id,
+            status="validation_failed",
+            stage="Validation failed",
+            errors=[{"severity": "error", "code": "validation_failed", "message": "The localization upload could not be validated."}],
+        )
+        return _error(
+            "validation_failed",
+            "The localization upload could not be validated.",
+            500,
+            importId=import_id,
+        )
+
+
+@admin_api.route("/admin/harmony/validate", methods=["POST"])
+def validate_canonical_harmony():
+    admin = _admin()
+    upload = request.files.get("file")
+    if upload is None:
+        return _error("missing_file", "Select one canonical Harmony CSV file.", 400)
+    try:
+        filename = safe_filename(upload.filename or "")
+        if not filename.lower().endswith(".csv"):
+            raise ValueError("Harmony uploads must use the .csv extension.")
+        localization_language = _language_id(
+            request.form.get("localizationLanguage") or "arabic"
+        )
+        localization_display_name = _clean_text(
+            request.form.get("localizationDisplayName")
+            or request.form.get("displayName")
+            or localization_language.title(),
+            "Topic language display name",
+            max_length=80,
+        )
+        localization_direction = _direction(
+            request.form.get("localizationDirection")
+            or request.form.get("direction")
+            or ("rtl" if localization_language == "arabic" else "ltr")
+        )
+        gospel_labels = _gospel_labels_from_form()
+    except ValueError as exc:
+        return _error("invalid_metadata", str(exc), 400)
+
+    raw = upload.read()
+    repository = FirebaseImportRepository()
+    import_id = new_import_id()
+    repository.create_import(
+        import_id=import_id,
+        import_type="harmony",
+        language=localization_language,
+        uploaded_by=admin["uid"],
+        filenames=[filename],
+        metadata={
+            "referenceGrammarVersion": 2,
+            "includesLocalization": True,
+            "displayName": localization_display_name,
+            "direction": localization_direction,
+            "gospels": gospel_labels,
+        },
+    )
+    try:
+        paths = repository.upload_sources(
+            import_id=import_id,
+            import_type="harmony",
+            language="canonical",
+            files=[(filename, raw)],
+        )
+        result = parse_topic_csv(
+            raw,
+            verse_count_resolver=repository.chapter_verse_count,
+        )
+        localization_result = parse_topic_localization_csv(raw, result.records)
+        result.report.extend(localization_result.report.errors)
+        result.report.extend(localization_result.report.warnings)
+        active_records, _ = repository.load_canonical_topics(
+            fallback_dataset_id=""
+        )
+        if active_records and len(active_records) != len(result.records):
+            result.report.warning(
+                "master_topic_count_change",
+                f"The active master contains {len(active_records)} topics and this upload contains {len(result.records)}. Review added or removed topic numbers before confirming replacement.",
+                field="TopicNumber",
+            )
+        errors, warnings = _issue_payload(result)
+        collision = repository.canonical_topics_exist() or repository.localization_exists(
+            localization_language
+        )
+        status = "validated" if result.report.valid else "validation_failed"
+        summary = result.summary()
+        repository.update_import(
+            import_id,
+            status=status,
+            stage="Ready to import" if result.report.valid else "Validation failed",
+            errors=errors,
+            warnings=warnings,
+            validation=summary["stats"],
+            collision=collision,
+            destination=(
+                "harmony/canonical + "
+                f"harmony_localizations/{localization_language}"
+            ),
+            storagePaths=paths,
+        )
+        return _response(
+            {
+                "importId": import_id,
+                "collision": collision,
+                "destination": (
+                    "harmony/canonical + "
+                    f"harmony_localizations/{localization_language}"
+                ),
+                "localizationLanguage": localization_language,
+                "localizationPreview": localization_result.summary()["preview"],
+                **summary,
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Canonical Harmony validation failed")
+        repository.update_import(
+            import_id,
+            status="validation_failed",
+            stage="Validation failed",
+            errors=[{"severity": "error", "code": "validation_failed", "message": "The canonical Harmony upload could not be validated."}],
+        )
+        return _error(
+            "validation_failed",
+            "The canonical Harmony upload could not be validated.",
+            500,
+            importId=import_id,
+        )
+
+
 @admin_api.route("/admin/topics/validate", methods=["POST"])
 def validate_topics():
     admin = _admin()
@@ -210,7 +528,10 @@ def validate_topics():
             language=language,
             files=[(filename, raw)],
         )
-        result = parse_topic_csv(raw)
+        result = parse_topic_csv(
+            raw,
+            verse_count_resolver=repository.chapter_verse_count,
+        )
         destination_id = repository.resolve_reference_dataset_id(language)
         if canonical_id and canonical_id != destination_id:
             canonical_records = repository.load_topics(canonical_id)
@@ -418,7 +739,13 @@ def _start_import(expected_type: str):
         replace=payload.get("replace") is True,
         errors=[],
     )
-    runner = _run_topic_import if expected_type == "topics" else _run_bible_import
+    runners = {
+        "topics": _run_topic_import,
+        "bible": _run_bible_import,
+        "harmony": _run_harmony_import,
+        "topic_localization": _run_topic_localization_import,
+    }
+    runner = runners[expected_type]
     _executor.submit(runner, import_id, payload.get("replace") is True)
     return _response({"importId": import_id, "status": "queued"}, status=202)
 
@@ -433,6 +760,16 @@ def import_bible():
     return _start_import("bible")
 
 
+@admin_api.route("/admin/harmony/import", methods=["POST"])
+def import_canonical_harmony():
+    return _start_import("harmony")
+
+
+@admin_api.route("/admin/localizations/import", methods=["POST"])
+def import_topic_localization():
+    return _start_import("topic_localization")
+
+
 def _run_topic_import(import_id: str, replace: bool) -> None:
     repository = FirebaseImportRepository()
     try:
@@ -440,7 +777,10 @@ def _run_topic_import(import_id: str, replace: bool) -> None:
         metadata = record.get("metadata") or {}
         repository.update_import(import_id, status="importing", stage="Parsing CSV")
         files = repository.download_sources(record)
-        result = parse_topic_csv(files[0][1])
+        result = parse_topic_csv(
+            files[0][1],
+            verse_count_resolver=repository.chapter_verse_count,
+        )
         canonical_id = str(metadata.get("canonicalDataset") or "english_kjv")
         destination_id = repository.resolve_reference_dataset_id(record["language"])
         if canonical_id and canonical_id != destination_id:
@@ -480,6 +820,162 @@ def _run_topic_import(import_id: str, replace: bool) -> None:
             status="failed",
             stage="Failed",
             errors=[{"severity": "error", "code": "import_failed", "message": "The topic import failed. The previous active dataset was not changed."}],
+        )
+
+
+def _run_harmony_import(import_id: str, replace: bool) -> None:
+    repository = FirebaseImportRepository()
+    try:
+        record = repository.get_import(import_id)
+        repository.update_import(
+            import_id, status="importing", stage="Parsing canonical Harmony CSV"
+        )
+        files = repository.download_sources(record)
+        result = parse_topic_csv(
+            files[0][1],
+            verse_count_resolver=repository.chapter_verse_count,
+        )
+        if not result.report.valid:
+            raise ImportRecordError("The staged canonical CSV no longer passes validation.")
+        metadata = record.get("metadata") or {}
+        localization = parse_topic_localization_csv(files[0][1], result.records)
+        if not localization.report.valid:
+            raise ImportRecordError(
+                "The topic-language names in the staged master CSV no longer pass validation."
+            )
+        repository.update_import(
+            import_id,
+            stage="Writing canonical Harmony and base-language revisions",
+        )
+        raw_gospels = metadata.get("gospels")
+        gospel_labels = (
+            {str(key): str(value) for key, value in raw_gospels.items()}
+            if isinstance(raw_gospels, dict)
+            else {gospel: gospel for gospel in ("Matthew", "Mark", "Luke", "John")}
+        )
+        outcome = repository.activate_canonical_with_localization(
+            import_id=import_id,
+            language=record["language"],
+            display_name=str(metadata.get("displayName") or record["language"].title()),
+            direction=str(metadata.get("direction") or "ltr"),
+            gospel_labels=gospel_labels,
+            canonical_records=result.records,
+            records=localization.records,
+            replace=replace,
+        )
+        repository.update_import(
+            import_id,
+            status="completed",
+            stage="Completed",
+            completedAt=firestore.SERVER_TIMESTAMP,
+            recordsProcessed=outcome["topicsProcessed"],
+            **outcome,
+        )
+    except (ImportCollisionError, ImportRecordError) as exc:
+        repository.update_import(
+            import_id,
+            status="failed",
+            stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed", "message": str(exc)}],
+        )
+    except Exception:
+        _logger.exception("Canonical Harmony import failed")
+        repository.update_import(
+            import_id,
+            status="failed",
+            stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed", "message": "The canonical Harmony import failed. The previous active revision was not changed."}],
+        )
+
+
+def _run_topic_localization_import(import_id: str, replace: bool) -> None:
+    repository = FirebaseImportRepository()
+    try:
+        record = repository.get_import(import_id)
+        metadata = record.get("metadata") or {}
+        repository.update_import(
+            import_id, status="importing", stage="Parsing topic localization CSV"
+        )
+        files = repository.download_sources(record)
+        canonical_records, canonical_source = repository.load_canonical_topics(
+            fallback_dataset_id=str(
+                metadata.get("canonicalDataset") or "english_kjv"
+            )
+        )
+        bootstrap_canonical = metadata.get("bootstrapCanonical") is True
+        if bootstrap_canonical:
+            master_result = parse_topic_csv(
+                files[0][1],
+                verse_count_resolver=repository.chapter_verse_count,
+            )
+            result = parse_topic_localization_csv(
+                files[0][1],
+                master_result.records,
+            )
+            result.report.extend(master_result.report.errors)
+            result.report.extend(master_result.report.warnings)
+            canonical_source = "harmony/canonical"
+        else:
+            result, _, _ = _parse_language_upload(
+                files[0][1],
+                repository=repository,
+                canonical_records=canonical_records,
+                canonical_active=True,
+            )
+        if not result.report.valid:
+            raise ImportRecordError(
+                "The staged localization CSV no longer passes validation."
+            )
+        repository.update_import(import_id, stage="Writing localization revision")
+        raw_gospels = metadata.get("gospels")
+        gospel_labels = (
+            {str(key): str(value) for key, value in raw_gospels.items()}
+            if isinstance(raw_gospels, dict)
+            else {gospel: gospel for gospel in ("Matthew", "Mark", "Luke", "John")}
+        )
+        activation_arguments = {
+            "import_id": import_id,
+            "language": record["language"],
+            "display_name": str(
+                metadata.get("displayName") or record["language"].title()
+            ),
+            "direction": str(metadata.get("direction") or "ltr"),
+            "gospel_labels": gospel_labels,
+            "records": result.records,
+            "replace": replace,
+        }
+        if bootstrap_canonical:
+            outcome = repository.activate_canonical_with_localization(
+                canonical_records=master_result.records,
+                **activation_arguments,
+            )
+        else:
+            outcome = repository.activate_topic_localization(
+                canonical_source=canonical_source,
+                **activation_arguments,
+            )
+        repository.update_import(
+            import_id,
+            status="completed",
+            stage="Completed",
+            completedAt=firestore.SERVER_TIMESTAMP,
+            recordsProcessed=outcome["topicsProcessed"],
+            **outcome,
+        )
+    except (ImportCollisionError, ImportRecordError) as exc:
+        repository.update_import(
+            import_id,
+            status="failed",
+            stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed", "message": str(exc)}],
+        )
+    except Exception:
+        _logger.exception("Topic localization import failed")
+        repository.update_import(
+            import_id,
+            status="failed",
+            stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed", "message": "The topic localization import failed. The previous active localization was not changed."}],
         )
 
 

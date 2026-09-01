@@ -162,6 +162,13 @@ void main() {
   group('GospelFilterState set operations', () {
     final markLuke = Gospel.mark.bit | Gospel.luke.bit;
 
+    test('fresh and cleared filters default to intersection', () {
+      const state = GospelFilterState();
+
+      expect(state.mode, GospelFilterMode.intersection);
+      expect(state.isActive, isFalse);
+    });
+
     test('union matches either included Gospel', () {
       final state = GospelFilterState(
         mode: GospelFilterMode.union,

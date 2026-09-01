@@ -129,9 +129,64 @@ services/topic_import_service.py
 services/bible_import_service.py
 services/firebase_service.py
 services/admin_auth.py
+services/reference_parser.py
+services/localization_import_service.py
 ```
 
 The CLI and web endpoints therefore use the same parser implementation.
+`csv_parser.py` now activates a canonical Harmony revision plus the base topic
+localization; it no longer creates a duplicated reference dataset for each
+topic language.
+
+### Harmony reference grammar
+
+`services/reference_parser.py` is the canonical CSV/import parser. Flutter
+consumes its structured `referenceCells` projection from `/topics`; it does not
+reinterpret the original CSV independently. Each separator is an ordered edge
+between physical segments:
+
+```text
++  continuous: consecutive chapter boundary, one logical selection
+;  non-continuous: separate logical selection in the same Gospel cell
+,  same chapter: another verse/range inheriting the preceding chapter
+```
+
+For example, `Luke 1:78-80 + 2:1-7` has two physical segments and one logical
+selection; `John 8:1,34` and `Matthew 5:31-32;19:9` each have two physical
+segments and two logical selections. The toolbar's **references** count uses
+logical selections. This keeps a continuous `+` reading at one while counting
+comma and semicolon selections separately.
+
+The parser accepts optional Gospel-name prefixes, Arabic/Persian digits,
+en/em dashes, and whitespace around separators. Comma must remain in the same
+chapter. Semicolon retains legacy chapter inheritance for values such as
+`6:25-34;19-21`. Plus must move to the immediately following chapter at verse
+1; Admin validation also checks that the previous segment reaches the actual
+last verse using Bible metadata. When chapter metadata is unavailable the
+structure is preserved with a warning, not silently changed.
+
+For compatibility with the established Arabic master file, legacy direct
+cross-chapter ranges such as `10:40-11:1` are expanded to `10:40-42 + 11:1`
+using verified chapter metadata. Spreadsheet midnight suffixes such as
+`26:30:00` are normalized to `26:30`. Both transformations produce visible
+Admin warnings; new edits should use the explicit `+` grammar and ordinary
+`chapter:verse` notation.
+
+Because the file itself is comma-delimited, a Gospel cell containing the comma
+operator must use normal CSV quoting, for example `"8:1-12,20-25"`. Validation
+rejects non-empty overflow columns so an unquoted comma cannot be truncated or
+shifted silently.
+
+Canonical topic documents contain both representations during the
+compatibility period:
+
+```text
+entries[]          flat physical segments for legacy readers
+referenceCells[]   lossless cells, segments, separators, and relation metadata
+referenceGrammarVersion: 2
+```
+
+Legacy documents containing only `entries` remain readable.
 
 ### Safe activation and Firebase schema
 
@@ -140,6 +195,8 @@ paths:
 
 ```text
 imports/topics/{language}/{timestamp}-{importId}/{filename}
+imports/harmony/canonical/{timestamp}-{importId}/{filename}
+imports/localizations/{language}/{timestamp}-{importId}/{filename}
 imports/bibles/{language}/{version}/{timestamp}-{importId}/{filename}
 ```
 
@@ -147,6 +204,8 @@ New parsed data is written to an immutable revision first:
 
 ```text
 reference_revisions/{importId}/topics/{topicId}
+harmony_revisions/{importId}/topics/{topicId}
+harmony_localization_revisions/{importId}/topics/{topicId}
 bible_revisions/{importId}/books/{book}/chapters/{chapter}/verses/{verse}
 ```
 
@@ -154,6 +213,8 @@ Only after every batch succeeds is an active pointer switched atomically:
 
 ```text
 references/{datasetId}.activeTopicsPath
+harmony/canonical.activeTopicsPath
+harmony_localizations/{language}.activeTopicsPath
 bibles/{language}/versions/{version}.activeBooksPath
 ```
 
@@ -162,12 +223,34 @@ existing datasets continue to work. Failed revisions are never activated and
 the former production dataset remains unchanged. Replacement never silently
 deletes the previous revision.
 
-Language metadata is stored on `bibles/{language}` and version metadata on
-`bibles/{language}/versions/{version}`. Flutter merges this catalog with the two
-bundled legacy fallbacks, so a successful Bible import is discoverable without
-editing a Dart language constant. A topic-only language can display its Harmony
-table; Bible previews become available after a translation for that language is
-also imported.
+The active model has three independent dimensions:
+
+```text
+harmony/canonical                         one Gospel-reference mapping
+harmony_localizations/{topicLanguage}    topic names, direction, Gospel labels
+bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
+```
+
+`/harmony/topics` returns canonical coordinates only, while
+`/topic-localizations/{language}` returns table names and metadata. Flutter
+caches and composes those responses. The selected topic language also controls
+the application's menus, settings, admin labels, layout direction, and other UI
+chrome. Changing the globe swaps that complete UI/topic localization;
+filtering, sorting, and reference counts continue to use the same canonical
+topics. Changing Bible language/version reloads verse text without changing
+topic names, menus, layout direction, or coordinates. The legacy
+`menuLanguage` preference remains readable and writable only as a compatibility
+alias for `topicLanguage`.
+
+During migration, `/topics` and the historic topic route compose the same data
+server-side and retain legacy `language` query handling. Missing canonical or
+localization pointers can still fall back to the old `references/*` paths. No
+import deletes those paths or immutable revisions.
+
+Bible language metadata remains under `bibles/{language}` and version metadata
+under `bibles/{language}/versions/{version}`. Topic localization activation
+never writes into the Bible catalog. Both catalogs are metadata-driven, so new
+languages appear without a Dart source change.
 
 Every validation/import attempt has an `admin_imports/{importId}` audit record
 with the type, destination, filenames, uploader UID, timestamps, stage, status,
@@ -185,8 +268,17 @@ GET  /admin/languages
 GET  /admin/imports
 GET  /admin/imports/{importId}
 GET  /admin/topics/template
+GET  /admin/localizations/template
+GET  /admin/harmony/migration-report
+GET  /harmony/topics
+GET  /topic-languages
+GET  /topic-localizations/{language}
 POST /admin/topics/validate
 POST /admin/topics/import
+POST /admin/localizations/validate
+POST /admin/localizations/import
+POST /admin/harmony/validate
+POST /admin/harmony/import
 POST /admin/bibles/validate
 POST /admin/bibles/import
 ```
@@ -196,6 +288,45 @@ active collection. Import endpoints require both `confirm: true` and
 `replace: true` when validation detected a collision. Import work runs outside
 the request and the Flutter portal polls the import record for real stage-based
 progress.
+
+`/admin/topics/*` is retained for old clients, but it is not the normal
+workflow. The portal separates **Master Harmony** from **Topic Languages**.
+The master flow uses `/admin/harmony/*`; adding or updating a table language
+uses `/admin/localizations/*` and accepts these formats:
+
+```text
+First/base language: Topic, Matthew, Mark, Luke, John
+Additional language: one ordered topic-name column, for example Subjects
+```
+
+On the master upload, canonical references and the selected base language's
+topic/Gospel labels are written to separate immutable revisions and activated
+together in one batch. A later one-column upload must contain exactly one name
+for every canonical topic, in the same row order, and changes only localized
+names and Gospel labels. The safer `TopicNumber,TopicName` format is preferred.
+Once canonical references exist, a five-column Topic Language upload must match
+them exactly; intentional reference changes use **Update Master**.
+
+### Canonical migration policy
+
+No existing `references/*` collection is deleted or overwritten by these
+workflows. Before activating a trusted canonical source, an administrator can
+run:
+
+```text
+GET /admin/harmony/migration-report?trustedDataset=canonical
+```
+
+The report compares topic IDs, counts, physical reference ranges, and separator
+metadata across every legacy dataset. During the 2026-09-01 read-only
+inspection, the active canonical dataset and the supplied 289-row Arabic
+master matched after the five reported legacy cross-chapter normalizations.
+The old `english_kjv` dataset contained only 288 topics and diverged after its
+missing row, so it is not a safe authority for English alignment.
+`safeToAutoMigrate` therefore remains false until the supplied English names
+are validated against the canonical IDs/order and reviewed in full. Old
+collections and immutable revisions should remain available through the
+verification period; their later removal is a separate, deliberate operation.
 
 The default upload limit is 32 MB. Override it with
 `MAX_ADMIN_UPLOAD_BYTES`. Set `FIREBASE_SERVICE_ACCOUNT` to a backend-only key
@@ -233,18 +364,53 @@ admins, and make staged source uploads backend-only.
 
 ## Testing an Admin Portal import
 
-### Topic CSV
+### Import or replace Master Harmony
 
 1. Sign in with the bootstrapped administrator and open **Account → Admin**.
-2. Choose **Add Topic Dataset**.
-3. Enter the language code/display name and direction.
-4. Select a comma-delimited CSV whose five positional columns are Topic,
-   Matthew, Mark, Luke, and John. Save Arabic as UTF-8. Multiple same-chapter
-   references may use `1:6-8;15-28` or `1:6-8,15-28`.
+2. Open **Harmony Topics → Master Harmony → Update Master**.
+3. Enter Arabic language metadata, RTL direction, and the four Arabic Gospel
+   display names.
+4. Select the UTF-8 five-column Arabic main table. Its positional columns are
+   topic name, Matthew, Mark, Luke, and John; localized header text is accepted.
+5. Validate and review the **Main Harmony table detected** notice, topic count,
+   logical/physical reference counts, normalization warnings, and preview.
+6. Select **Import Master Harmony & Language**. Canonical references and Arabic
+   localization become active atomically; legacy datasets are not deleted.
+
+### Add another topic language
+
+1. Open **Harmony Topics → Topic Languages → Add Topic Language** and enter the new language metadata,
+   direction, and four Gospel display names.
+2. Upload a UTF-8 CSV containing one ordered topic-name column such as
+   `Subjects`. Row 2 translates canonical topic 1, row 3 translates topic 2,
+   and so on.
+3. The file must have exactly one non-empty name for every canonical topic.
+   Quote a topic name if it contains a comma.
+4. Validate the canonical-to-localized preview, import, then confirm language
+   switching, Gospel labels, topic names, RTL/LTR, filters, and routes.
+
+### Update canonical Harmony references
+
+1. Review `/admin/harmony/migration-report` and choose the intended trusted
+   source; do not infer equivalence from language names.
+2. Choose **Master Harmony → Update Master**.
+3. Select a five-column CSV whose positional columns are Topic, Matthew, Mark,
+   Luke, and John.
+4. Exercise at least these reference cases in validation/preview:
+
+   ```text
+   John 8:1
+   John 8:1,34
+   John 8:1-12,20-25
+   Matthew 5:31-32;19:9
+   Luke 1:78-80+2:1-7
+   ```
+
 5. Select **Validate upload**. Inspect every row/field error, structural warning,
-   count, and the first 20 preview rows.
+   logical/physical count, and the first 20 preview rows. An invalid plus such
+   as `Luke 1:78-79+2:2-7` must fail and recommend semicolon.
 6. If replacing an existing dataset, select the explicit replacement checkbox.
-7. Select **Import Topic Dataset**, confirm, and wait for **Completed**.
+7. Select **Import Canonical References**, confirm, and wait for **Completed**.
 8. Return to the Harmony table and select the language. Confirm topic order,
    all four Gospel columns, filtering/sorting, hover previews, and topic routes.
 
@@ -283,7 +449,7 @@ flutter build web --release --dart-define=API_BASE_URL=http://127.0.0.1:8010
 - The existing Storage source files include working USFM/CSV inputs. New source
   paths are never derived from untrusted directory components and uploads are
   parsed strictly as data.
-- Several historical CSV cells contain spreadsheet-coerced times or
-  cross-chapter ranges that the current application data shape cannot safely
-  resolve. The portal reports these with row/topic/field context instead of
-  silently importing broken references.
+- Several historical CSV cells contain spreadsheet-coerced times or ambiguous
+  direct cross-chapter strings. Use the explicit `+` grammar for a verified
+  continuous boundary. The portal reports other ambiguous values with
+  row/topic/field context instead of silently importing broken references.

@@ -40,6 +40,9 @@ service cloud.firestore {
           ])
           && data.keys().hasOnly([
             'menuLanguage',
+            'topicLanguage',
+            'bibleLanguage',
+            'bibleVersion',
             'contentLanguage',
             'preferredVersion',
             'showDiacritics',
@@ -49,6 +52,15 @@ service cloud.firestore {
           ])
           && data.menuLanguage is string
           && data.menuLanguage.size() <= 40
+          && (!data.keys().hasAny(['topicLanguage'])
+              || (data.topicLanguage is string
+                  && data.topicLanguage.size() <= 40))
+          && (!data.keys().hasAny(['bibleLanguage'])
+              || (data.bibleLanguage is string
+                  && data.bibleLanguage.size() <= 40))
+          && (!data.keys().hasAny(['bibleVersion'])
+              || (data.bibleVersion is string
+                  && data.bibleVersion.size() <= 120))
           && data.contentLanguage is string
           && data.contentLanguage.size() <= 40
           && data.preferredVersion is string
