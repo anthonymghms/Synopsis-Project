@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-final RegExp _verseRefPattern = RegExp(r'^(\d+):(\d+)(?:-(\d+))?$');
+final RegExp _verseRefPattern = RegExp(r'^(\d+):(\d+)(?:[-–](\d+))?$');
+final RegExp _verseOnlyPattern = RegExp(r'^(\d+)(?:[-–](\d+))?$');
 final RegExp _digitPattern = RegExp(r'\d');
 const Map<String, String> _arabicIndicDigits = {
   '0': '٠',
@@ -16,11 +17,7 @@ const Map<String, String> _arabicIndicDigits = {
 };
 
 class ParsedVerseRef {
-  const ParsedVerseRef({
-    required this.chapter,
-    required this.start,
-    this.end,
-  });
+  const ParsedVerseRef({required this.chapter, required this.start, this.end});
 
   final String chapter;
   final String start;
@@ -53,13 +50,11 @@ ParsedVerseRef? parseVerseRef(String input) {
 }
 
 String toArabicIndicDigits(String input) => input.replaceAllMapped(
-    _digitPattern, (match) => _arabicIndicDigits[match.group(0)]!);
+  _digitPattern,
+  (match) => _arabicIndicDigits[match.group(0)]!,
+);
 
-
-bool shouldUseArabicIndicDigits({
-  required String language,
-  String? version,
-}) {
+bool shouldUseArabicIndicDigits({required String language, String? version}) {
   final normalizedLanguage = language.trim().toLowerCase();
   if (normalizedLanguage == 'arabic' ||
       normalizedLanguage == 'arabic2' ||
@@ -96,13 +91,27 @@ FormattedVerseRef formatVerseRef(String input, String lang) {
 
   final normalizedLang = lang.trim().toLowerCase();
   final isArabic =
-      normalizedLang == 'arabic' || normalizedLang == 'arabic2' || normalizedLang == 'ar';
+      normalizedLang == 'arabic' ||
+      normalizedLang == 'arabic2' ||
+      normalizedLang == 'ar';
   if (!isArabic) {
     return FormattedVerseRef(text: input);
   }
 
   final parsed = parseVerseRef(trimmed);
   if (parsed == null) {
+    final verseOnly = _verseOnlyPattern.firstMatch(trimmed);
+    if (verseOnly != null) {
+      final start = toArabicIndicDigits(verseOnly.group(1)!);
+      final end = verseOnly.group(2) == null
+          ? null
+          : toArabicIndicDigits(verseOnly.group(2)!);
+      final formatted = end == null ? start : '$start$_rlm–$_rlm$end';
+      return FormattedVerseRef(
+        text: '\u2067$formatted\u2069',
+        dir: TextDirection.rtl,
+      );
+    }
     return FormattedVerseRef(text: input);
   }
 
@@ -113,8 +122,47 @@ FormattedVerseRef formatVerseRef(String input, String lang) {
   // RTL hardening: keep RTL wrapper and lock separators with RLM marks.
   final formatted = end == null
       ? '$chapter$_rlm:$_rlm$start'
-      : '$chapter$_rlm:$_rlm$start$_rlm-$_rlm$end';
+      : '$chapter$_rlm:$_rlm$start$_rlm–$_rlm$end';
 
   // Flutter has no CSS unicode-bidi isolate-override; use RLI/PDI + RTL direction.
-  return FormattedVerseRef(text: '\u2067$formatted\u2069', dir: TextDirection.rtl);
+  return FormattedVerseRef(
+    text: '\u2067$formatted\u2069',
+    dir: TextDirection.rtl,
+  );
+}
+
+/// Formats a compact reference expression that may contain multiple ranges,
+/// omitted chapters, or a continuous cross-chapter span.
+///
+/// Single references keep the exact formatting contract of [formatVerseRef].
+/// Composite Arabic references use Arabic-Indic digits and punctuation inside
+/// one RTL isolate so their logical order is preserved on screen.
+FormattedVerseRef formatCompositeVerseRef(String input, String lang) {
+  final single = formatVerseRef(input, lang);
+  final normalizedLang = lang.trim().toLowerCase();
+  final isArabic =
+      normalizedLang == 'arabic' ||
+      normalizedLang == 'arabic2' ||
+      normalizedLang == 'ar';
+  if (!isArabic || single.dir != null) {
+    return single;
+  }
+
+  final trimmed = input.trim();
+  if (trimmed.isEmpty || trimmed == '—' || trimmed == '-') {
+    return single;
+  }
+
+  final localized =
+      toArabicIndicDigits(
+        trimmed.replaceAll('-', '–').replaceAll(',', '،').replaceAll(';', '؛'),
+      ).replaceAllMapped(
+        RegExp(r'[:–،؛]'),
+        (match) => '$_rlm${match.group(0)}$_rlm',
+      );
+
+  return FormattedVerseRef(
+    text: '\u2067$localized\u2069',
+    dir: TextDirection.rtl,
+  );
 }

@@ -172,6 +172,10 @@ using verified chapter metadata. Spreadsheet midnight suffixes such as
 Admin warnings; new edits should use the explicit `+` grammar and ordinary
 `chapter:verse` notation.
 
+The table renders the stored grammar in compact synopsis notation: a continuous
+`10:40-42 + 11:1-10` passage appears as `10:40–11:10`, same-chapter selections
+appear as `7:13–14, 21–23`, and non-contiguous passages use a semicolon.
+
 Because the file itself is comma-delimited, a Gospel cell containing the comma
 operator must use normal CSV quoting, for example `"8:1-12,20-25"`. Validation
 rejects non-empty overflow columns so an unquoted comma cannot be truncated or
@@ -233,14 +237,17 @@ bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
 
 `/harmony/topics` returns canonical coordinates only, while
 `/topic-localizations/{language}` returns table names and metadata. Flutter
-caches and composes those responses. The selected topic language also controls
-the application's menus, settings, admin labels, layout direction, and other UI
-chrome. Changing the globe swaps that complete UI/topic localization;
-filtering, sorting, and reference counts continue to use the same canonical
-topics. Changing Bible language/version reloads verse text without changing
-topic names, menus, layout direction, or coordinates. The legacy
-`menuLanguage` preference remains readable and writable only as a compatibility
-alias for `topicLanguage`.
+caches and composes those responses. The globe controls only the application's
+menu language, including settings, admin labels, dialogs, and other UI chrome.
+The language control above the Subjects column selects the topic-table
+localization and then asks for the matching Bible version; committing that
+version changes the topic names, Gospel headers, reference links, and verse
+text together. Filtering, sorting, and reference counts continue to use the
+same canonical topics.
+
+`menuLanguage` is persisted independently. The table selection is stored in
+both `topicLanguage` and `bibleLanguage`, with its selected translation stored
+in `bibleVersion`.
 
 During migration, `/topics` and the historic topic route compose the same data
 server-side and retain legacy `language` query handling. Missing canonical or

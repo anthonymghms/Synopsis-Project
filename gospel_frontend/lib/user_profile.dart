@@ -14,7 +14,7 @@ const double maximumProfileZoom = 1.6;
 
 class UserPreferences {
   const UserPreferences({
-    String? menuLanguage,
+    this.menuLanguage = defaultProfileMenuLanguage,
     this.topicLanguage = defaultProfileTopicLanguage,
     this.contentLanguage = defaultProfileContentLanguage,
     this.preferredVersion = defaultProfileVersion,
@@ -24,6 +24,7 @@ class UserPreferences {
     this.showTopicNamesInChapter = false,
   });
 
+  final String menuLanguage;
   final String topicLanguage;
   final String contentLanguage;
   final String preferredVersion;
@@ -34,9 +35,6 @@ class UserPreferences {
 
   String get bibleLanguage => contentLanguage;
   String get bibleVersion => preferredVersion;
-  // Kept as a compatibility alias for stored profiles and older callers.
-  // The topic-table language is now the single UI/menu language source.
-  String get menuLanguage => topicLanguage;
 
   factory UserPreferences.fromMap(
     Map<String, dynamic>? preferences, {
@@ -56,10 +54,12 @@ class UserPreferences {
           data['preferredTopicLanguage'] ??
           legacy['topicLanguage'] ??
           legacy['preferredTopicLanguage'] ??
-          data['menuLanguage'] ??
-          legacy['menuLanguage'] ??
           contentLanguage,
       defaultProfileTopicLanguage,
+    ).toLowerCase();
+    final menuLanguage = _nonEmptyString(
+      data['menuLanguage'] ?? legacy['menuLanguage'] ?? topicLanguage,
+      defaultProfileMenuLanguage,
     ).toLowerCase();
     final fallbackVersion = contentLanguage == 'arabic'
         ? 'Van Dyke-'
@@ -67,6 +67,7 @@ class UserPreferences {
     final zoom = _asDouble(data['zoomLevel'] ?? legacy['zoomLevel']) ?? 1.0;
 
     return UserPreferences(
+      menuLanguage: menuLanguage,
       topicLanguage: topicLanguage,
       contentLanguage: contentLanguage,
       preferredVersion: _nonEmptyString(
@@ -93,7 +94,7 @@ class UserPreferences {
   }
 
   Map<String, dynamic> toMap() => <String, dynamic>{
-    'menuLanguage': topicLanguage,
+    'menuLanguage': menuLanguage,
     'topicLanguage': topicLanguage,
     'bibleLanguage': contentLanguage,
     'bibleVersion': preferredVersion,
@@ -118,10 +119,9 @@ class UserPreferences {
     bool? interlinearEnabled,
     bool? showTopicNamesInChapter,
   }) {
-    final nextTopicLanguage =
-        topicLanguage ?? menuLanguage ?? this.topicLanguage;
     return UserPreferences(
-      topicLanguage: nextTopicLanguage,
+      menuLanguage: menuLanguage ?? this.menuLanguage,
+      topicLanguage: topicLanguage ?? this.topicLanguage,
       contentLanguage: bibleLanguage ?? contentLanguage ?? this.contentLanguage,
       preferredVersion:
           bibleVersion ?? preferredVersion ?? this.preferredVersion,

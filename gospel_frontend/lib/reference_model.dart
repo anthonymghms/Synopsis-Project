@@ -130,26 +130,11 @@ List<List<T>> groupReferencePreviewSections<T>(
   return groups;
 }
 
-/// Formats one preview section without repeating a shared chapter for comma
-/// selections. Continuous cross-chapter pieces remain in the same heading.
+/// Formats one preview section exactly as it appears in the Harmony table.
+/// Comma selections omit the repeated chapter, and continuous cross-chapter
+/// pieces collapse to the same compact outer endpoints used by the cell.
 String formatReferencePreviewSection(Iterable<HarmonyReferenceSegment> values) {
-  final segments = values.toList(growable: false);
-  if (segments.isEmpty) return '';
-
-  String display(HarmonyReferenceSegment segment) => segment.verses.isEmpty
-      ? segment.chapter.toString()
-      : segment.displayReference;
-
-  final buffer = StringBuffer(display(segments.first));
-  for (final segment in segments.skip(1)) {
-    if (segment.separatorBefore == ReferenceSeparator.sameChapter &&
-        segment.chapter == segments.first.chapter) {
-      buffer.write(' & ${segment.verses}');
-    } else {
-      buffer.write('\u00a0\u00a0\u00a0${display(segment)}');
-    }
-  }
-  return buffer.toString();
+  return formatHarmonyReferenceCellDisplay(values);
 }
 
 class HarmonyReferenceCell {
@@ -195,7 +180,7 @@ class HarmonyReferenceCell {
   }
 
   String get displayValue {
-    return segments.map((segment) => segment.displayReference).join(' ');
+    return formatHarmonyReferenceCellDisplay(segments);
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -318,4 +303,59 @@ class HarmonyReferenceCell {
       segments: List<HarmonyReferenceSegment>.unmodifiable(segments),
     );
   }
+}
+
+String _displayVerseRange(String verses) => verses.replaceAll('-', '–');
+
+String _startVerse(String verses) => verses.split('-').first.trim();
+
+String _endVerse(String verses) => verses.split('-').last.trim();
+
+/// Formats a Harmony table cell using the compact notation from the source
+/// synopsis: commas omit a repeated chapter, semicolons separate passages,
+/// and continuous cross-chapter passages collapse to their outer endpoints.
+String formatHarmonyReferenceCellDisplay(
+  Iterable<HarmonyReferenceSegment> values,
+) {
+  final segments = values.toList(growable: false);
+  if (segments.isEmpty) return '';
+
+  final buffer = StringBuffer();
+  var groupStart = 0;
+  while (groupStart < segments.length) {
+    var groupEnd = groupStart;
+    while (groupEnd + 1 < segments.length &&
+        segments[groupEnd + 1].separatorBefore ==
+            ReferenceSeparator.continuous) {
+      groupEnd++;
+    }
+
+    final first = segments[groupStart];
+    final last = segments[groupEnd];
+    final separator = first.separatorBefore;
+    final omitChapter =
+        groupStart > 0 &&
+        separator == ReferenceSeparator.sameChapter &&
+        first.chapter == segments[groupStart - 1].chapter &&
+        groupStart == groupEnd;
+
+    if (groupStart > 0) {
+      buffer.write(separator == ReferenceSeparator.sameChapter ? ', ' : '; ');
+    }
+
+    if (groupEnd > groupStart) {
+      buffer
+        ..write('${first.chapter}:${_startVerse(first.verses)}')
+        ..write('–')
+        ..write('${last.chapter}:${_endVerse(last.verses)}');
+    } else if (omitChapter) {
+      buffer.write(_displayVerseRange(first.verses));
+    } else {
+      buffer.write('${first.chapter}:${_displayVerseRange(first.verses)}');
+    }
+
+    groupStart = groupEnd + 1;
+  }
+
+  return buffer.toString();
 }

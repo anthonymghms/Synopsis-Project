@@ -207,9 +207,6 @@ class TopicLanguageSelectionController {
       _languageCode.value = normalized;
       _prefs?.setString('selected_topic_language_code', normalized);
     }
-    // Topic-table language is also the application UI/menu language. Bible
-    // language and version remain controlled by LanguageSelectionController.
-    MenuLanguageController.instance.update(normalized);
   }
 }
 
@@ -251,7 +248,7 @@ class MenuLanguageController {
   }
 
   void update(String code) {
-    final normalized = code.trim();
+    final normalized = code.trim().toLowerCase();
     if (normalized.isEmpty || normalized == _languageCode.value) {
       return;
     }
@@ -749,7 +746,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       columns: 'الأعمدة',
       showColumns: 'إظهار الأعمدة',
       sort: 'الترتيب والأعمدة',
-      sortBy: 'الترتيب حسب',
+      sortBy: 'الترتيب بحسب',
       defaultSort: 'الافتراضي',
       chronology: 'التسلسل الزمني',
       visibleColumns: 'الأعمدة الظاهرة',
@@ -1216,6 +1213,7 @@ Uri _mainTableUri({
   ColumnVisibilityState columnVisibility = const ColumnVisibilityState(),
 }) {
   final queryParameters = <String, String>{
+    'menuLanguage': MenuLanguageController.instance.languageCode,
     'topicLanguage':
         (topicLanguage ??
                 _topicLanguageOptionForCode(
@@ -1243,6 +1241,7 @@ Uri _topicUri({
   String comparisonState = '',
 }) {
   final queryParameters = {
+    'menuLanguage': MenuLanguageController.instance.languageCode,
     'topicLanguage':
         (topicLanguage ??
                 _topicLanguageOptionForCode(
@@ -1658,7 +1657,21 @@ String _formatReferenceForDirection(String reference, TextDirection direction) {
 }
 
 String _formatArabicReference(String reference) {
-  return formatVerseRef(reference, 'arabic').text;
+  return formatCompositeVerseRef(reference, 'arabic').text;
+}
+
+String _compactReferenceLabel(Iterable<GospelReference> references) {
+  return formatHarmonyReferenceCellDisplay(
+    references.map(
+      (reference) => HarmonyReferenceSegment(
+        chapter: reference.chapter,
+        verses: reference.verses.trim(),
+        separatorBefore: ReferenceSeparator.fromSymbol(
+          reference.separatorBefore,
+        ),
+      ),
+    ),
+  );
 }
 
 String _formatReferenceForLanguage(
@@ -2205,20 +2218,6 @@ Widget _buildToolbarLanguageButton({
   bool loading = false,
 }) {
   final labels = menuLanguage.ui;
-  String localizedLanguageName(LanguageOption option) {
-    if (menuLanguage.code == 'arabic') {
-      return switch (option.code.toLowerCase()) {
-        'english' => 'الإنجليزية',
-        'arabic' => 'العربية',
-        _ => option.label,
-      };
-    }
-    return switch (option.code.toLowerCase()) {
-      'english' => 'English',
-      'arabic' => 'Arabic',
-      _ => option.label,
-    };
-  }
 
   if (loading) {
     return OutlinedButton.icon(
@@ -2236,13 +2235,18 @@ Widget _buildToolbarLanguageButton({
   return _toolbarDropdownButton<String>(
     context: context,
     icon: Icons.language,
-    label: '${labels.bibleLanguage}: ${localizedLanguageName(language)}',
+    label:
+        '${labels.bibleLanguage}: ${localizedLanguageNameForMenu(menuLanguage, language.code, language.label)}',
     enabled: languages.length > 1,
     items: languages
         .map(
           (option) => _checkedMenuItem<String>(
             value: option.code,
-            label: localizedLanguageName(option),
+            label: localizedLanguageNameForMenu(
+              menuLanguage,
+              option.code,
+              option.label,
+            ),
             selected: option.code == language.code,
             textDirection: menuLanguage.direction,
           ),
@@ -2258,6 +2262,25 @@ Widget _buildToolbarLanguageButton({
       }
     },
   );
+}
+
+String localizedLanguageNameForMenu(
+  LanguageOption menuLanguage,
+  String languageCode,
+  String fallbackLabel,
+) {
+  if (menuLanguage.code.toLowerCase() == 'arabic') {
+    return switch (languageCode.toLowerCase()) {
+      'english' => 'الإنجليزية',
+      'arabic' => 'العربية',
+      _ => fallbackLabel,
+    };
+  }
+  return switch (languageCode.toLowerCase()) {
+    'english' => 'English',
+    'arabic' => 'Arabic',
+    _ => fallbackLabel,
+  };
 }
 
 Widget _buildToolbarVersionButton({
@@ -4168,32 +4191,28 @@ class _HarmonySortAndColumnsDialogState
   }
 }
 
-Future<void> _persistTopicLanguagePreference(String code) async {
-  TopicLanguageSelectionController.instance.update(code);
+Future<void> _persistMenuLanguagePreference(String code) async {
+  MenuLanguageController.instance.update(code);
   final profile = UserProfileController.instance;
   if (profile.profile != null) {
     await _updateUserPreferencesBestEffort(
-      profile.preferences.copyWith(topicLanguage: code),
+      profile.preferences.copyWith(menuLanguage: code),
     );
   }
 }
 
-void _replaceCurrentRouteTopicLanguage(
+void _recordCurrentRouteMenuLanguage(
   BuildContext context,
   TopicLanguageOption option,
 ) {
   final raw = ModalRoute.of(context)?.settings.name ?? '/';
   final uri = Uri.tryParse(raw) ?? Uri(path: '/');
   final query = <String, String>{...uri.queryParameters};
-  query['topicLanguage'] = option.code;
-  query.putIfAbsent(
-    'bibleLanguage',
-    () =>
-        query['language'] ?? LanguageSelectionController.instance.languageCode,
+  query['menuLanguage'] = option.code;
+  BrowserRouteHistory.update(
+    uri.replace(queryParameters: query),
+    replace: true,
   );
-  Navigator.of(
-    context,
-  ).pushReplacementNamed(uri.replace(queryParameters: query).toString());
 }
 
 Widget _buildTopicLanguageButton({
@@ -4204,7 +4223,7 @@ Widget _buildTopicLanguageButton({
   bool loading = false,
   ValueChanged<TopicLanguageOption>? onSelected,
 }) {
-  final tooltip = menuLanguage.ui.changeTopicLanguage;
+  final tooltip = menuLanguage.ui.menuLanguage;
   return PopupMenuButton<String>(
     tooltip: tooltip,
     enabled: !loading && languages.isNotEmpty,
@@ -4220,17 +4239,21 @@ Widget _buildTopicLanguageButton({
       if (onSelected != null) {
         onSelected(option);
       } else {
-        unawaited(_persistTopicLanguagePreference(option.code));
-        _replaceCurrentRouteTopicLanguage(context, option);
+        unawaited(_persistMenuLanguagePreference(option.code));
+        _recordCurrentRouteMenuLanguage(context, option);
       }
     },
     itemBuilder: (_) => languages
         .map(
           (option) => _checkedMenuItem<String>(
             value: option.code,
-            label: option.label,
+            label: localizedLanguageNameForMenu(
+              menuLanguage,
+              option.code,
+              option.label,
+            ),
             selected: option.code == selected.code,
-            textDirection: option.direction,
+            textDirection: menuLanguage.direction,
           ),
         )
         .toList(),
@@ -4244,16 +4267,17 @@ Widget _buildGlobalTopNavigation({
   TopicLanguageOption? topicLanguage,
   List<TopicLanguageOption>? topicLanguages,
   bool topicLanguagesLoading = false,
-  ValueChanged<TopicLanguageOption>? onTopicLanguageChanged,
+  ValueChanged<TopicLanguageOption>? onMenuLanguageChanged,
   bool showBackToMainTable = false,
 }) {
   final menuLanguage = MenuLanguageScope.of(context);
   final labels = menuLanguage.ui;
-  final selectedTopicLanguage =
+  final selectedTableLanguage =
       topicLanguage ??
       _topicLanguageOptionForCode(
         TopicLanguageSelectionController.instance.languageCode,
       );
+  final selectedMenuLanguage = _topicLanguageOptionForCode(menuLanguage.code);
   final availableTopicLanguages = topicLanguages ?? _supportedTopicLanguages;
   return Directionality(
     textDirection: menuLanguage.direction,
@@ -4269,7 +4293,7 @@ Widget _buildGlobalTopNavigation({
                 _mainTableUri(
                   language: contentLanguage,
                   version: contentVersion,
-                  topicLanguage: selectedTopicLanguage,
+                  topicLanguage: selectedTableLanguage,
                 ).toString(),
               );
             },
@@ -4279,10 +4303,10 @@ Widget _buildGlobalTopNavigation({
         _buildTopicLanguageButton(
           context: context,
           menuLanguage: menuLanguage,
-          selected: selectedTopicLanguage,
+          selected: selectedMenuLanguage,
           languages: availableTopicLanguages,
           loading: topicLanguagesLoading,
-          onSelected: onTopicLanguageChanged,
+          onSelected: onMenuLanguageChanged,
         ),
       ],
     ),
@@ -4324,6 +4348,7 @@ Future<void> _persistLanguageVersion(
   bool? withDiacritics,
 }) async {
   _syncSelectedContentLanguage(option);
+  TopicLanguageSelectionController.instance.update(option.code);
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -4346,6 +4371,7 @@ Future<void> _persistLanguageVersion(
     unawaited(
       _updateUserPreferencesBestEffort(
         current.copyWith(
+          topicLanguage: option.code,
           contentLanguage: option.code,
           preferredVersion: _sanitizeVersionForLanguage(option, version),
           showDiacritics: option.code == 'arabic' && withDiacritics != null
@@ -4404,11 +4430,7 @@ void main() async {
   await LanguageSelectionController.instance.initialize();
   await TopicLanguageSelectionController.instance.initialize();
   await MenuLanguageController.instance.initialize(
-    fallbackLanguageCode:
-        TopicLanguageSelectionController.instance.languageCode,
-  );
-  MenuLanguageController.instance.update(
-    TopicLanguageSelectionController.instance.languageCode,
+    fallbackLanguageCode: defaultLanguage,
   );
   await ZoomController.instance.initialize();
   runApp(GospelApp());
@@ -4488,9 +4510,7 @@ class _GospelAppState extends State<GospelApp> {
           uri.queryParameters['bibleLanguage'] ??
           uri.queryParameters['language'];
       final rawTopicLanguage =
-          uri.queryParameters['topicLanguage'] ??
-          rawMenuLanguage ??
-          uri.queryParameters['language'];
+          uri.queryParameters['topicLanguage'] ?? rawLanguage;
       final rawVersion = uri.queryParameters['version'];
       return MaterialPageRoute(
         settings: settings,
@@ -4527,10 +4547,7 @@ class _GospelAppState extends State<GospelApp> {
           uri.queryParameters['language'] ??
           defaultLanguage;
       final rawTopicLanguage =
-          uri.queryParameters['topicLanguage'] ??
-          rawMenuLanguage ??
-          uri.queryParameters['language'] ??
-          TopicLanguageSelectionController.instance.languageCode;
+          uri.queryParameters['topicLanguage'] ?? rawLanguage;
       final rawVersion = uri.queryParameters['version'] ?? defaultVersion;
       final languageOption = _resolveLanguageOption(
         languageParam: rawLanguage,
@@ -4585,10 +4602,7 @@ class _GospelAppState extends State<GospelApp> {
           uri.queryParameters['language'] ??
           defaultLanguage;
       final initialTopicLanguage =
-          uri.queryParameters['topicLanguage'] ??
-          rawMenuLanguage ??
-          uri.queryParameters['language'] ??
-          TopicLanguageSelectionController.instance.languageCode;
+          uri.queryParameters['topicLanguage'] ?? initialLanguage;
       final initialVersion = uri.queryParameters['version'] ?? defaultVersion;
       final initialTopicId = uri.queryParameters['topicId'] ?? '';
       final initialTopicNumber = uri.queryParameters['topicNumber'] ?? '';
@@ -4786,7 +4800,8 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
 
 void _applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
   LanguageSelectionController.instance.update(preferences.contentLanguage);
-  TopicLanguageSelectionController.instance.update(preferences.topicLanguage);
+  TopicLanguageSelectionController.instance.update(preferences.contentLanguage);
+  MenuLanguageController.instance.update(preferences.menuLanguage);
   ZoomController.instance.update(preferences.zoomLevel);
 }
 
@@ -5120,30 +5135,10 @@ class _TopicListScreenState extends State<TopicListScreen> {
     }
   }
 
-  Future<void> _updateTopicLanguage(TopicLanguageOption option) async {
-    if (option.code == _selectedTopicLanguageCode) return;
-    TopicLanguageSelectionController.instance.update(option.code);
-    final profile = UserProfileController.instance;
-    if (profile.profile != null) {
-      unawaited(
-        _updateUserPreferencesBestEffort(
-          profile.preferences.copyWith(topicLanguage: option.code),
-        ),
-      );
-    }
-    setState(() => _selectedTopicLanguageCode = option.code);
-    await fetchTopics();
-    if (!mounted) return;
-    BrowserRouteHistory.update(
-      _mainTableUri(
-        language: _languageOption,
-        version: _apiVersionFor(_languageOption),
-        topicLanguage: option,
-        filterState: _filterState,
-        sortState: _sortState,
-        columnVisibility: _columnVisibility,
-      ),
-    );
+  void _updateMenuLanguage(TopicLanguageOption option) {
+    if (option.code == MenuLanguageController.instance.languageCode) return;
+    unawaited(_persistMenuLanguagePreference(option.code));
+    _recordCurrentRouteMenuLanguage(context, option);
   }
 
   void _restoreControlStateFromUri(Uri uri) {
@@ -5324,6 +5319,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
         _mainTableUri(
           language: option,
           version: normalized,
+          topicLanguage: _topicLanguageOption,
           filterState: _filterState,
           sortState: _sortState,
           columnVisibility: _columnVisibility,
@@ -5366,6 +5362,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _mainTableUri(
         language: option,
         version: normalized,
+        topicLanguage: _topicLanguageOptionForCode(option.code),
         filterState: _filterState,
         sortState: _sortState,
         columnVisibility: _columnVisibility,
@@ -5535,11 +5532,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
     final menuLanguage = MenuLanguageScope.of(context);
-    final tableUiLanguage = menuLanguage.copyWith(
-      code: _topicLanguageOption.code,
-      direction: _topicLanguageOption.direction,
-      localizedGospelNames: _topicLanguageOption.gospelNames,
-    );
     final processed = _processedTopics();
     return Directionality(
       textDirection: _topicLanguageOption.direction,
@@ -5552,7 +5544,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           topicLanguage: _topicLanguageOption,
           topicLanguages: _supportedTopicLanguages,
           topicLanguagesLoading: _topicLanguagesLoading,
-          onTopicLanguageChanged: _updateTopicLanguage,
+          onMenuLanguageChanged: _updateMenuLanguage,
         ),
         settingsLabel: menuLanguage.ui.settings,
         logoutLabel: menuLanguage.ui.logout,
@@ -5607,14 +5599,14 @@ class _TopicListScreenState extends State<TopicListScreen> {
                       HarmonySortButton(
                         state: _sortState,
                         columns: _columnVisibility,
-                        uiLanguage: tableUiLanguage,
+                        uiLanguage: menuLanguage,
                         onChanged: _setSortState,
                         onColumnsChanged: _setColumnVisibility,
                         onInteractionEnd: _commitControlState,
                       ),
                       HarmonyFilterButton(
                         filterState: _filterState,
-                        uiLanguage: tableUiLanguage,
+                        uiLanguage: menuLanguage,
                         topics: _topics,
                         columns: _columnVisibility,
                         currentResultCount: processed.visibleTopicCount,
@@ -5623,19 +5615,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
                       ),
                       _buildHarmonyResultCountChip(
                         context: context,
-                        uiLanguage: tableUiLanguage,
+                        uiLanguage: menuLanguage,
                         count: processed.visibleTopicCount,
                       ),
                       _buildHarmonyReferenceCountChip(
                         context: context,
-                        uiLanguage: tableUiLanguage,
+                        uiLanguage: menuLanguage,
                         count: processed.visibleReferenceCount,
                       ),
                       if (_filterState.isActive)
                         _buildActiveSetFilterChip(
                           context: context,
                           state: _filterState,
-                          uiLanguage: tableUiLanguage,
+                          uiLanguage: menuLanguage,
                           onDeleted: _clearFilter,
                         ),
                     ],
@@ -5953,6 +5945,42 @@ class _HarmonyTableState extends State<HarmonyTable> {
     }
   }
 
+  String _displayVerseRange(String verses) => verses.replaceAll('-', '–');
+
+  String _displayReferenceLabel(List<GospelReference> references, int index) {
+    final reference = references[index];
+    final verses = reference.verses.trim();
+    final verseParts = verses.split('-');
+    final nextIsContinuous =
+        index + 1 < references.length &&
+        references[index + 1].separatorBefore == '+';
+
+    if (nextIsContinuous && reference.chapter > 0 && verseParts.isNotEmpty) {
+      return '${reference.chapter}:${verseParts.first.trim()}';
+    }
+    if (reference.separatorBefore == '+' &&
+        reference.chapter > 0 &&
+        verseParts.isNotEmpty) {
+      return '${reference.chapter}:${verseParts.last.trim()}';
+    }
+    if (reference.separatorBefore == ',' &&
+        index > 0 &&
+        reference.chapter == references[index - 1].chapter) {
+      return _displayVerseRange(verses);
+    }
+    return _displayVerseRange(reference.formattedReference);
+  }
+
+  String _displaySeparatorBefore(GospelReference reference, int index) {
+    if (index == 0) return '';
+    final isArabic = widget.languageOption.code == 'arabic';
+    return switch (reference.separatorBefore) {
+      '+' => '–',
+      ',' => isArabic ? '، ' : ', ',
+      _ => isArabic ? '؛ ' : '; ',
+    };
+  }
+
   Widget _buildReferenceCell(
     Topic topic,
     int displayIndex,
@@ -5992,10 +6020,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
         break;
     }
 
-    final wrapAlignment = _wrapAlignmentForTextAlign(
-      align,
-      widget.topicLanguage.direction,
-    );
+    final referenceDirection = widget.languageOption.direction;
+    final wrapAlignment = _wrapAlignmentForTextAlign(align, referenceDirection);
     final tooltipMessage = MenuLanguageScope.of(
       context,
     ).ui.clickToReadInChapter;
@@ -6005,7 +6031,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
     final useCombinedHoverPreview = filteredRefs.length > 1;
     final children = <Widget>[];
-    for (final ref in filteredRefs) {
+    for (var index = 0; index < filteredRefs.length; index++) {
+      final ref = filteredRefs[index];
       final relationLabel = switch (ref.separatorBefore) {
         '+' => 'continuous with the previous reference',
         ';' => 'separate non-contiguous reference',
@@ -6028,7 +6055,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
         reference: ref,
         textStyle: style,
         textAlign: align,
-        textDirection: widget.topicLanguage.direction,
+        textDirection: referenceDirection,
         topicName: topic.name,
         topicLanguage: widget.topicLanguage.code,
         displayBook: widget
@@ -6044,15 +6071,20 @@ class _HarmonyTableState extends State<HarmonyTable> {
             ? !_isArabicWithoutDiacritics(widget.apiVersion)
             : null,
         tooltipMessage: tooltipMessage,
+        labelOverride: _displayReferenceLabel(filteredRefs, index),
         enableHoverPreview: !useCombinedHoverPreview,
         showHoverTooltip: false,
         openInNewTab: true,
+        compact: useCombinedHoverPreview,
       );
-      children.add(
-        relationLabel.isEmpty
-            ? referenceLink
-            : Semantics(label: relationLabel, child: referenceLink),
-      );
+      final semanticLink = relationLabel.isEmpty
+          ? referenceLink
+          : Semantics(label: relationLabel, child: referenceLink);
+      final separator = _displaySeparatorBefore(ref, index);
+      if (separator.isNotEmpty) {
+        children.add(Text(separator, style: style));
+      }
+      children.add(semanticLink);
     }
 
     final cellContent = Padding(
@@ -6063,8 +6095,8 @@ class _HarmonyTableState extends State<HarmonyTable> {
           alignment: wrapAlignment,
           runAlignment: wrapAlignment,
           crossAxisAlignment: WrapCrossAlignment.center,
-          textDirection: widget.topicLanguage.direction,
-          spacing: 8,
+          textDirection: referenceDirection,
+          spacing: 0,
           runSpacing: 4,
           children: children,
         ),
@@ -6098,7 +6130,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
         ].join('|'),
       ),
       references: filteredRefs,
-      textDirection: widget.topicLanguage.direction,
+      textDirection: referenceDirection,
       topicName: topic.name,
       topicLanguage: widget.topicLanguage.code,
       displayBook: widget
@@ -6361,6 +6393,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.gospel = '',
     this.showHoverTooltip = true,
     this.openInNewTab = false,
+    this.compact = false,
   });
 
   final GospelReference reference;
@@ -6382,6 +6415,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String gospel;
   final bool showHoverTooltip;
   final bool openInNewTab;
+  final bool compact;
 
   @override
   State<ReferenceHoverText> createState() => _ReferenceHoverTextState();
@@ -6439,6 +6473,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     }
 
     final queryParameters = <String, String>{
+      'menuLanguage': MenuLanguageController.instance.languageCode,
       'book': bookParam,
       'bookDisplay': displayBook,
       'chapter': reference.chapter.toString(),
@@ -6558,10 +6593,10 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         isArabic: _isArabicLanguage(widget.language),
       );
     }
-    final verses = widget.reference.verses.trim();
-    final reference = verses.isEmpty
-        ? '${widget.reference.chapter}'
-        : '${widget.reference.chapter}:$verses';
+    final displayedLabel = widget.labelOverride.trim();
+    final reference = displayedLabel.isNotEmpty
+        ? displayedLabel
+        : _compactReferenceLabel([widget.reference]);
     return _combineBookAndReference(
       book,
       reference,
@@ -7016,7 +7051,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
               widthFactor: 1,
               heightFactor: 1,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                padding: widget.compact
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 child: BrowserFindText(
                   text: browserFindText.text,
                   style: _isHovered ? hoverStyle : baseStyle,
@@ -7131,6 +7168,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     }
 
     final queryParameters = <String, String>{
+      'menuLanguage': MenuLanguageController.instance.languageCode,
       'book': bookParam,
       'bookDisplay': displayBook,
       'chapter': reference.chapter.toString(),
@@ -7213,15 +7251,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
         isArabic: _isArabicLanguage(widget.language),
       );
     }
-    final formattedReference = formatReferencePreviewSection(
-      references.map(
-        (item) => HarmonyReferenceSegment(
-          chapter: item.chapter,
-          verses: item.verses.trim(),
-          separatorBefore: ReferenceSeparator.fromSymbol(item.separatorBefore),
-        ),
-      ),
-    );
+    final formattedReference = _compactReferenceLabel(references);
     return _combineBookAndReference(
       book,
       formattedReference,
@@ -8609,6 +8639,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   String get _metaSummary {
     final segments = <String>[];
+    final menuLanguage = MenuLanguageScope.of(context);
     final version = _activeVersion.trim();
     if (version.isNotEmpty) {
       final languageOption = _languageOptionForVersion(version);
@@ -8622,8 +8653,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
     final apiLanguage = _activeApiLanguage.trim();
     if (apiLanguage.isNotEmpty) {
-      final displayLanguage =
-          _languageOptionForApiLanguage(apiLanguage)?.label ?? apiLanguage;
+      final option = _languageOptionForApiLanguage(apiLanguage);
+      final displayLanguage = localizedLanguageNameForMenu(
+        menuLanguage,
+        option?.code ?? apiLanguage,
+        option?.label ?? apiLanguage,
+      );
       segments.add(displayLanguage);
     }
     return segments.join(' · ');
@@ -9151,6 +9186,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       return;
     }
     final labels = _labels;
+    final menuLanguage = MenuLanguageScope.of(context);
 
     final mainLanguage = _languageOption;
     final mainVersion = _sanitizeVersionForLanguage(
@@ -9229,7 +9265,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                           .map(
                             (option) => DropdownMenuItem(
                               value: option,
-                              child: Text(option.label),
+                              child: Text(
+                                localizedLanguageNameForMenu(
+                                  menuLanguage,
+                                  option.code,
+                                  option.label,
+                                ),
+                              ),
                             ),
                           )
                           .toList(),
@@ -9422,6 +9464,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   Future<void> _showComparisonColumnSelector(_ComparisonPassage entry) async {
     final labels = _labels;
+    final menuLanguage = MenuLanguageScope.of(context);
     LanguageOption selectedLanguage = entry.language;
     String selectedVersion = _sanitizeVersionForLanguage(
       selectedLanguage,
@@ -9452,7 +9495,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         .map(
                           (option) => DropdownMenuItem<String>(
                             value: option.code,
-                            child: Text(option.label),
+                            child: Text(
+                              localizedLanguageNameForMenu(
+                                menuLanguage,
+                                option.code,
+                                option.label,
+                              ),
+                            ),
                           ),
                         )
                         .toList(),
@@ -9553,7 +9602,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     bool isMain = false,
   }) {
     final versionLabel = _versionLabel(language.code, version);
-    final title = '${language.label} · $versionLabel';
+    final menuLanguage = MenuLanguageScope.of(context);
+    final title =
+        '${localizedLanguageNameForMenu(menuLanguage, language.code, language.label)} · $versionLabel';
     final labels = _labels;
 
     Widget body;
@@ -9738,7 +9789,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             )
           : entry.version;
       final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
-      final label = '${entry.language.label} · $versionLabel';
+      final menuLanguage = MenuLanguageScope.of(context);
+      final label =
+          '${localizedLanguageNameForMenu(menuLanguage, entry.language.code, entry.language.label)} · $versionLabel';
       if (entry.loading) {
         statusWidgets.addAll([
           Text(label, style: theme.textTheme.labelSmall),
@@ -10564,7 +10617,9 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
                   .map(
                     (option) => DropdownMenuItem<String>(
                       value: option.apiVersion,
-                      child: Text('${option.label} · ${option.versionLabel}'),
+                      child: Text(
+                        '${localizedLanguageNameForMenu(menuLanguage, option.code, option.label)} · ${option.versionLabel}',
+                      ),
                     ),
                   )
                   .toList(),
@@ -10867,7 +10922,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   String get _languageVersionSummary {
     final option = _languageOption;
     final versionLabel = _versionLabel(option.code, _activeVersion);
-    return '${option.label} · $versionLabel';
+    final menuLanguage = MenuLanguageScope.of(context);
+    return '${localizedLanguageNameForMenu(menuLanguage, option.code, option.label)} · $versionLabel';
   }
 
   String get _topicToolbarTitle => _numberedTopicTitle(
@@ -11521,7 +11577,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     ) {
       final entry = selectedTemplates[index];
       final versionLabel = _versionLabel(entry.language.code, entry.version);
-      final label = '${entry.language.label} · $versionLabel';
+      final menuLanguage = MenuLanguageScope.of(context);
+      final label =
+          '${localizedLanguageNameForMenu(menuLanguage, entry.language.code, entry.language.label)} · $versionLabel';
       return Container(
         padding: const EdgeInsetsDirectional.only(start: 10, end: 4),
         decoration: BoxDecoration(
@@ -11609,7 +11667,13 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                           .map(
                             (option) => DropdownMenuItem(
                               value: option,
-                              child: Text(option.label),
+                              child: Text(
+                                localizedLanguageNameForMenu(
+                                  MenuLanguageScope.of(context),
+                                  option.code,
+                                  option.label,
+                                ),
+                              ),
                             ),
                           )
                           .toList(),
@@ -11642,7 +11706,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       initialValue: currentDropdownValue,
                       decoration: InputDecoration(
                         labelText:
-                            '${labels.selectVersions} (${selectedLanguage.label})',
+                            '${labels.selectVersions} (${localizedLanguageNameForMenu(MenuLanguageScope.of(context), selectedLanguage.code, selectedLanguage.label)})',
                       ),
                       hint: Text(labels.selectVersion),
                       items: choices
@@ -11810,7 +11874,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           )
         : entry.version;
     final versionLabel = _versionLabel(entry.language.code, resolvedVersion);
-    final header = '${entry.language.label} · $versionLabel';
+    final menuLanguage = MenuLanguageScope.of(context);
+    final header =
+        '${localizedLanguageNameForMenu(menuLanguage, entry.language.code, entry.language.label)} · $versionLabel';
     return Card(
       margin: const EdgeInsets.only(top: 8),
       child: Padding(
@@ -11976,7 +12042,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         comparison.language.code,
         resolvedVersion,
       );
-      final label = '${comparison.language.label} · $versionLabel';
+      final menuLanguage = MenuLanguageScope.of(context);
+      final label =
+          '${localizedLanguageNameForMenu(menuLanguage, comparison.language.code, comparison.language.label)} · $versionLabel';
       if (comparison.loading) {
         statusWidgets.addAll([
           Text(label, style: theme.textTheme.labelSmall),

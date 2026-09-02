@@ -39,7 +39,8 @@ class ProfileEditorLabels {
   String get menuLanguage => arabic ? 'لغة القوائم' : 'Menu language';
   String get topicLanguage =>
       arabic ? 'لغة جدول المواضيع' : 'Topic table language';
-  String get contentLanguage => arabic ? 'اللغة' : 'Language';
+  String get contentLanguage =>
+      arabic ? 'لغة الجدول والكتاب المقدس' : 'Table & Bible language';
   String get preferredVersion =>
       arabic ? 'الترجمة المفضلة' : 'Preferred translation';
   String get defaultZoom => arabic ? 'التكبير الافتراضي' : 'Default zoom';
@@ -117,7 +118,6 @@ class ProfileEditorState extends State<ProfileEditor> {
   String? _saveError;
   String? _versionWarning;
   late String _menuLanguage;
-  late String _topicLanguage;
   late String _contentLanguage;
   late String _preferredVersion;
   late String _timezone;
@@ -176,8 +176,7 @@ class ProfileEditorState extends State<ProfileEditor> {
     );
     _organization = TextEditingController(text: profile.organization);
     _bio = TextEditingController(text: profile.bio);
-    _topicLanguage = profile.preferences.topicLanguage;
-    _menuLanguage = _topicLanguage;
+    _menuLanguage = profile.preferences.menuLanguage;
     _contentLanguage = profile.preferences.contentLanguage;
     _preferredVersion = profile.preferences.preferredVersion;
     _requiresExplicitInitialVersion =
@@ -238,10 +237,9 @@ class ProfileEditorState extends State<ProfileEditor> {
     try {
       final languages = await TopicLanguageCatalog().load();
       if (!mounted) return;
-      final selected = TopicLanguageCatalog.resolve(languages, _topicLanguage);
+      final selected = TopicLanguageCatalog.resolve(languages, _menuLanguage);
       setState(() {
         _topicLanguages = languages;
-        _topicLanguage = selected.code;
         _menuLanguage = selected.code;
         _topicCatalogLoading = false;
       });
@@ -293,8 +291,7 @@ class ProfileEditorState extends State<ProfileEditor> {
     _organization.text = profile.organization;
     _bio.text = profile.bio;
     setState(() {
-      _topicLanguage = profile.preferences.topicLanguage;
-      _menuLanguage = _topicLanguage;
+      _menuLanguage = profile.preferences.menuLanguage;
       _contentLanguage = profile.preferences.contentLanguage;
       final option = PreferenceLanguageCatalog.resolve(
         _languages,
@@ -373,7 +370,8 @@ class ProfileEditorState extends State<ProfileEditor> {
       bio: _bio.text.trim(),
       profileCompleted: true,
       preferences: UserPreferences(
-        topicLanguage: _topicLanguage,
+        menuLanguage: _menuLanguage,
+        topicLanguage: contentOption.code,
         contentLanguage: contentOption.code,
         preferredVersion: contentOption.sanitizeVersion(_preferredVersion),
         showDiacritics: contentOption.code == 'arabic' && _showDiacritics,
@@ -413,7 +411,7 @@ class ProfileEditorState extends State<ProfileEditor> {
     final labels = _labels;
     final direction = TopicLanguageCatalog.resolve(
       _topicLanguages,
-      _topicLanguage,
+      _menuLanguage,
     ).direction;
     final timezoneOptions = <String>{
       'UTC',
@@ -545,11 +543,11 @@ class ProfileEditorState extends State<ProfileEditor> {
                   width: constraints.maxWidth,
                   children: [
                     DropdownButtonFormField<String>(
-                      key: ValueKey('profile-topic-language-$_topicLanguage'),
-                      initialValue: _topicLanguage,
+                      key: ValueKey('profile-menu-language-$_menuLanguage'),
+                      initialValue: _menuLanguage,
                       isExpanded: true,
                       decoration: InputDecoration(
-                        labelText: labels.topicLanguage,
+                        labelText: labels.menuLanguage,
                       ),
                       items: _topicLanguages
                           .map(
@@ -569,7 +567,6 @@ class ProfileEditorState extends State<ProfileEditor> {
                           : (value) {
                               if (value == null) return;
                               setState(() {
-                                _topicLanguage = value;
                                 _menuLanguage = value;
                               });
                               widget.onMenuLanguagePreview?.call(value);

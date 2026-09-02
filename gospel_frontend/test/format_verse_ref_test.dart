@@ -56,26 +56,32 @@ void main() {
       'formats range 1:1-4 in Arabic with RTL isolation and RLM separators',
       () {
         final formatted = formatVerseRef('1:1-4', 'arabic');
-        expect(formatted.text, '\u2067١\u200F:\u200F١\u200F-\u200F٤\u2069');
+        expect(formatted.text, '\u2067١\u200F:\u200F١\u200F–\u200F٤\u2069');
         expect(formatted.dir, TextDirection.rtl);
       },
     );
 
     test('formats range 1:2-24 in Arabic with correct order', () {
       final formatted = formatVerseRef('1:2-24', 'ar');
-      expect(formatted.text, '\u2067١\u200F:\u200F٢\u200F-\u200F٢٤\u2069');
+      expect(formatted.text, '\u2067١\u200F:\u200F٢\u200F–\u200F٢٤\u2069');
       expect(formatted.dir, TextDirection.rtl);
     });
 
     test('formats 12:3-45 in Arabic', () {
       final formatted = formatVerseRef('12:3-45', 'arabic2');
-      expect(formatted.text, '\u2067١٢\u200F:\u200F٣\u200F-\u200F٤٥\u2069');
+      expect(formatted.text, '\u2067١٢\u200F:\u200F٣\u200F–\u200F٤٥\u2069');
       expect(formatted.dir, TextDirection.rtl);
     });
 
     test('formats single verse in Arabic', () {
       final formatted = formatVerseRef('1:1', 'arabic');
       expect(formatted.text, '\u2067١\u200F:\u200F١\u2069');
+      expect(formatted.dir, TextDirection.rtl);
+    });
+
+    test('formats same-chapter verse-only ranges in Arabic', () {
+      final formatted = formatVerseRef('21–23', 'arabic');
+      expect(formatted.text, '\u2067٢١\u200F–\u200F٢٣\u2069');
       expect(formatted.dir, TextDirection.rtl);
     });
 
@@ -88,6 +94,32 @@ void main() {
     test('returns unchanged for non-arabic', () {
       final formatted = formatVerseRef('1:2-24', 'english');
       expect(formatted.text, '1:2-24');
+      expect(formatted.dir, isNull);
+    });
+  });
+
+  group('formatCompositeVerseRef', () {
+    test('localizes comma-separated Arabic references in logical order', () {
+      final formatted = formatCompositeVerseRef('9:18–19, 23–26', 'arabic');
+      expect(
+        formatted.text,
+        '\u2067٩\u200F:\u200F١٨\u200F–\u200F١٩\u200F،\u200F ٢٣\u200F–\u200F٢٦\u2069',
+      );
+      expect(formatted.dir, TextDirection.rtl);
+    });
+
+    test('localizes a compact cross-chapter Arabic span', () {
+      final formatted = formatCompositeVerseRef('10:40–11:1', 'arabic');
+      expect(
+        formatted.text,
+        '\u2067١٠\u200F:\u200F٤٠\u200F–\u200F١١\u200F:\u200F١\u2069',
+      );
+      expect(formatted.dir, TextDirection.rtl);
+    });
+
+    test('keeps the compact English reference unchanged', () {
+      final formatted = formatCompositeVerseRef('9:18–19, 23–26', 'english');
+      expect(formatted.text, '9:18–19, 23–26');
       expect(formatted.dir, isNull);
     });
   });
@@ -114,7 +146,7 @@ void main() {
       expect(directionality.textDirection, TextDirection.rtl);
 
       final textWidget = tester.widget<Text>(find.byType(Text));
-      expect(textWidget.data, '\u2067١\u200F:\u200F٢\u200F-\u200F٢٤\u2069');
+      expect(textWidget.data, '\u2067١\u200F:\u200F٢\u200F–\u200F٢٤\u2069');
     },
   );
 }

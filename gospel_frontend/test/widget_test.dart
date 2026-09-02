@@ -6,16 +6,40 @@ import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/gospel_filter.dart';
 import 'package:gospel_frontend/main.dart';
 import 'package:gospel_frontend/topic_language_catalog.dart';
+import 'package:gospel_frontend/widgets/verse_ref_text.dart';
 
 void main() {
   test('placeholder smoke test', () {
     expect(true, isTrue);
   });
 
+  test('language names follow the menu locale, not the content locale', () {
+    final english = kBaseLanguageOptions.firstWhere(
+      (option) => option.code == 'english',
+    );
+    final arabic = kBaseLanguageOptions.firstWhere(
+      (option) => option.code == 'arabic',
+    );
+
+    expect(
+      localizedLanguageNameForMenu(arabic, english.code, english.label),
+      'الإنجليزية',
+    );
+    expect(
+      localizedLanguageNameForMenu(arabic, arabic.code, arabic.label),
+      'العربية',
+    );
+    expect(
+      localizedLanguageNameForMenu(english, arabic.code, arabic.label),
+      'Arabic',
+    );
+  });
+
   testWidgets(
-    'topic language also drives menus while Bible stays independent',
+    'menu language stays independent from table and Bible languages',
     (tester) async {
-      TopicLanguageSelectionController.instance.update('arabic');
+      MenuLanguageController.instance.update('arabic');
+      TopicLanguageSelectionController.instance.update('english');
       LanguageSelectionController.instance.update('english');
 
       await tester.pumpWidget(
@@ -31,11 +55,15 @@ void main() {
       );
       expect(find.text('الإعدادات'), findsOneWidget);
 
-      TopicLanguageSelectionController.instance.update('english');
+      TopicLanguageSelectionController.instance.update('arabic');
       LanguageSelectionController.instance.update('arabic');
       await tester.pump();
+      expect(find.text('الإعدادات'), findsOneWidget);
+      expect(MenuLanguageController.instance.languageCode, 'arabic');
+
+      MenuLanguageController.instance.update('english');
+      await tester.pump();
       expect(find.text('Settings'), findsOneWidget);
-      expect(MenuLanguageController.instance.languageCode, 'english');
     },
   );
 
@@ -144,6 +172,10 @@ void main() {
     await gesture.moveTo(const Offset(2000, 2000));
     await tester.pump(const Duration(milliseconds: 200));
     await gesture.removePointer();
+  }
+
+  String withoutDirectionalMarks(String value) {
+    return value.replaceAll(RegExp('[\u200E\u200F\u2066\u2067\u2069]'), '');
   }
 
   group('Gospel combination matching', () {
@@ -1097,6 +1129,7 @@ void main() {
     expect(routeLink.openInNewTab, isTrue);
     expect(routeLink.uri?.path, '/reference');
     expect(routeLink.uri?.queryParameters, {
+      'menuLanguage': 'english',
       'book': 'luke',
       'bookDisplay': 'Luke',
       'chapter': '4',
@@ -1300,7 +1333,7 @@ void main() {
   testWidgets('language selector caption and names follow Arabic UI', (
     tester,
   ) async {
-    TopicLanguageSelectionController.instance.update('arabic');
+    MenuLanguageController.instance.update('arabic');
 
     await tester.pumpWidget(
       MenuLanguageScope(
@@ -1325,7 +1358,7 @@ void main() {
     expect(find.text('الإنجليزية'), findsOneWidget);
     expect(find.text('العربية'), findsWidgets);
 
-    TopicLanguageSelectionController.instance.update('english');
+    MenuLanguageController.instance.update('english');
   });
 
   testWidgets('desktop configuration dialogs drag and stay in the viewport', (
@@ -1419,7 +1452,7 @@ void main() {
     );
   });
 
-  testWidgets('reference relation separators stay hidden in table cells', (
+  testWidgets('reference relation separators use compact synopsis notation', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -1446,25 +1479,31 @@ void main() {
       ]),
     );
 
+    final referenceLinks = tester.widgetList<ReferenceHoverText>(
+      find.byType(ReferenceHoverText),
+    );
+    expect(referenceLinks.map((link) => link.labelOverride), [
+      '4:42',
+      '5:2',
+      '6:17–19',
+      '27–36',
+    ]);
+    expect(find.text('–'), findsOneWidget);
+    expect(find.text('; '), findsOneWidget);
+    expect(find.text(', '), findsOneWidget);
     expect(find.text('+'), findsNothing);
-    expect(find.text(';'), findsNothing);
-    expect(find.text(','), findsNothing);
-    expect(find.text('4:42-44'), findsOneWidget);
-    expect(find.text('5:1-2'), findsOneWidget);
-    expect(find.text('6:17-19'), findsOneWidget);
-    expect(find.text('6:27-36'), findsOneWidget);
   });
 
-  testWidgets('continuous preview uses one symbol-free reference header', (
+  testWidgets('continuous preview keeps the exact compact cell reference', (
     tester,
   ) async {
     await tester.pumpWidget(
       harmonyTableFor(const [
-        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
+        GospelReference(book: 'Matthew', chapter: 10, verses: '40-42'),
         GospelReference(
-          book: 'Luke',
-          chapter: 5,
-          verses: '1-2',
+          book: 'Matthew',
+          chapter: 11,
+          verses: '1',
           separatorBefore: '+',
         ),
       ]),
@@ -1476,7 +1515,10 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 1500));
 
-    expect(find.text('Luke 4:42-44\u00a0\u00a0\u00a05:1-2'), findsOneWidget);
+    expect(find.text('10:40'), findsOneWidget);
+    expect(find.text('11:1'), findsOneWidget);
+    expect(find.text('Matthew 10:40–11:1'), findsOneWidget);
+    expect(find.textContaining('10:40-42'), findsNothing);
     expect(find.text('Click to read in chapter'), findsOneWidget);
     expect(find.text('+'), findsNothing);
 
@@ -1488,11 +1530,11 @@ void main() {
   ) async {
     await tester.pumpWidget(
       harmonyTableFor(const [
-        GospelReference(book: 'Luke', chapter: 1, verses: '40'),
+        GospelReference(book: 'Matthew', chapter: 9, verses: '18-19'),
         GospelReference(
-          book: 'Luke',
-          chapter: 1,
-          verses: '52',
+          book: 'Matthew',
+          chapter: 9,
+          verses: '23-26',
           separatorBefore: ',',
         ),
       ]),
@@ -1502,13 +1544,16 @@ void main() {
       find.byType(ReferenceHoverText),
     );
     expect(referenceLinks, hasLength(2));
-    expect(referenceLinks.map((link) => link.reference.verses), ['40', '52']);
+    expect(referenceLinks.map((link) => link.reference.verses), [
+      '18-19',
+      '23-26',
+    ]);
     final routeLinks = tester
         .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
         .where((link) => link.uri?.path == '/reference');
     expect(
       routeLinks.map((link) => link.uri?.queryParameters['verses']).toSet(),
-      {'40', '52'},
+      {'18-19', '23-26'},
     );
 
     final gesture = await hoverOver(
@@ -1517,9 +1562,8 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 1500));
 
-    expect(find.text('Luke 1:40 & 52'), findsOneWidget);
-    expect(find.text('Luke 1:40'), findsNothing);
-    expect(find.text('Luke 1:52'), findsNothing);
+    expect(find.text('Matthew 9:18–19, 23–26'), findsOneWidget);
+    expect(find.textContaining('&'), findsNothing);
     expect(find.byType(Divider), findsNothing);
     expect(find.text('Click to read in chapter'), findsOneWidget);
 
@@ -1547,8 +1591,8 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 1500));
 
-    expect(find.text('John 8:1-12'), findsOneWidget);
-    expect(find.text('John 8:20-25'), findsOneWidget);
+    expect(find.text('John 8:1–12'), findsOneWidget);
+    expect(find.text('John 8:20–25'), findsOneWidget);
     expect(find.byType(Divider), findsOneWidget);
     expect(find.text('Click to read in chapter'), findsNWidgets(2));
 
@@ -1585,8 +1629,13 @@ void main() {
     );
     await tester.pumpWidget(
       harmonyTableFor(const [
-        GospelReference(book: 'Luke', chapter: 4, verses: '42-44'),
-        GospelReference(book: 'Luke', chapter: 6, verses: '17-19'),
+        GospelReference(book: 'Matthew', chapter: 9, verses: '18-19'),
+        GospelReference(
+          book: 'Matthew',
+          chapter: 9,
+          verses: '23-26',
+          separatorBefore: ',',
+        ),
       ], languageOption: arabic),
     );
 
@@ -1596,6 +1645,44 @@ void main() {
     expect(combined.textDirection, TextDirection.rtl);
     expect(combined.language, arabic.apiLanguage);
     expect(combined.openInNewTab, isTrue);
+    final cellWrap = tester.widget<Wrap>(
+      find
+          .descendant(
+            of: find.byType(ReferenceCellHoverPreview),
+            matching: find.byType(Wrap),
+          )
+          .first,
+    );
+    expect(cellWrap.textDirection, TextDirection.rtl);
+    expect(find.text('، '), findsOneWidget);
+
+    final displayedReferences = tester
+        .widgetList<Text>(
+          find.descendant(
+            of: find.byType(VerseRefText),
+            matching: find.byType(Text),
+          ),
+        )
+        .map((text) => withoutDirectionalMarks(text.data ?? ''))
+        .toList();
+    expect(displayedReferences, containsAllInOrder(['٩:١٨–١٩', '٢٣–٢٦']));
+    expect(
+      tester.getCenter(find.byType(VerseRefText).first).dx,
+      greaterThan(tester.getCenter(find.byType(VerseRefText).last).dx),
+    );
+
+    final gesture = await hoverOver(
+      tester,
+      find.byType(ReferenceCellHoverPreview),
+    );
+    await tester.pump(const Duration(milliseconds: 1500));
+    final visibleText = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((text) => withoutDirectionalMarks(text.data ?? ''));
+    expect(visibleText, contains('متى ٩:١٨–١٩، ٢٣–٢٦'));
+    expect(visibleText.any((text) => text.contains('&')), isFalse);
+
+    await moveOutsideAndRemove(tester, gesture);
   });
 
   testWidgets('hidden Gospel columns do not render their references', (
@@ -1707,6 +1794,17 @@ void main() {
     );
 
     expect(find.text('الترتيب والأعمدة'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('الترتيب بحسب'), findsOneWidget);
+    expect(find.text('متى التسلسل الزمني'), findsOneWidget);
+    expect(find.text('مرقس التسلسل الزمني'), findsOneWidget);
+    expect(find.text('لوقا التسلسل الزمني'), findsOneWidget);
+    expect(find.text('يوحنا التسلسل الزمني'), findsOneWidget);
+    expect(find.textContaining('Matthew'), findsNothing);
+    expect(find.textContaining('Mark'), findsNothing);
+    expect(find.textContaining('Luke'), findsNothing);
+    expect(find.textContaining('John'), findsNothing);
   });
 
   testWidgets('sort button never includes the active chronology', (

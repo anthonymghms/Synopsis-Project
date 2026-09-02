@@ -54,7 +54,7 @@ void main() {
       expect(preferences.bibleVersion, 'Van Dyke-');
     });
 
-    test('topic language is the single table and menu language source', () {
+    test('menu language is stored independently from table and Bible', () {
       final preferences = UserPreferences.fromMap({
         'topicLanguage': 'english',
         'menuLanguage': 'arabic',
@@ -62,9 +62,9 @@ void main() {
       });
 
       expect(preferences.topicLanguage, 'english');
-      expect(preferences.menuLanguage, 'english');
+      expect(preferences.menuLanguage, 'arabic');
       expect(preferences.bibleLanguage, 'arabic');
-      expect(preferences.toMap()['menuLanguage'], 'english');
+      expect(preferences.toMap()['menuLanguage'], 'arabic');
     });
 
     test('serializes the complete preference schema', () {
@@ -122,6 +122,7 @@ void main() {
       displayName: '',
       email: 'reader@example.com',
       preferences: UserPreferences(
+        menuLanguage: 'arabic',
         topicLanguage: 'arabic',
         contentLanguage: 'arabic',
         preferredVersion: 'Van Dyke-',
@@ -146,8 +147,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('الملف الشخصي'), findsOneWidget);
-    expect(find.text('لغة جدول المواضيع'), findsOneWidget);
-    expect(find.text('لغة القوائم'), findsNothing);
+    expect(find.text('لغة القوائم'), findsOneWidget);
+    expect(find.text('لغة الجدول والكتاب المقدس'), findsOneWidget);
     final editorDirection = tester.widget<Directionality>(
       find
           .descendant(

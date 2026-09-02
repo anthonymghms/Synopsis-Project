@@ -76,6 +76,9 @@ class MainScaffold extends StatelessWidget {
                       final destination = Uri(
                         path: '/',
                         queryParameters: <String, String>{
+                          'menuLanguage': preferences.menuLanguage,
+                          'topicLanguage': preferences.contentLanguage,
+                          'bibleLanguage': preferences.contentLanguage,
                           'language': preferences.contentLanguage,
                           'version': preferences.preferredVersion,
                         },

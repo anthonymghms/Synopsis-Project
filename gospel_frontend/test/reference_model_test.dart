@@ -61,10 +61,23 @@ void main() {
       final restored = HarmonyReferenceCell.fromJson(original.toJson());
 
       expect(restored.displayValue, original.displayValue);
-      expect(restored.displayValue, '1:78-80 2:1-7 6:17-19 6:27-36');
-      expect(restored.displayValue, isNot(contains(RegExp(r'[+;,]'))));
+      expect(restored.displayValue, '1:78–2:7; 6:17–19, 27–36');
       expect(restored.logicalSelectionCount, 3);
       expect(restored.relation, HarmonyReferenceRelation.mixed);
+    });
+
+    test('table display matches compact comma and cross-chapter notation', () {
+      final comma = HarmonyReferenceCell.parse(
+        'Matthew 7:13-14, 21-23',
+        book: 'Matthew',
+      );
+      final continuous = HarmonyReferenceCell.parse(
+        'Matthew 10:40-42 + 11:1-10',
+        book: 'Matthew',
+      );
+
+      expect(comma.displayValue, '7:13–14, 21–23');
+      expect(continuous.displayValue, '10:40–11:10');
     });
 
     test('preview sections group comma and plus but split on semicolon', () {
@@ -79,18 +92,15 @@ void main() {
       );
 
       expect(groups.map((group) => group.length), [2, 2]);
-      expect(formatReferencePreviewSection(groups.first), '1:40 & 52');
-      expect(
-        formatReferencePreviewSection(groups.last),
-        '4:42-44\u00a0\u00a0\u00a05:1-2',
-      );
+      expect(formatReferencePreviewSection(groups.first), '1:40, 52');
+      expect(formatReferencePreviewSection(groups.last), '4:42–5:2');
     });
 
     test('same-chapter preview headings show the chapter only once', () {
       for (final entry in const <String, String>{
-        'Luke 1:40,52': '1:40 & 52',
-        'John 8:1,34': '8:1 & 34',
-        'John 8:1-12,20-25': '8:1-12 & 20-25',
+        'Luke 1:40,52': '1:40, 52',
+        'John 8:1,34': '8:1, 34',
+        'John 8:1-12,20-25': '8:1–12, 20–25',
       }.entries) {
         final cell = HarmonyReferenceCell.parse(entry.key, book: 'Test');
         expect(formatReferencePreviewSection(cell.segments), entry.value);
