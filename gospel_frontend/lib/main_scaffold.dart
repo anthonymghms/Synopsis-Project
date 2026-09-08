@@ -76,7 +76,7 @@ class MainScaffold extends StatelessWidget {
                       final destination = Uri(
                         path: '/',
                         queryParameters: <String, String>{
-                          'menuLanguage': preferences.menuLanguage,
+                          'menuLanguage': preferences.contentLanguage,
                           'topicLanguage': preferences.contentLanguage,
                           'bibleLanguage': preferences.contentLanguage,
                           'language': preferences.contentLanguage,
@@ -90,7 +90,7 @@ class MainScaffold extends StatelessWidget {
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(
-                            preferences.menuLanguage == 'arabic'
+                            preferences.contentLanguage == 'arabic'
                                 ? 'تم حفظ الإعدادات.'
                                 : 'Settings saved.',
                           ),

@@ -36,11 +36,9 @@ void main() {
   });
 
   testWidgets(
-    'menu language stays independent from table and Bible languages',
+    'one primary language keeps menu, topic, and Bible state aligned',
     (tester) async {
-      MenuLanguageController.instance.update('arabic');
-      TopicLanguageSelectionController.instance.update('english');
-      LanguageSelectionController.instance.update('english');
+      PrimaryLanguageController.instance.select('arabic');
 
       await tester.pumpWidget(
         MaterialApp(
@@ -54,18 +52,65 @@ void main() {
         ),
       );
       expect(find.text('الإعدادات'), findsOneWidget);
+      expect(TopicLanguageSelectionController.instance.languageCode, 'arabic');
+      expect(LanguageSelectionController.instance.languageCode, 'arabic');
 
-      TopicLanguageSelectionController.instance.update('arabic');
-      LanguageSelectionController.instance.update('arabic');
-      await tester.pump();
-      expect(find.text('الإعدادات'), findsOneWidget);
-      expect(MenuLanguageController.instance.languageCode, 'arabic');
-
-      MenuLanguageController.instance.update('english');
+      PrimaryLanguageController.instance.select('english');
       await tester.pump();
       expect(find.text('Settings'), findsOneWidget);
+      expect(TopicLanguageSelectionController.instance.languageCode, 'english');
+      expect(LanguageSelectionController.instance.languageCode, 'english');
     },
   );
+
+  test('comparison-only translations are not offered as a primary locale', () {
+    final english = kBaseLanguageOptions.first;
+    final french = english.copyWith(
+      code: 'french',
+      label: 'Français',
+      apiLanguage: 'french',
+      apiVersion: 'lsg',
+      versions: const <BibleVersion>[BibleVersion(id: 'lsg', label: 'LSG')],
+    );
+    final fullBibleCatalog = <LanguageOption>[english, french];
+
+    final primary = primaryLanguageOptionsFor(
+      bibleLanguages: fullBibleCatalog,
+      topicLanguages: <TopicLanguageOption>[
+        bundledTopicLanguages.first,
+        const TopicLanguageOption(
+          code: 'french',
+          label: 'Français',
+          direction: TextDirection.ltr,
+          gospelNames: <String>['Matthieu', 'Marc', 'Luc', 'Jean'],
+          subjectsLabel: 'Sujets',
+          topicCount: 100,
+          canonicalTopicCount: 100,
+          complete: true,
+        ),
+      ],
+    );
+
+    expect(fullBibleCatalog.map((option) => option.code), contains('french'));
+    expect(primary.map((option) => option.code), <String>['english']);
+
+    PrimaryLanguageController.instance.select('french');
+    expect(PrimaryLanguageController.instance.languageCode, 'english');
+    expect(TopicLanguageSelectionController.instance.languageCode, 'english');
+    expect(MenuLanguageController.instance.languageCode, 'english');
+  });
+
+  test('mixed legacy routes use the Bible language as the primary locale', () {
+    final mixed = Uri.parse(
+      '/topic?menuLanguage=arabic&topicLanguage=english&bibleLanguage=english',
+    );
+    final blankCanonical = Uri.parse(
+      '/topic?bibleLanguage=%20%20&language=arabic&topicLanguage=english',
+    );
+
+    expect(primaryLanguageQueryParameter(mixed), 'english');
+    expect(primaryLanguageQueryParameter(blankCanonical), 'arabic');
+  });
 
   Topic topicWith(String id, List<String> gospels) {
     return Topic(
@@ -1152,7 +1197,7 @@ void main() {
     expect(topicLink.openInNewTab, isFalse);
   });
 
-  testWidgets('topic-table and Bible language dimensions are independent', (
+  testWidgets('reference links mirror the primary language in every field', (
     tester,
   ) async {
     const reference = GospelReference(
@@ -1163,12 +1208,6 @@ void main() {
     );
     final combinations = <(TopicLanguageOption, LanguageOption, String)>[
       (bundledTopicLanguages.last, kBaseLanguageOptions.last, 'ميلاد يسوع'),
-      (
-        bundledTopicLanguages.first,
-        kBaseLanguageOptions.last,
-        'Birth of Jesus',
-      ),
-      (bundledTopicLanguages.last, kBaseLanguageOptions.first, 'ميلاد يسوع'),
       (
         bundledTopicLanguages.first,
         kBaseLanguageOptions.first,
@@ -1202,7 +1241,8 @@ void main() {
           matching: find.byType(BrowserRouteLink),
         ),
       );
-      expect(link.uri?.queryParameters['topicLanguage'], topicLanguage.code);
+      expect(link.uri?.queryParameters['menuLanguage'], bibleLanguage.code);
+      expect(link.uri?.queryParameters['topicLanguage'], bibleLanguage.code);
       expect(
         link.uri?.queryParameters['bibleLanguage'],
         bibleLanguage.apiLanguage,
@@ -1565,7 +1605,21 @@ void main() {
     expect(find.text('Matthew 9:18–19, 23–26'), findsOneWidget);
     expect(find.textContaining('&'), findsNothing);
     expect(find.byType(Divider), findsNothing);
+    final selectionGap = find.byKey(
+      const ValueKey<String>('same-chapter-selection-gap-1'),
+    );
+    expect(selectionGap, findsOneWidget);
+    expect(tester.widget<SizedBox>(selectionGap).height, 10);
     expect(find.text('Click to read in chapter'), findsOneWidget);
+
+    final combinedRoute = tester
+        .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+        .singleWhere(
+          (link) =>
+              link.uri?.path == '/reference' &&
+              link.uri?.queryParameters['verses'] == '18-19,23-26',
+        );
+    expect(combinedRoute.uri?.queryParameters['label'], '9:18–19, 23–26');
 
     await moveOutsideAndRemove(tester, gesture);
   });
@@ -1645,6 +1699,21 @@ void main() {
     expect(combined.textDirection, TextDirection.rtl);
     expect(combined.language, arabic.apiLanguage);
     expect(combined.openInNewTab, isTrue);
+    final referenceRoutes = tester
+        .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+        .where((link) => link.uri?.path == '/reference');
+    expect(
+      referenceRoutes.every(
+        (link) => link.uri?.queryParameters['book'] == 'Matthew',
+      ),
+      isTrue,
+    );
+    expect(
+      referenceRoutes.every(
+        (link) => link.uri?.queryParameters['bookDisplay'] == 'متى',
+      ),
+      isTrue,
+    );
     final cellWrap = tester.widget<Wrap>(
       find
           .descendant(
@@ -1875,6 +1944,97 @@ void main() {
 
     expect(find.text('إنجيل متى — الفصل ١٠'), findsOneWidget);
   });
+
+  testWidgets('chapter controls keep the same width as a single reader panel', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const navigation = ChapterNav(
+      bookTitle: 'Gospel of Luke',
+      chapter: 1,
+      previousBookUri: null,
+      previousChapterUri: null,
+      nextChapterUri: null,
+      nextBookUri: null,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MenuLanguageScope(
+          notifier: ValueNotifier<String>('english'),
+          child: const Scaffold(
+            body: Padding(
+              padding: EdgeInsets.all(20),
+              child: ReaderChapterLayout(
+                topNavigation: navigation,
+                bottomNavigation: navigation,
+                panels: <Widget>[
+                  TranslationPanelCard(
+                    title: 'English · KJV',
+                    textDirection: TextDirection.ltr,
+                    isMain: true,
+                    body: Text('Chapter text'),
+                  ),
+                ],
+                textDirection: TextDirection.ltr,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    double topNavigationWidth() =>
+        tester.getSize(find.byType(ChapterNav).first).width;
+    double bottomNavigationWidth() =>
+        tester.getSize(find.byType(ChapterNav).last).width;
+    double panelWidth() =>
+        tester.getSize(find.byType(TranslationPanelCard)).width;
+
+    expect(topNavigationWidth(), closeTo(760, 0.1));
+    expect(bottomNavigationWidth(), closeTo(760, 0.1));
+    expect(panelWidth(), closeTo(760, 0.1));
+
+    await tester.binding.setSurfaceSize(const Size(620, 900));
+    await tester.pump();
+
+    expect(topNavigationWidth(), closeTo(580, 0.1));
+    expect(bottomNavigationWidth(), closeTo(580, 0.1));
+    expect(panelWidth(), closeTo(580, 0.1));
+  });
+
+  test(
+    'sticky chapter controls stop when the bottom controls become visible',
+    () {
+      const viewport = Rect.fromLTWH(0, 100, 760, 500);
+
+      expect(
+        shouldShowStickyChapterNavigation(
+          viewport: viewport,
+          topNavigation: const Rect.fromLTWH(0, 100, 760, 60),
+          bottomNavigation: const Rect.fromLTWH(0, 700, 760, 60),
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowStickyChapterNavigation(
+          viewport: viewport,
+          topNavigation: const Rect.fromLTWH(0, 101, 760, 60),
+          bottomNavigation: const Rect.fromLTWH(0, 700, 760, 60),
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowStickyChapterNavigation(
+          viewport: viewport,
+          topNavigation: const Rect.fromLTWH(0, 20, 760, 60),
+          bottomNavigation: const Rect.fromLTWH(0, 590, 760, 60),
+        ),
+        isFalse,
+      );
+    },
+  );
 
   testWidgets('main chapter translation has no duplicated card header', (
     tester,

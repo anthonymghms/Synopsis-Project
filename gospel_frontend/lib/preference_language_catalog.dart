@@ -73,6 +73,19 @@ const List<PreferenceLanguageOption> bundledPreferenceLanguages =
       ),
     ];
 
+List<PreferenceLanguageOption> primaryPreferenceLanguageOptions(
+  Iterable<PreferenceLanguageOption> options,
+) {
+  final byCode = <String, PreferenceLanguageOption>{
+    for (final option in options)
+      if (option.versions.isNotEmpty) option.code.toLowerCase(): option,
+  };
+  return <PreferenceLanguageOption>[
+    for (final bundled in bundledPreferenceLanguages)
+      byCode[bundled.code] ?? bundled,
+  ];
+}
+
 class PreferenceLanguageCatalog {
   PreferenceLanguageCatalog({FirebaseFirestore? firestore})
     : _firestore = firestore ?? FirebaseFirestore.instance;
@@ -166,11 +179,10 @@ class PreferenceLanguageCatalog {
 
       final discovered = versionIds
           .map(
-            (id) =>
-                PreferenceVersionOption(
-                  id: id,
-                  label: versionLabels[id] ?? _versionLabel(code, id),
-                ),
+            (id) => PreferenceVersionOption(
+              id: id,
+              label: versionLabels[id] ?? _versionLabel(code, id),
+            ),
           )
           .toList();
       final versions = _selectableVersions(

@@ -107,9 +107,10 @@ class BrowserRouteLink extends StatefulWidget {
 }
 
 class _BrowserRouteLinkState extends State<BrowserRouteLink> {
-  static const int _navigationDedupeMicros = 100000;
+  static const int _navigationDedupeMicros = 300000;
 
   StreamSubscription<html.MouseEvent>? _clickSubscription;
+  StreamSubscription<html.Event>? _auxClickSubscription;
   int _lastNavigationMicros = 0;
 
   String? get _href {
@@ -138,17 +139,22 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
     }
     _lastNavigationMicros = now;
     if (widget.openInNewTab) {
-      final href = _href;
-      if (href != null) {
-        html.window.open(href, '_blank', 'noopener,noreferrer');
-      }
+      _openInNewTab();
       return;
     }
     Navigator.of(context).pushNamed(target.toString());
   }
 
+  void _openInNewTab() {
+    final href = _href;
+    if (href != null) {
+      html.window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  }
+
   void _configureAnchor(Object element) {
     _clickSubscription?.cancel();
+    _auxClickSubscription?.cancel();
 
     final anchor = element as html.AnchorElement;
     final href = _href;
@@ -175,10 +181,28 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
         return;
       }
       if (_shouldLetBrowserHandle(event)) {
+        // The native anchor owns modified and auxiliary clicks. Suppress the
+        // matching Flutter tap so a single gesture cannot open two tabs.
+        _lastNavigationMicros = DateTime.now().microsecondsSinceEpoch;
         return;
       }
       event.preventDefault();
       _follow();
+    });
+    _auxClickSubscription = anchor.on['auxclick'].listen((event) {
+      if (event is! html.MouseEvent || event.button != 1) {
+        return;
+      }
+      event.preventDefault();
+      if (BrowserRouteLinkNavigation.isBlocked || widget.uri == null) {
+        return;
+      }
+      final now = DateTime.now().microsecondsSinceEpoch;
+      if (now - _lastNavigationMicros < _navigationDedupeMicros) {
+        return;
+      }
+      _lastNavigationMicros = now;
+      _openInNewTab();
     });
   }
 
@@ -201,6 +225,7 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
   @override
   void dispose() {
     _clickSubscription?.cancel();
+    _auxClickSubscription?.cancel();
     super.dispose();
   }
 

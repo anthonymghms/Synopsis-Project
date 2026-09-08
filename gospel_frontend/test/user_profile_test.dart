@@ -39,7 +39,7 @@ void main() {
       expect(preferences.showDiacritics, isTrue);
     });
 
-    test('stores topic and Bible selections independently', () {
+    test('normalizes legacy mixed language fields to Bible content', () {
       final preferences = UserPreferences.fromMap({
         'topicLanguage': 'english',
         'bibleLanguage': 'arabic',
@@ -48,23 +48,46 @@ void main() {
         'preferredVersion': 'kjv',
       });
 
-      expect(preferences.topicLanguage, 'english');
-      expect(preferences.menuLanguage, 'english');
+      expect(preferences.topicLanguage, 'arabic');
+      expect(preferences.menuLanguage, 'arabic');
       expect(preferences.bibleLanguage, 'arabic');
       expect(preferences.bibleVersion, 'Van Dyke-');
     });
 
-    test('menu language is stored independently from table and Bible', () {
+    test('normalizes a conflicting topic language to the primary language', () {
       final preferences = UserPreferences.fromMap({
         'topicLanguage': 'english',
         'menuLanguage': 'arabic',
         'bibleLanguage': 'arabic',
       });
 
-      expect(preferences.topicLanguage, 'english');
+      expect(preferences.topicLanguage, 'arabic');
       expect(preferences.menuLanguage, 'arabic');
       expect(preferences.bibleLanguage, 'arabic');
       expect(preferences.toMap()['menuLanguage'], 'arabic');
+      expect(preferences.toMap()['topicLanguage'], 'arabic');
+    });
+
+    test('empty canonical fields fall through to legacy language aliases', () {
+      final preferences = UserPreferences.fromMap(
+        {'bibleLanguage': '   ', 'bibleVersion': ''},
+        legacy: {'language': 'arabic', 'version': 'Van Dyke-'},
+      );
+
+      expect(preferences.contentLanguage, 'arabic');
+      expect(preferences.topicLanguage, 'arabic');
+      expect(preferences.menuLanguage, 'arabic');
+      expect(preferences.preferredVersion, 'Van Dyke-');
+    });
+
+    test('copyWith keeps every primary language alias synchronized', () {
+      final preferences = const UserPreferences(
+        contentLanguage: 'english',
+      ).copyWith(menuLanguage: 'arabic');
+
+      expect(preferences.contentLanguage, 'arabic');
+      expect(preferences.topicLanguage, 'arabic');
+      expect(preferences.menuLanguage, 'arabic');
     });
 
     test('serializes the complete preference schema', () {
@@ -90,6 +113,9 @@ void main() {
         'interlinearEnabled',
         'showTopicNamesInChapter',
       });
+      expect(map['menuLanguage'], 'english');
+      expect(map['topicLanguage'], 'english');
+      expect(map['bibleLanguage'], 'english');
     });
   });
 
@@ -109,6 +135,27 @@ void main() {
       expect(arabic.supportsVersion('Van Dyke-'), isTrue);
       expect(arabic.supportsVersion('kjv'), isFalse);
       expect(arabic.sanitizeVersion('kjv'), 'Van Dyke-');
+    });
+
+    test('primary preferences exclude comparison-only languages', () {
+      const french = PreferenceLanguageOption(
+        code: 'french',
+        label: 'Français',
+        direction: TextDirection.ltr,
+        defaultVersion: 'lsg',
+        versions: <PreferenceVersionOption>[
+          PreferenceVersionOption(id: 'lsg', label: 'LSG'),
+        ],
+      );
+
+      final primary = primaryPreferenceLanguageOptions(
+        <PreferenceLanguageOption>[...bundledPreferenceLanguages, french],
+      );
+
+      expect(primary.map((option) => option.code), <String>[
+        'english',
+        'arabic',
+      ]);
     });
   });
 
@@ -147,8 +194,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('الملف الشخصي'), findsOneWidget);
-    expect(find.text('لغة القوائم'), findsOneWidget);
-    expect(find.text('لغة الجدول والكتاب المقدس'), findsOneWidget);
+    expect(find.text('اللغة'), findsOneWidget);
+    expect(find.text('لغة القوائم'), findsNothing);
     final editorDirection = tester.widget<Directionality>(
       find
           .descendant(
@@ -186,6 +233,74 @@ void main() {
 
     expect(saved?.profileCompleted, isTrue);
     expect(saved?.preferences.contentLanguage, 'arabic');
+    expect(saved?.preferences.topicLanguage, 'arabic');
+    expect(saved?.preferences.menuLanguage, 'arabic');
     expect(saved?.preferences.preferredVersion, 'Van Dyke-');
   });
+
+  testWidgets(
+    'changing the profile language relocalizes and saves one locale',
+    (tester) async {
+      UserProfile? saved;
+      final previews = <String>[];
+      const profile = UserProfile(
+        firstName: 'جورجيو',
+        lastName: 'مراد',
+        displayName: '',
+        email: 'reader@example.com',
+        profileCompleted: true,
+        preferences: UserPreferences(
+          contentLanguage: 'arabic',
+          preferredVersion: 'Van Dyke-',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ProfileEditor(
+                initialProfile: profile,
+                onMenuLanguagePreview: previews.add,
+                onSave: (value) async => saved = value,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final languageField = find.byKey(
+        const ValueKey<String>('profile-content-language-arabic'),
+      );
+      await tester.ensureVisible(languageField);
+      await tester.pumpAndSettle();
+      await tester.tap(languageField);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('الإنجليزية').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Profile'), findsOneWidget);
+      expect(find.text('Language'), findsOneWidget);
+      final editorDirection = tester.widget<Directionality>(
+        find
+            .descendant(
+              of: find.byType(ProfileEditor),
+              matching: find.byType(Directionality),
+            )
+            .first,
+      );
+      expect(editorDirection.textDirection, TextDirection.ltr);
+      expect(previews.last, 'english');
+
+      await tester.ensureVisible(find.byKey(const Key('profile-save')));
+      await tester.tap(find.byKey(const Key('profile-save')));
+      await tester.pumpAndSettle();
+
+      expect(saved?.preferences.contentLanguage, 'english');
+      expect(saved?.preferences.topicLanguage, 'english');
+      expect(saved?.preferences.menuLanguage, 'english');
+      expect(saved?.preferences.preferredVersion, 'kjv');
+    },
+  );
 }

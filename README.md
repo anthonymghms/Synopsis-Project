@@ -227,7 +227,7 @@ existing datasets continue to work. Failed revisions are never activated and
 the former production dataset remains unchanged. Replacement never silently
 deletes the previous revision.
 
-The active model has three independent dimensions:
+The storage model keeps three independently deployable datasets:
 
 ```text
 harmony/canonical                         one Gospel-reference mapping
@@ -237,17 +237,18 @@ bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
 
 `/harmony/topics` returns canonical coordinates only, while
 `/topic-localizations/{language}` returns table names and metadata. Flutter
-caches and composes those responses. The globe controls only the application's
-menu language, including settings, admin labels, dialogs, and other UI chrome.
-The language control above the Subjects column selects the topic-table
-localization and then asks for the matching Bible version; committing that
-version changes the topic names, Gospel headers, reference links, and verse
-text together. Filtering, sorting, and reference counts continue to use the
-same canonical topics.
+caches and composes those responses. In the reader-facing client, one primary
+language now controls the entire experience: application menus, topic names,
+Gospel headers, layout direction, reference links, and the main Bible text.
+Changing Language is an atomic operation and then prompts for a compatible
+translation when necessary. A different language is allowed only through the
+explicit Add translation/interlinear comparison flow.
 
-`menuLanguage` is persisted independently. The table selection is stored in
-both `topicLanguage` and `bibleLanguage`, with its selected translation stored
-in `bibleVersion`.
+For deployed-client compatibility, the primary language is still serialized
+to `menuLanguage`, `topicLanguage`, and `bibleLanguage`; those keys are mirrors,
+not independent preferences. The matching translation remains in
+`bibleVersion`. Older mixed profiles and URLs are normalized with the Bible
+content language taking precedence.
 
 During migration, `/topics` and the historic topic route compose the same data
 server-side and retain legacy `language` query handling. Missing canonical or
@@ -256,8 +257,11 @@ import deletes those paths or immutable revisions.
 
 Bible language metadata remains under `bibles/{language}` and version metadata
 under `bibles/{language}/versions/{version}`. Topic localization activation
-never writes into the Bible catalog. Both catalogs are metadata-driven, so new
-languages appear without a Dart source change.
+never writes into the Bible catalog. Newly imported Bible languages can appear
+as comparison translations without a Dart source change. Promoting a language
+to the primary selector additionally requires shipped UI strings, a complete
+topic localization, and at least one compatible Bible version, preventing a
+partially translated interface.
 
 Every validation/import attempt has an `admin_imports/{importId}` audit record
 with the type, destination, filenames, uploader UID, timestamps, stage, status,

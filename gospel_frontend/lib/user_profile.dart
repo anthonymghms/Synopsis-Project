@@ -14,15 +14,29 @@ const double maximumProfileZoom = 1.6;
 
 class UserPreferences {
   const UserPreferences({
-    this.menuLanguage = defaultProfileMenuLanguage,
-    this.topicLanguage = defaultProfileTopicLanguage,
-    this.contentLanguage = defaultProfileContentLanguage,
+    String? menuLanguage,
+    String? topicLanguage,
+    String? contentLanguage,
     this.preferredVersion = defaultProfileVersion,
     this.showDiacritics = false,
     this.zoomLevel = 1.0,
     this.interlinearEnabled = false,
     this.showTopicNamesInChapter = false,
-  });
+  }) : contentLanguage =
+           contentLanguage ??
+           topicLanguage ??
+           menuLanguage ??
+           defaultProfileContentLanguage,
+       topicLanguage =
+           contentLanguage ??
+           topicLanguage ??
+           menuLanguage ??
+           defaultProfileTopicLanguage,
+       menuLanguage =
+           contentLanguage ??
+           topicLanguage ??
+           menuLanguage ??
+           defaultProfileMenuLanguage;
 
   final String menuLanguage;
   final String topicLanguage;
@@ -41,43 +55,33 @@ class UserPreferences {
     Map<String, dynamic> legacy = const <String, dynamic>{},
   }) {
     final data = preferences ?? const <String, dynamic>{};
-    final contentLanguage = _nonEmptyString(
-      data['bibleLanguage'] ??
-          data['contentLanguage'] ??
-          legacy['contentLanguage'] ??
-          legacy['preferredLanguage'] ??
-          legacy['language'],
-      defaultProfileContentLanguage,
-    ).toLowerCase();
-    final topicLanguage = _nonEmptyString(
-      data['topicLanguage'] ??
-          data['preferredTopicLanguage'] ??
-          legacy['topicLanguage'] ??
-          legacy['preferredTopicLanguage'] ??
-          contentLanguage,
-      defaultProfileTopicLanguage,
-    ).toLowerCase();
-    final menuLanguage = _nonEmptyString(
-      data['menuLanguage'] ?? legacy['menuLanguage'] ?? topicLanguage,
-      defaultProfileMenuLanguage,
-    ).toLowerCase();
+    final contentLanguage = _firstNonEmpty(<dynamic>[
+      data['bibleLanguage'],
+      data['contentLanguage'],
+      legacy['contentLanguage'],
+      legacy['preferredLanguage'],
+      legacy['language'],
+      data['topicLanguage'],
+      data['preferredTopicLanguage'],
+      data['menuLanguage'],
+      legacy['topicLanguage'],
+      legacy['preferredTopicLanguage'],
+      legacy['menuLanguage'],
+    ], defaultProfileContentLanguage).toLowerCase();
     final fallbackVersion = contentLanguage == 'arabic'
         ? 'Van Dyke-'
         : defaultProfileVersion;
     final zoom = _asDouble(data['zoomLevel'] ?? legacy['zoomLevel']) ?? 1.0;
 
     return UserPreferences(
-      menuLanguage: menuLanguage,
-      topicLanguage: topicLanguage,
       contentLanguage: contentLanguage,
-      preferredVersion: _nonEmptyString(
-        data['bibleVersion'] ??
-            data['preferredBibleVersion'] ??
-            data['preferredVersion'] ??
-            legacy['preferredVersion'] ??
-            legacy['version'],
-        fallbackVersion,
-      ),
+      preferredVersion: _firstNonEmpty(<dynamic>[
+        data['bibleVersion'],
+        data['preferredBibleVersion'],
+        data['preferredVersion'],
+        legacy['preferredVersion'],
+        legacy['version'],
+      ], fallbackVersion),
       showDiacritics:
           _asBool(data['showDiacritics'] ?? legacy['showDiacritics']) ?? false,
       zoomLevel: zoom.clamp(minimumProfileZoom, maximumProfileZoom).toDouble(),
@@ -119,10 +123,14 @@ class UserPreferences {
     bool? interlinearEnabled,
     bool? showTopicNamesInChapter,
   }) {
+    final primaryLanguage = _firstNonEmpty(<dynamic>[
+      bibleLanguage,
+      contentLanguage,
+      topicLanguage,
+      menuLanguage,
+    ], this.contentLanguage);
     return UserPreferences(
-      menuLanguage: menuLanguage ?? this.menuLanguage,
-      topicLanguage: topicLanguage ?? this.topicLanguage,
-      contentLanguage: bibleLanguage ?? contentLanguage ?? this.contentLanguage,
+      contentLanguage: primaryLanguage,
       preferredVersion:
           bibleVersion ?? preferredVersion ?? this.preferredVersion,
       showDiacritics: showDiacritics ?? this.showDiacritics,
@@ -491,6 +499,16 @@ String _string(dynamic value) => value?.toString().trim() ?? '';
 String _nonEmptyString(dynamic value, String fallback) {
   final string = _string(value);
   return string.isEmpty ? fallback : string;
+}
+
+String _firstNonEmpty(Iterable<dynamic> values, String fallback) {
+  for (final value in values) {
+    final string = _string(value);
+    if (string.isNotEmpty) {
+      return string;
+    }
+  }
+  return fallback;
 }
 
 double? _asDouble(dynamic value) {
