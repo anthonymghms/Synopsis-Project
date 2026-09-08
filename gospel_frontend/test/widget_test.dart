@@ -1528,7 +1528,8 @@ void main() {
       '6:17–19',
       '27–36',
     ]);
-    expect(find.text('–'), findsOneWidget);
+    expect(find.text(' '), findsOneWidget);
+    expect(find.text('–'), findsNothing);
     expect(find.text('; '), findsOneWidget);
     expect(find.text(', '), findsOneWidget);
     expect(find.text('+'), findsNothing);
@@ -1557,7 +1558,7 @@ void main() {
 
     expect(find.text('10:40'), findsOneWidget);
     expect(find.text('11:1'), findsOneWidget);
-    expect(find.text('Matthew 10:40–11:1'), findsOneWidget);
+    expect(find.text('Matthew 10:40 11:1'), findsOneWidget);
     expect(find.textContaining('10:40-42'), findsNothing);
     expect(find.text('Click to read in chapter'), findsOneWidget);
     expect(find.text('+'), findsNothing);
@@ -1798,16 +1799,24 @@ void main() {
     expect(find.text('Sort & Columns'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .getTopLeft(find.byKey(const ValueKey<String>('column-matthew')))
-          .dy,
-      tester.getTopLeft(find.byKey(const ValueKey<String>('column-mark'))).dy,
+    final columnTops = Gospel.values
+        .map(
+          (gospel) => tester
+              .getTopLeft(find.byKey(ValueKey<String>('column-${gospel.name}')))
+              .dy,
+        )
+        .toSet();
+    expect(columnTops, hasLength(1));
+    expect(find.byIcon(Icons.visibility_outlined), findsNothing);
+    expect(find.byIcon(Icons.visibility_off_outlined), findsNothing);
+    expect(find.byIcon(Icons.remove_circle_outline), findsNWidgets(4));
+    final matthewButton = tester.widget<IconButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('column-matthew')),
+        matching: find.byType(IconButton),
+      ),
     );
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey<String>('column-luke'))).dy,
-      tester.getTopLeft(find.byKey(const ValueKey<String>('column-john'))).dy,
-    );
+    expect(matthewButton.tooltip, 'Hide Matthew column');
     Future<void> toggle(Gospel gospel) async {
       final button = find.descendant(
         of: find.byKey(ValueKey<String>('column-${gospel.name}')),
@@ -1842,9 +1851,55 @@ void main() {
     expect(sort.isDefault, isTrue);
   });
 
-  testWidgets('Arabic combined sort control uses the compact label', (
+  testWidgets('combined sort control uses a two-row narrow layout', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(500, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonySortButton(
+            state: const GospelSortState(),
+            columns: const ColumnVisibilityState(),
+            uiLanguage: kBaseLanguageOptions.first,
+            onChanged: (_) {},
+            onColumnsChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
+    await tester.pumpAndSettle();
+
+    final matthewTop = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('column-matthew')))
+        .dy;
+    final markTop = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('column-mark')))
+        .dy;
+    final lukeTop = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('column-luke')))
+        .dy;
+    final johnTop = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('column-john')))
+        .dy;
+    expect(markTop, matthewTop);
+    expect(johnTop, lukeTop);
+    expect(lukeTop, greaterThan(matthewTop));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Arabic combined sort control matches the roomy RTL layout', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final arabic = kBaseLanguageOptions.firstWhere(
       (option) => option.code == 'arabic',
     );
@@ -1865,11 +1920,48 @@ void main() {
     expect(find.text('الترتيب والأعمدة'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
+    expect(
+      tester.getSize(
+        find.byKey(const ValueKey<String>('draggable-dialog-surface')),
+      ),
+      const Size(700, 820),
+    );
     expect(find.text('الترتيب بحسب'), findsOneWidget);
-    expect(find.text('متى التسلسل الزمني'), findsOneWidget);
-    expect(find.text('مرقس التسلسل الزمني'), findsOneWidget);
-    expect(find.text('لوقا التسلسل الزمني'), findsOneWidget);
-    expect(find.text('يوحنا التسلسل الزمني'), findsOneWidget);
+    expect(find.text('التنسيق العام'), findsOneWidget);
+    expect(find.text('إنجيل متى'), findsOneWidget);
+    expect(find.text('إنجيل مرقس'), findsOneWidget);
+    expect(find.text('إنجيل لوقا'), findsOneWidget);
+    expect(find.text('إنجيل يوحنا'), findsOneWidget);
+    final defaultSortText = tester.widget<Text>(find.text('التنسيق العام'));
+    for (final label in const [
+      'إنجيل متى',
+      'إنجيل مرقس',
+      'إنجيل لوقا',
+      'إنجيل يوحنا',
+    ]) {
+      expect(
+        tester.widget<Text>(find.text(label)).style,
+        defaultSortText.style,
+      );
+    }
+    final arabicMatthewButton = tester.widget<IconButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('column-matthew')),
+        matching: find.byType(IconButton),
+      ),
+    );
+    expect(arabicMatthewButton.tooltip, 'إخفاء عمود متى');
+    final columnLefts = Gospel.values
+        .map(
+          (gospel) => tester
+              .getTopLeft(find.byKey(ValueKey<String>('column-${gospel.name}')))
+              .dx,
+        )
+        .toList();
+    expect(
+      columnLefts,
+      orderedEquals(columnLefts.toList()..sort((a, b) => b.compareTo(a))),
+    );
     expect(find.textContaining('Matthew'), findsNothing);
     expect(find.textContaining('Mark'), findsNothing);
     expect(find.textContaining('Luke'), findsNothing);

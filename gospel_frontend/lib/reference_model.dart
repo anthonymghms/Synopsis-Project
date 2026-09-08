@@ -313,7 +313,8 @@ String _endVerse(String verses) => verses.split('-').last.trim();
 
 /// Formats a Harmony table cell using the compact notation from the source
 /// synopsis: commas omit a repeated chapter, semicolons separate passages,
-/// and continuous cross-chapter passages collapse to their outer endpoints.
+/// and continuous cross-chapter passages collapse to their outer endpoints,
+/// separated by a space.
 String formatHarmonyReferenceCellDisplay(
   Iterable<HarmonyReferenceSegment> values,
 ) {
@@ -346,7 +347,7 @@ String formatHarmonyReferenceCellDisplay(
     if (groupEnd > groupStart) {
       buffer
         ..write('${first.chapter}:${_startVerse(first.verses)}')
-        ..write('–')
+        ..write(' ')
         ..write('${last.chapter}:${_endVerse(last.verses)}');
     } else if (omitChapter) {
       buffer.write(_displayVerseRange(first.verses));

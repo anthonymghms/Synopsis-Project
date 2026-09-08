@@ -173,7 +173,7 @@ Admin warnings; new edits should use the explicit `+` grammar and ordinary
 `chapter:verse` notation.
 
 The table renders the stored grammar in compact synopsis notation: a continuous
-`10:40-42 + 11:1-10` passage appears as `10:40–11:10`, same-chapter selections
+`10:40-42 + 11:1-10` passage appears as `10:40 11:10`, same-chapter selections
 appear as `7:13–14, 21–23`, and non-contiguous passages use a semicolon.
 
 Because the file itself is comma-delimited, a Gospel cell containing the comma

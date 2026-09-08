@@ -778,8 +778,8 @@ const List<LanguageOption> kBaseLanguageOptions = [
       showColumns: 'إظهار الأعمدة',
       sort: 'الترتيب والأعمدة',
       sortBy: 'الترتيب بحسب',
-      defaultSort: 'الافتراضي',
-      chronology: 'التسلسل الزمني',
+      defaultSort: 'التنسيق العام',
+      chronology: 'إنجيل',
       visibleColumns: 'الأعمدة الظاهرة',
       resetColumns: 'إعادة إظهار الأعمدة',
       filter: 'تصفية',
@@ -4130,20 +4130,38 @@ class _HarmonySortAndColumnsDialogState
     widget.onColumnsChanged(next);
   }
 
+  String _columnToggleTooltip(Gospel gospel, LocalizedUiLabels labels) {
+    final gospelName = _localizedGospelName(gospel, labels, widget.uiLanguage);
+    final isVisible = _columns.isVisible(gospel);
+    if (widget.uiLanguage.code == 'arabic') {
+      return isVisible ? 'إخفاء عمود $gospelName' : 'إظهار عمود $gospelName';
+    }
+    return isVisible ? 'Hide $gospelName column' : 'Show $gospelName column';
+  }
+
   @override
   Widget build(BuildContext context) {
     final labels = widget.uiLanguage.ui;
+    final sortOptionStyle = Theme.of(
+      context,
+    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w400);
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
-        maxWidth: 500,
-        maxHeight: 590,
+        maxWidth: 700,
+        maxHeight: 820,
         shrinkWrap: true,
-        title: Text(
-          labels.sort,
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        title: SizedBox(
+          height: 60,
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              labels.sort,
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
         ),
         headerTrailing: IconButton(
           tooltip: labels.done,
@@ -4161,104 +4179,137 @@ class _HarmonySortAndColumnsDialogState
                 labels.sortBy,
                 style: Theme.of(
                   context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 2),
-              RadioGroup<TopicSortMode>(
-                groupValue: _sort.mode,
-                onChanged: (value) {
-                  if (value != null) _setSort(value);
-                },
-                child: Column(
-                  children: [
-                    RadioListTile<TopicSortMode>(
-                      key: const ValueKey<String>('sort-default'),
-                      dense: true,
-                      visualDensity: const VisualDensity(vertical: -3),
-                      contentPadding: EdgeInsets.zero,
-                      value: TopicSortMode.defaultOrder,
-                      title: Text(labels.defaultSort),
-                    ),
-                    for (final gospel in Gospel.values)
-                      RadioListTile<TopicSortMode>(
-                        key: ValueKey<String>('sort-${gospel.name}'),
-                        dense: true,
-                        visualDensity: const VisualDensity(vertical: -3),
-                        contentPadding: EdgeInsets.zero,
-                        value: TopicSortMode.forGospel(gospel),
-                        title: Text(
-                          '${_localizedGospelName(gospel, labels, widget.uiLanguage)} ${labels.chronology}',
+              const SizedBox(height: 10),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
+                  child: RadioGroup<TopicSortMode>(
+                    groupValue: _sort.mode,
+                    onChanged: (value) {
+                      if (value != null) _setSort(value);
+                    },
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 50,
+                          child: RadioListTile<TopicSortMode>(
+                            key: const ValueKey<String>('sort-default'),
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            value: TopicSortMode.defaultOrder,
+                            title: Text(
+                              labels.defaultSort,
+                              style: sortOptionStyle,
+                            ),
+                          ),
                         ),
-                      ),
-                  ],
+                        for (final gospel in Gospel.values)
+                          SizedBox(
+                            height: 50,
+                            child: RadioListTile<TopicSortMode>(
+                              key: ValueKey<String>('sort-${gospel.name}'),
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: TopicSortMode.forGospel(gospel),
+                              title: Text(
+                                widget.uiLanguage.code == 'arabic'
+                                    ? '${labels.chronology} ${_localizedGospelName(gospel, labels, widget.uiLanguage)}'
+                                    : '${_localizedGospelName(gospel, labels, widget.uiLanguage)} ${labels.chronology}',
+                                style: sortOptionStyle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-              const Divider(height: 18),
+              const Divider(height: 28),
               Text(
                 labels.visibleColumns,
                 style: Theme.of(
                   context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 23),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  const spacing = 8.0;
-                  final columnCount = constraints.maxWidth >= 400 ? 2 : 1;
-                  final itemWidth = columnCount == 1
-                      ? constraints.maxWidth
-                      : (constraints.maxWidth - spacing) / 2;
-                  return Wrap(
-                    spacing: spacing,
-                    runSpacing: 2,
-                    textDirection: widget.uiLanguage.direction,
-                    children: [
-                      for (final gospel in Gospel.values)
-                        SizedBox(
-                          width: itemWidth,
-                          child: ListTile(
-                            key: ValueKey<String>('column-${gospel.name}'),
-                            dense: true,
-                            visualDensity: const VisualDensity(vertical: -2),
-                            minLeadingWidth: 24,
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              _columns.isVisible(gospel)
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              size: 20,
-                            ),
-                            title: Text(
-                              _localizedGospelName(
-                                gospel,
-                                labels,
-                                widget.uiLanguage,
+                  final selectorWidth = math.min(constraints.maxWidth, 508.0);
+                  final columnCount = constraints.maxWidth >= 508 ? 4 : 2;
+                  final itemWidth = selectorWidth / columnCount;
+                  final outline = Theme.of(context).colorScheme.outline;
+                  return Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: SizedBox(
+                      key: const ValueKey<String>('visible-columns-row'),
+                      width: selectorWidth,
+                      child: Wrap(
+                        spacing: 0,
+                        runSpacing: 8,
+                        textDirection: widget.uiLanguage.direction,
+                        children: [
+                          for (final gospel in Gospel.values)
+                            SizedBox(
+                              key: ValueKey<String>('column-${gospel.name}'),
+                              width: itemWidth,
+                              height: 48,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: outline),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsetsDirectional.only(
+                                              start: 12,
+                                            ),
+                                        child: Text(
+                                          _localizedGospelName(
+                                            gospel,
+                                            labels,
+                                            widget.uiLanguage,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyLarge,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: _columnToggleTooltip(
+                                        gospel,
+                                        labels,
+                                      ),
+                                      onPressed:
+                                          _columns.isVisible(gospel) &&
+                                              _columns.visibleCount == 1
+                                          ? null
+                                          : () => _toggleColumn(gospel),
+                                      icon: Icon(
+                                        _columns.isVisible(gospel)
+                                            ? Icons.remove_circle_outline
+                                            : Icons.add_circle_outline,
+                                        size: 26,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
-                            trailing: IconButton(
-                              tooltip: _columns.isVisible(gospel)
-                                  ? '${labels.columns}: −'
-                                  : '${labels.columns}: +',
-                              onPressed:
-                                  _columns.isVisible(gospel) &&
-                                      _columns.visibleCount == 1
-                                  ? null
-                                  : () => _toggleColumn(gospel),
-                              icon: Icon(
-                                _columns.isVisible(gospel)
-                                    ? Icons.remove_circle_outline
-                                    : Icons.add_circle_outline,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
+                        ],
+                      ),
+                    ),
                   );
                 },
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 64),
               OutlinedButton.icon(
                 key: const ValueKey<String>('reset-columns'),
                 onPressed: _columns.visibleMask == allGospelsMask
@@ -4266,22 +4317,31 @@ class _HarmonySortAndColumnsDialogState
                     : _resetColumns,
                 icon: const Icon(Icons.restart_alt, size: 18),
                 label: Text(labels.resetColumns),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(236, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  textStyle: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
                 labels.atLeastOneColumnVisible,
-                style: Theme.of(context).textTheme.bodySmall,
+                style: Theme.of(context).textTheme.bodyLarge,
               ),
             ],
           ),
         ),
         footer: SafeArea(
           top: false,
-          minimum: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          minimum: const EdgeInsets.fromLTRB(12, 10, 12, 14),
           child: Align(
             alignment: AlignmentDirectional.centerEnd,
             child: FilledButton(
               onPressed: () => Navigator.of(context).pop(),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(92, 46),
+                textStyle: Theme.of(context).textTheme.titleMedium,
+              ),
               child: Text(labels.done),
             ),
           ),
@@ -5948,7 +6008,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
     if (index == 0) return '';
     final isArabic = widget.languageOption.code == 'arabic';
     return switch (reference.separatorBefore) {
-      '+' => '–',
+      '+' => ' ',
       ',' => isArabic ? '، ' : ', ',
       _ => isArabic ? '؛ ' : '; ',
     };

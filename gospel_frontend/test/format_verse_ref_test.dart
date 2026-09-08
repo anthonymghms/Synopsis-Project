@@ -108,12 +108,9 @@ void main() {
       expect(formatted.dir, TextDirection.rtl);
     });
 
-    test('localizes a compact cross-chapter Arabic span', () {
-      final formatted = formatCompositeVerseRef('10:40–11:1', 'arabic');
-      expect(
-        formatted.text,
-        '\u2067١٠\u200F:\u200F٤٠\u200F–\u200F١١\u200F:\u200F١\u2069',
-      );
+    test('localizes space-separated cross-chapter Arabic references', () {
+      final formatted = formatCompositeVerseRef('10:40 11:1', 'arabic');
+      expect(formatted.text, '\u2067١٠\u200F:\u200F٤٠ ١١\u200F:\u200F١\u2069');
       expect(formatted.dir, TextDirection.rtl);
     });
 
