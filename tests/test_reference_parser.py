@@ -94,6 +94,17 @@ class ReferenceParserTests(unittest.TestCase):
         self.assertEqual(cell.relation, ReferenceRelation.non_continuous)
         self.assertEqual(cell.logical_selection_count, 2)
 
+    def test_same_chapter_semicolon_display_omits_repeated_chapter(self):
+        for value in (
+            "Matthew 6:25-34; 6:19-21",
+            "Matthew 6:25-34; 19-21",
+        ):
+            with self.subTest(value=value):
+                cell, report = self.parse(value)
+
+                self.assertTrue(report.valid)
+                self.assertEqual(cell.display_value, "6:25-34; 19-21")
+
     def test_plus_creates_one_continuous_logical_selection(self):
         cell, report = self.parse(
             "Luke 1:78-80+2:1-7",

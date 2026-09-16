@@ -22,6 +22,7 @@ class UserPreferences {
     this.zoomLevel = 1.0,
     this.interlinearEnabled = false,
     this.showTopicNamesInChapter = false,
+    this.showTranslationLabels = false,
   }) : contentLanguage =
            contentLanguage ??
            topicLanguage ??
@@ -46,6 +47,7 @@ class UserPreferences {
   final double zoomLevel;
   final bool interlinearEnabled;
   final bool showTopicNamesInChapter;
+  final bool showTranslationLabels;
 
   String get bibleLanguage => contentLanguage;
   String get bibleVersion => preferredVersion;
@@ -94,6 +96,11 @@ class UserPreferences {
                 legacy['showTopicNamesInChapter'],
           ) ??
           false,
+      showTranslationLabels:
+          _asBool(
+            data['showTranslationLabels'] ?? legacy['showTranslationLabels'],
+          ) ??
+          false,
     );
   }
 
@@ -109,6 +116,7 @@ class UserPreferences {
     'zoomLevel': zoomLevel.clamp(minimumProfileZoom, maximumProfileZoom),
     'interlinearEnabled': interlinearEnabled,
     'showTopicNamesInChapter': showTopicNamesInChapter,
+    'showTranslationLabels': showTranslationLabels,
   };
 
   UserPreferences copyWith({
@@ -122,6 +130,7 @@ class UserPreferences {
     double? zoomLevel,
     bool? interlinearEnabled,
     bool? showTopicNamesInChapter,
+    bool? showTranslationLabels,
   }) {
     final primaryLanguage = _firstNonEmpty(<dynamic>[
       bibleLanguage,
@@ -140,6 +149,8 @@ class UserPreferences {
       interlinearEnabled: interlinearEnabled ?? this.interlinearEnabled,
       showTopicNamesInChapter:
           showTopicNamesInChapter ?? this.showTopicNamesInChapter,
+      showTranslationLabels:
+          showTranslationLabels ?? this.showTranslationLabels,
     );
   }
 }
@@ -486,6 +497,10 @@ class UserProfileController extends ChangeNotifier {
         local.setBool(
           'show_topic_names_in_chapter',
           preferences.showTopicNamesInChapter,
+        ),
+        local.setBool(
+          'show_translation_labels',
+          preferences.showTranslationLabels,
         ),
       ]);
     } catch (_) {

@@ -439,6 +439,7 @@ class LocalizedUiLabels {
   final String startVerse;
   final String endVerse;
   final String selected;
+  final String showTranslationLabels;
   final String duplicateComparison;
   final String noPassageText;
   final String unableToOpenReference;
@@ -546,6 +547,7 @@ class LocalizedUiLabels {
     required this.startVerse,
     required this.endVerse,
     required this.selected,
+    required this.showTranslationLabels,
     required this.duplicateComparison,
     required this.noPassageText,
     required this.unableToOpenReference,
@@ -730,6 +732,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       startVerse: 'Start verse',
       endVerse: 'End verse',
       selected: 'Selected',
+      showTranslationLabels: 'Show translation at the end of each verse',
       duplicateComparison:
           'A comparison with this translation and range already exists.',
       noPassageText: 'No passage text is available for this translation yet.',
@@ -854,6 +857,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       startVerse: 'آية البداية',
       endVerse: 'آية النهاية',
       selected: 'المحدد',
+      showTranslationLabels: 'إظهار الترجمة عند نهاية كل عدد',
       duplicateComparison: 'توجد مقارنة بهذه الترجمة وهذا النطاق بالفعل.',
       noPassageText: 'لا يتوفر نص لهذا المقطع في هذه الترجمة بعد.',
       unableToOpenReference: 'تعذر فتح المرجع.',
@@ -2928,33 +2932,6 @@ Widget _buildHarmonyResultCountChip({
   );
 }
 
-String _localizedReferenceCount(LanguageOption uiLanguage, int count) {
-  final number = uiLanguage.code == 'arabic'
-      ? toArabicIndicDigits(count.toString())
-      : count.toString();
-  return '$number ${uiLanguage.ui.references}';
-}
-
-Widget _buildHarmonyReferenceCountChip({
-  required BuildContext context,
-  required LanguageOption uiLanguage,
-  required int count,
-}) {
-  final theme = Theme.of(context);
-  return Chip(
-    key: const ValueKey<String>('visible-reference-count'),
-    visualDensity: VisualDensity.compact,
-    avatar: Icon(
-      Icons.menu_book_outlined,
-      size: 18,
-      color: theme.colorScheme.primary,
-    ),
-    label: Text(_localizedReferenceCount(uiLanguage, count)),
-    side: BorderSide(color: theme.colorScheme.outlineVariant),
-    backgroundColor: theme.colorScheme.surface,
-  );
-}
-
 class DraggableDialogShell extends StatefulWidget {
   const DraggableDialogShell({
     super.key,
@@ -3083,6 +3060,69 @@ class _GospelFilterDialogResult {
   final GospelFilterCombination? combination;
 }
 
+class _HarmonySortChoices extends StatelessWidget {
+  const _HarmonySortChoices({
+    required this.state,
+    required this.uiLanguage,
+    required this.onChanged,
+    required this.keyPrefix,
+    this.textStyle,
+    this.tileHeight = 48,
+  });
+
+  final GospelSortState state;
+  final LanguageOption uiLanguage;
+  final ValueChanged<TopicSortMode> onChanged;
+  final String keyPrefix;
+  final TextStyle? textStyle;
+  final double tileHeight;
+
+  String _gospelChronologyLabel(Gospel gospel) {
+    final labels = uiLanguage.ui;
+    final gospelName = _localizedGospelName(gospel, labels, uiLanguage);
+    return uiLanguage.code == 'arabic'
+        ? '${labels.chronology} $gospelName'
+        : '$gospelName ${labels.chronology}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RadioGroup<TopicSortMode>(
+      groupValue: state.mode,
+      onChanged: (value) {
+        if (value != null) onChanged(value);
+      },
+      child: Column(
+        children: [
+          SizedBox(
+            height: tileHeight,
+            child: RadioListTile<TopicSortMode>(
+              key: ValueKey<String>('$keyPrefix-default'),
+              contentPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: TopicSortMode.defaultOrder,
+              title: Text(uiLanguage.ui.defaultSort, style: textStyle),
+            ),
+          ),
+          for (final gospel in Gospel.values)
+            SizedBox(
+              height: tileHeight,
+              child: RadioListTile<TopicSortMode>(
+                key: ValueKey<String>('$keyPrefix-${gospel.name}'),
+                contentPadding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: TopicSortMode.forGospel(gospel),
+                title: Text(_gospelChronologyLabel(gospel), style: textStyle),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class HarmonyFilterButton extends StatelessWidget {
   const HarmonyFilterButton({
     super.key,
@@ -3091,6 +3131,8 @@ class HarmonyFilterButton extends StatelessWidget {
     required this.onChanged,
     required this.topics,
     required this.columns,
+    this.sortState = const GospelSortState(),
+    this.onSortChanged,
     this.currentResultCount,
     this.onInteractionEnd,
   });
@@ -3100,6 +3142,8 @@ class HarmonyFilterButton extends StatelessWidget {
   final ValueChanged<GospelFilterState> onChanged;
   final List<Topic> topics;
   final ColumnVisibilityState columns;
+  final GospelSortState sortState;
+  final ValueChanged<GospelSortState>? onSortChanged;
   final int? currentResultCount;
   final VoidCallback? onInteractionEnd;
 
@@ -3111,14 +3155,17 @@ class HarmonyFilterButton extends StatelessWidget {
         uiLanguage: uiLanguage,
         topics: topics,
         columns: columns,
+        initialSort: sortState,
         currentResultCount: currentResultCount,
         onChanged: onChanged,
+        onSortChanged: onSortChanged,
       ),
     );
     if (applied == true) {
       onInteractionEnd?.call();
     } else {
       onChanged(filterState);
+      onSortChanged?.call(sortState);
     }
   }
 
@@ -3772,18 +3819,22 @@ Widget _buildActiveSetFilterChip({
 class _HarmonySetFilterDialog extends StatefulWidget {
   const _HarmonySetFilterDialog({
     required this.initialState,
+    required this.initialSort,
     required this.uiLanguage,
     required this.topics,
     required this.columns,
     required this.onChanged,
+    required this.onSortChanged,
     this.currentResultCount,
   });
 
   final GospelFilterState initialState;
+  final GospelSortState initialSort;
   final LanguageOption uiLanguage;
   final List<Topic> topics;
   final ColumnVisibilityState columns;
   final ValueChanged<GospelFilterState> onChanged;
+  final ValueChanged<GospelSortState>? onSortChanged;
   final int? currentResultCount;
 
   @override
@@ -3793,6 +3844,7 @@ class _HarmonySetFilterDialog extends StatefulWidget {
 
 class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
   late GospelFilterState _state;
+  late GospelSortState _sort;
 
   @override
   void initState() {
@@ -3800,6 +3852,7 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
     _state = widget.initialState.isActive
         ? widget.initialState
         : const GospelFilterState();
+    _sort = widget.initialSort;
   }
 
   int get _finalCount => processHarmonyTopics(
@@ -3817,6 +3870,17 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
       _state = state;
     });
     widget.onChanged(state);
+  }
+
+  void _updateSort(TopicSortMode mode) {
+    final next = GospelSortState(mode: mode);
+    if (next == _sort) {
+      return;
+    }
+    setState(() {
+      _sort = next;
+    });
+    widget.onSortChanged?.call(next);
   }
 
   Widget _sectionTitle(String label) {
@@ -3918,12 +3982,74 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
     );
   }
 
+  Widget _filterControls(LocalizedUiLabels labels) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(labels.operation),
+        SegmentedButton<GospelFilterMode>(
+          key: const ValueKey<String>('filter-operation'),
+          showSelectedIcon: false,
+          segments: [
+            ButtonSegment<GospelFilterMode>(
+              value: GospelFilterMode.intersection,
+              icon: const Icon(Icons.join_inner, size: 18),
+              label: Text(labels.intersection),
+            ),
+            ButtonSegment<GospelFilterMode>(
+              value: GospelFilterMode.union,
+              icon: const Icon(Icons.join_full, size: 18),
+              label: Text(labels.union),
+            ),
+          ],
+          selected: {_state.mode},
+          onSelectionChanged: (selection) =>
+              _update(_state.copyWith(mode: selection.single)),
+        ),
+        const SizedBox(height: 20),
+        _sectionTitle(labels.includeGospels),
+        _gospelChips(exclusion: false),
+        const SizedBox(height: 20),
+        _sectionTitle(labels.exclude),
+        _gospelChips(exclusion: true),
+        const SizedBox(height: 20),
+        _expressionCard(),
+        const SizedBox(height: 10),
+        Text(
+          labels.filterUpdatesLive,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sortControls(LocalizedUiLabels labels) {
+    return Column(
+      key: const ValueKey<String>('filter-sort-section'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(labels.sortBy),
+        _HarmonySortChoices(
+          state: _sort,
+          uiLanguage: widget.uiLanguage,
+          onChanged: _updateSort,
+          keyPrefix: 'filter-sort',
+          textStyle: Theme.of(context).textTheme.bodyLarge,
+          tileHeight: 44,
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final labels = widget.uiLanguage.ui;
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
+        maxWidth: 760,
         title: Text(
           labels.filter,
           style: Theme.of(
@@ -3951,45 +4077,29 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
         // ignore: sort_child_properties_last
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _sectionTitle(labels.operation),
-              SegmentedButton<GospelFilterMode>(
-                key: const ValueKey<String>('filter-operation'),
-                showSelectedIcon: false,
-                segments: [
-                  ButtonSegment<GospelFilterMode>(
-                    value: GospelFilterMode.intersection,
-                    icon: const Icon(Icons.join_inner, size: 18),
-                    label: Text(labels.intersection),
-                  ),
-                  ButtonSegment<GospelFilterMode>(
-                    value: GospelFilterMode.union,
-                    icon: const Icon(Icons.join_full, size: 18),
-                    label: Text(labels.union),
-                  ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final filterControls = _filterControls(labels);
+              final sortControls = _sortControls(labels);
+              if (constraints.maxWidth >= 500) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 3, child: filterControls),
+                    const SizedBox(width: 24),
+                    SizedBox(width: 190, child: sortControls),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  filterControls,
+                  const Divider(height: 36),
+                  sortControls,
                 ],
-                selected: {_state.mode},
-                onSelectionChanged: (selection) =>
-                    _update(_state.copyWith(mode: selection.single)),
-              ),
-              const SizedBox(height: 20),
-              _sectionTitle(labels.includeGospels),
-              _gospelChips(exclusion: false),
-              const SizedBox(height: 20),
-              _sectionTitle(labels.exclude),
-              _gospelChips(exclusion: true),
-              const SizedBox(height: 20),
-              _expressionCard(),
-              const SizedBox(height: 10),
-              Text(
-                labels.filterUpdatesLive,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ),
         footer: SafeArea(
@@ -4139,12 +4249,119 @@ class _HarmonySortAndColumnsDialogState
     return isVisible ? 'Hide $gospelName column' : 'Show $gospelName column';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final labels = widget.uiLanguage.ui;
+  Widget _sortSection(LocalizedUiLabels labels) {
     final sortOptionStyle = Theme.of(
       context,
     ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w400);
+    return Column(
+      key: const ValueKey<String>('sort-section'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          labels.sortBy,
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        _HarmonySortChoices(
+          state: _sort,
+          uiLanguage: widget.uiLanguage,
+          onChanged: _setSort,
+          keyPrefix: 'sort',
+          textStyle: sortOptionStyle,
+          tileHeight: 50,
+        ),
+      ],
+    );
+  }
+
+  Widget _visibleColumnsSection(LocalizedUiLabels labels) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      key: const ValueKey<String>('visible-columns-section'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          labels.visibleColumns,
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Column(
+          key: const ValueKey<String>('visible-columns-row'),
+          children: [
+            for (final gospel in Gospel.values)
+              SizedBox(
+                key: ValueKey<String>('column-${gospel.name}'),
+                height: 50,
+                child: Builder(
+                  builder: (context) {
+                    final isVisible = _columns.isVisible(gospel);
+                    final canToggle = !isVisible || _columns.visibleCount > 1;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      enabled: canToggle,
+                      onTap: canToggle ? () => _toggleColumn(gospel) : null,
+                      leading: IconButton(
+                        key: ValueKey<String>('column-toggle-${gospel.name}'),
+                        tooltip: _columnToggleTooltip(gospel, labels),
+                        isSelected: isVisible,
+                        onPressed: canToggle
+                            ? () => _toggleColumn(gospel)
+                            : null,
+                        icon: const Icon(
+                          Icons.radio_button_unchecked,
+                          size: 26,
+                        ),
+                        selectedIcon: Icon(
+                          Icons.radio_button_checked,
+                          size: 26,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      title: Text(
+                        _localizedGospelName(gospel, labels, widget.uiLanguage),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        OutlinedButton.icon(
+          key: const ValueKey<String>('reset-columns'),
+          onPressed: _columns.visibleMask == allGospelsMask
+              ? null
+              : _resetColumns,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          label: Text(labels.resetColumns),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(236, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            textStyle: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          labels.atLeastOneColumnVisible,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = widget.uiLanguage.ui;
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
@@ -4170,166 +4387,29 @@ class _HarmonySortAndColumnsDialogState
         ),
         // Kept before footer so the dialog reads header/content/actions.
         // ignore: sort_child_properties_last
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                labels.sortBy,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 280),
-                  child: RadioGroup<TopicSortMode>(
-                    groupValue: _sort.mode,
-                    onChanged: (value) {
-                      if (value != null) _setSort(value);
-                    },
-                    child: Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+              child: constraints.maxWidth >= 560
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          height: 50,
-                          child: RadioListTile<TopicSortMode>(
-                            key: const ValueKey<String>('sort-default'),
-                            contentPadding: EdgeInsets.zero,
-                            controlAffinity: ListTileControlAffinity.leading,
-                            value: TopicSortMode.defaultOrder,
-                            title: Text(
-                              labels.defaultSort,
-                              style: sortOptionStyle,
-                            ),
-                          ),
-                        ),
-                        for (final gospel in Gospel.values)
-                          SizedBox(
-                            height: 50,
-                            child: RadioListTile<TopicSortMode>(
-                              key: ValueKey<String>('sort-${gospel.name}'),
-                              contentPadding: EdgeInsets.zero,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              value: TopicSortMode.forGospel(gospel),
-                              title: Text(
-                                widget.uiLanguage.code == 'arabic'
-                                    ? '${labels.chronology} ${_localizedGospelName(gospel, labels, widget.uiLanguage)}'
-                                    : '${_localizedGospelName(gospel, labels, widget.uiLanguage)} ${labels.chronology}',
-                                style: sortOptionStyle,
-                              ),
-                            ),
-                          ),
+                        Expanded(child: _sortSection(labels)),
+                        const SizedBox(width: 36),
+                        Expanded(child: _visibleColumnsSection(labels)),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sortSection(labels),
+                        const Divider(height: 36),
+                        _visibleColumnsSection(labels),
                       ],
                     ),
-                  ),
-                ),
-              ),
-              const Divider(height: 28),
-              Text(
-                labels.visibleColumns,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 23),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final selectorWidth = math.min(constraints.maxWidth, 508.0);
-                  final columnCount = constraints.maxWidth >= 508 ? 4 : 2;
-                  final itemWidth = selectorWidth / columnCount;
-                  final outline = Theme.of(context).colorScheme.outline;
-                  return Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: SizedBox(
-                      key: const ValueKey<String>('visible-columns-row'),
-                      width: selectorWidth,
-                      child: Wrap(
-                        spacing: 0,
-                        runSpacing: 8,
-                        textDirection: widget.uiLanguage.direction,
-                        children: [
-                          for (final gospel in Gospel.values)
-                            SizedBox(
-                              key: ValueKey<String>('column-${gospel.name}'),
-                              width: itemWidth,
-                              height: 48,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: outline),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Padding(
-                                        padding:
-                                            const EdgeInsetsDirectional.only(
-                                              start: 12,
-                                            ),
-                                        child: Text(
-                                          _localizedGospelName(
-                                            gospel,
-                                            labels,
-                                            widget.uiLanguage,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodyLarge,
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      tooltip: _columnToggleTooltip(
-                                        gospel,
-                                        labels,
-                                      ),
-                                      onPressed:
-                                          _columns.isVisible(gospel) &&
-                                              _columns.visibleCount == 1
-                                          ? null
-                                          : () => _toggleColumn(gospel),
-                                      icon: Icon(
-                                        _columns.isVisible(gospel)
-                                            ? Icons.remove_circle_outline
-                                            : Icons.add_circle_outline,
-                                        size: 26,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 64),
-              OutlinedButton.icon(
-                key: const ValueKey<String>('reset-columns'),
-                onPressed: _columns.visibleMask == allGospelsMask
-                    ? null
-                    : _resetColumns,
-                icon: const Icon(Icons.restart_alt, size: 18),
-                label: Text(labels.resetColumns),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(236, 44),
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  textStyle: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                labels.atLeastOneColumnVisible,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-            ],
-          ),
+            );
+          },
         ),
         footer: SafeArea(
           top: false,
@@ -5645,22 +5725,19 @@ class _TopicListScreenState extends State<TopicListScreen> {
                       ),
                       HarmonyFilterButton(
                         filterState: _filterState,
+                        sortState: _sortState,
                         uiLanguage: menuLanguage,
                         topics: _topics,
                         columns: _columnVisibility,
                         currentResultCount: processed.visibleTopicCount,
                         onChanged: _setFilterState,
+                        onSortChanged: _setSortState,
                         onInteractionEnd: _commitControlState,
                       ),
                       _buildHarmonyResultCountChip(
                         context: context,
                         uiLanguage: menuLanguage,
                         count: processed.visibleTopicCount,
-                      ),
-                      _buildHarmonyReferenceCountChip(
-                        context: context,
-                        uiLanguage: menuLanguage,
-                        count: processed.visibleReferenceCount,
                       ),
                       if (_filterState.isActive)
                         _buildActiveSetFilterChip(
@@ -5996,7 +6073,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
         verseParts.isNotEmpty) {
       return '${reference.chapter}:${verseParts.last.trim()}';
     }
-    if (reference.separatorBefore == ',' &&
+    if (reference.separatorBefore != '+' &&
         index > 0 &&
         reference.chapter == references[index - 1].chapter) {
       return _displayVerseRange(verses);
@@ -8262,6 +8339,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _withDiacritics = false;
   bool _showTopicNames = false;
   bool _interlinearView = false;
+  bool _showTranslationLabels = false;
   double _textScale = 1.0;
   late String _selectedVersion;
   final List<_ComparisonPassage> _comparisons = [];
@@ -8321,6 +8399,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     _textScale = ZoomController.instance.textScale;
     _showTopicNames = savedPreferences.showTopicNamesInChapter;
     _interlinearView = savedPreferences.interlinearEnabled;
+    _showTranslationLabels = savedPreferences.showTranslationLabels;
     _syncSelectedContentLanguage(_languageOption);
     _selectedVersion = _sanitizeVersionForLanguage(
       _languageOption,
@@ -9356,6 +9435,23 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
+  void _setShowTranslationLabels(bool value) {
+    if (_showTranslationLabels == value) {
+      return;
+    }
+    setState(() {
+      _showTranslationLabels = value;
+    });
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(showTranslationLabels: value),
+        ),
+      );
+    }
+  }
+
   void _toggleInterlinearView() {
     if (_comparisons.isEmpty) {
       if (_interlinearView) {
@@ -9458,6 +9554,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       selectedLanguage,
       selectedLanguage.apiVersion,
     );
+    var showTranslationLabels = _showTranslationLabels;
     final versionFocusNode = FocusNode();
 
     showBrowserSafeDialog<void>(
@@ -9585,6 +9682,22 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                       labels.comparisonScopeChapter,
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      key: const ValueKey<String>(
+                        'reference-show-translation-labels',
+                      ),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      checkboxShape: const CircleBorder(),
+                      value: showTranslationLabels,
+                      title: Text(labels.showTranslationLabels),
+                      onChanged: (value) {
+                        setModalState(() {
+                          showTranslationLabels = value ?? false;
+                        });
+                      },
+                    ),
                     const Spacer(),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -9599,6 +9712,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                               ? null
                               : () {
                                   Navigator.of(context).pop();
+                                  _setShowTranslationLabels(
+                                    showTranslationLabels,
+                                  );
                                   _addComparison(
                                     selectedLanguage,
                                     selectedVersion,
@@ -10071,6 +10187,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
             version: _activeVersion,
             textScale: _textScale,
             emphasized: _highlightVerses.contains(number),
+            showTranslationLabels: _showTranslationLabels,
           ),
         ),
         if (statusWidgets.isNotEmpty) ...[
@@ -10321,6 +10438,7 @@ class InterlinearVerseGroup extends StatelessWidget {
     this.textStyle,
     this.labelStyle,
     this.emphasized = false,
+    this.showTranslationLabels = false,
   });
 
   final int verseNumber;
@@ -10331,6 +10449,7 @@ class InterlinearVerseGroup extends StatelessWidget {
   final TextStyle? textStyle;
   final TextStyle? labelStyle;
   final bool emphasized;
+  final bool showTranslationLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -10348,24 +10467,19 @@ class InterlinearVerseGroup extends StatelessWidget {
         theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         );
+    final verseMarker = formatVerseMarker(
+      verseNumber,
+      language: language,
+      version: version,
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            formatVerseMarker(
-              verseNumber,
-              language: language,
-              version: version,
-            ),
-            textScaler: scaler,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          ...translations.map((translation) {
+          ...translations.asMap().entries.map((entry) {
+            final index = entry.key;
+            final translation = entry.value;
             final text = translation.verses[verseNumber] ?? '';
             final verseText = text.isNotEmpty ? text : '—';
             return Padding(
@@ -10378,12 +10492,21 @@ class InterlinearVerseGroup extends StatelessWidget {
                   text: TextSpan(
                     style: resolvedTextStyle,
                     children: [
+                      if (index == 0)
+                        TextSpan(
+                          text: '$verseMarker. ',
+                          style: verseTextStyle?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       TextSpan(text: verseText, style: verseTextStyle),
-                      const TextSpan(text: ' '),
-                      TextSpan(
-                        text: '(${translation.label})',
-                        style: resolvedLabelStyle,
-                      ),
+                      if (showTranslationLabels) ...[
+                        const TextSpan(text: ' '),
+                        TextSpan(
+                          text: '(${translation.label})',
+                          style: resolvedLabelStyle,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -11061,6 +11184,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   bool _loading = true;
   bool _withDiacritics = false;
   bool _interlinearView = false;
+  bool _showTranslationLabels = false;
   double _textScale = 1.0;
   late LanguageOption _languageOption;
   late String _apiVersion;
@@ -11194,6 +11318,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final savedPreferences = UserProfileController.instance.preferences;
     _textScale = ZoomController.instance.textScale;
     _interlinearView = savedPreferences.interlinearEnabled;
+    _showTranslationLabels = savedPreferences.showTranslationLabels;
     _languageOption = widget.languageOption;
     _apiVersion = _sanitizeVersionForLanguage(
       _languageOption,
@@ -11767,6 +11892,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final selectedTemplates = _comparisonTemplates
         .map(_comparisonTemplateFrom)
         .toList();
+    var showTranslationLabels = _showTranslationLabels;
     final versionFocusNode = FocusNode();
 
     List<_VersionChoice> buildChoices(LanguageOption language) {
@@ -12022,13 +12148,30 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      key: const ValueKey<String>(
+                        'topic-show-translation-labels',
+                      ),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      checkboxShape: const CircleBorder(),
+                      value: showTranslationLabels,
+                      title: Text(labels.showTranslationLabels),
+                      onChanged: (value) {
+                        setModalState(() {
+                          showTranslationLabels = value ?? false;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         FilledButton(
                           onPressed: () {
                             Navigator.of(context).pop();
+                            _setShowTranslationLabels(showTranslationLabels);
                             _comparisonTemplates
                               ..clear()
                               ..addAll(
@@ -12223,6 +12366,23 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     );
   }
 
+  void _setShowTranslationLabels(bool value) {
+    if (_showTranslationLabels == value) {
+      return;
+    }
+    setState(() {
+      _showTranslationLabels = value;
+    });
+    final profileController = UserProfileController.instance;
+    if (profileController.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profileController.preferences.copyWith(showTranslationLabels: value),
+        ),
+      );
+    }
+  }
+
   void _toggleInterlinearView() {
     setState(() {
       _interlinearView = !_interlinearView;
@@ -12355,6 +12515,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             version: _activeVersion,
             textScale: _textScale,
             textStyle: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+            showTranslationLabels: _showTranslationLabels,
           ),
         ),
         if (statusWidgets.isNotEmpty) ...[

@@ -17,6 +17,7 @@ void main() {
       expect(preferences.showDiacritics, isFalse);
       expect(preferences.interlinearEnabled, isFalse);
       expect(preferences.showTopicNamesInChapter, isFalse);
+      expect(preferences.showTranslationLabels, isFalse);
     });
 
     test('reads legacy preference aliases and clamps zoom', () {
@@ -99,6 +100,7 @@ void main() {
         zoomLevel: 1.2,
         interlinearEnabled: true,
         showTopicNamesInChapter: true,
+        showTranslationLabels: true,
       ).toMap();
 
       expect(map.keys, {
@@ -112,10 +114,12 @@ void main() {
         'zoomLevel',
         'interlinearEnabled',
         'showTopicNamesInChapter',
+        'showTranslationLabels',
       });
       expect(map['menuLanguage'], 'english');
       expect(map['topicLanguage'], 'english');
       expect(map['bibleLanguage'], 'english');
+      expect(map['showTranslationLabels'], isTrue);
     });
   });
 
@@ -252,6 +256,7 @@ void main() {
         preferences: UserPreferences(
           contentLanguage: 'arabic',
           preferredVersion: 'Van Dyke-',
+          showTranslationLabels: true,
         ),
       );
 
@@ -301,6 +306,7 @@ void main() {
       expect(saved?.preferences.topicLanguage, 'english');
       expect(saved?.preferences.menuLanguage, 'english');
       expect(saved?.preferences.preferredVersion, 'kjv');
+      expect(saved?.preferences.showTranslationLabels, isTrue);
     },
   );
 }

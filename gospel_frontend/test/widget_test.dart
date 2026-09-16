@@ -33,6 +33,11 @@ void main() {
       localizedLanguageNameForMenu(english, arabic.code, arabic.label),
       'Arabic',
     );
+    expect(
+      english.ui.showTranslationLabels,
+      'Show translation at the end of each verse',
+    );
+    expect(arabic.ui.showTranslationLabels, 'إظهار الترجمة عند نهاية كل عدد');
   });
 
   testWidgets(
@@ -167,7 +172,10 @@ void main() {
     );
   }
 
-  Widget interlinearGroupFor(double textScale) {
+  Widget interlinearGroupFor(
+    double textScale, {
+    bool showTranslationLabels = false,
+  }) {
     return MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
@@ -180,6 +188,7 @@ void main() {
                 language: 'english',
                 version: 'kjv',
                 textScale: textScale,
+                showTranslationLabels: showTranslationLabels,
                 translations: const [
                   InterlinearTranslation(
                     label: 'English · KJV',
@@ -822,7 +831,9 @@ void main() {
       of: find.byType(InterlinearVerseGroup),
       matching: find.byWidgetPredicate(
         (widget) =>
-            widget is RichText && widget.text.toPlainText().contains('('),
+            widget is RichText &&
+            (widget.text.toPlainText().contains('In the beginning') ||
+                widget.text.toPlainText().contains('في البدء')),
       ),
     );
     expect(richTextFinder, findsNWidgets(2));
@@ -846,12 +857,53 @@ void main() {
     for (final richText in tester.widgetList<RichText>(richTextFinder)) {
       expect(richText.textScaler.scale(16), closeTo(25.6, 0.01));
     }
-    final verseMarker = tester.widget<Text>(find.text('1'));
-    expect(verseMarker.textScaler!.scale(16), closeTo(25.6, 0.01));
+    expect(
+      tester.widget<RichText>(richTextFinder.first).text.toPlainText(),
+      startsWith('1. In the beginning'),
+    );
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'interlinear verse labels are opt-in and the marker stays inline',
+    (tester) async {
+      await tester.pumpWidget(interlinearGroupFor(1.0));
+
+      List<String> verseRows() => tester
+          .widgetList<RichText>(
+            find.descendant(
+              of: find.byType(InterlinearVerseGroup),
+              matching: find.byType(RichText),
+            ),
+          )
+          .map((widget) => widget.text.toPlainText())
+          .where(
+            (text) =>
+                text.contains('In the beginning') || text.contains('في البدء'),
+          )
+          .toList();
+
+      var rows = verseRows();
+      expect(rows, hasLength(2));
+      expect(rows.first, startsWith('1. In the beginning'));
+      expect(rows.first, isNot(contains('English · KJV')));
+      expect(rows.last, isNot(contains('العربية · البستاني فاندايك')));
+
+      await tester.pumpWidget(
+        interlinearGroupFor(1.0, showTranslationLabels: true),
+      );
+      rows = verseRows();
+      expect(rows.first, endsWith('(English · KJV)'));
+      expect(rows.last, endsWith('(العربية · البستاني فاندايك)'));
+    },
+  );
+
   testWidgets('Arabic set filter is localized, live, and RTL', (tester) async {
+    tester.view.physicalSize = const Size(586, 704);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final arabic = kBaseLanguageOptions.firstWhere(
       (option) => option.code == 'arabic',
     );
@@ -895,6 +947,19 @@ void main() {
       Directionality.of(tester.element(find.text('العملية'))),
       TextDirection.rtl,
     );
+    expect(find.text('الترتيب بحسب'), findsOneWidget);
+    expect(
+      tester
+          .getCenter(find.byKey(const ValueKey<String>('filter-operation')))
+          .dx,
+      greaterThan(
+        tester
+            .getCenter(
+              find.byKey(const ValueKey<String>('filter-sort-section')),
+            )
+            .dx,
+      ),
+    );
     final operation = tester.widget<SegmentedButton<GospelFilterMode>>(
       find.byKey(const ValueKey<String>('filter-operation')),
     );
@@ -917,6 +982,60 @@ void main() {
     expect(selected.includeMask, Gospel.mark.bit | Gospel.luke.bit);
     expect(find.text('مرقس ∩ لوقا'), findsOneWidget);
     expect(find.text('١ موضوعًا'), findsWidgets);
+  });
+
+  testWidgets('filter dialog changes sorting and restores it when cancelled', (
+    tester,
+  ) async {
+    var selectedSort = const GospelSortState();
+    var commits = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HarmonyFilterButton(
+            filterState: const GospelFilterState(),
+            sortState: selectedSort,
+            uiLanguage: kBaseLanguageOptions.first,
+            topics: const <Topic>[],
+            columns: const ColumnVisibilityState(),
+            onChanged: (_) {},
+            onSortChanged: (value) => selectedSort = value,
+            onInteractionEnd: () => commits++,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sort by'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('filter-sort-default')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('filter-sort-luke')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('filter-sort-luke')));
+    await tester.pump();
+    expect(selectedSort.gospel, Gospel.luke);
+
+    await tester.tap(find.byTooltip('Cancel'));
+    await tester.pumpAndSettle();
+    expect(selectedSort.isDefault, isTrue);
+    expect(commits, 0);
+
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('filter-sort-john')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey<String>('apply-filter')));
+    await tester.pumpAndSettle();
+
+    expect(selectedSort.gospel, Gospel.john);
+    expect(commits, 1);
   });
 
   testWidgets(
@@ -1535,6 +1654,31 @@ void main() {
     expect(find.text('+'), findsNothing);
   });
 
+  testWidgets('same-chapter semicolon omits the repeated chapter in table', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harmonyTableFor(const [
+        GospelReference(book: 'Matthew', chapter: 6, verses: '25-34'),
+        GospelReference(
+          book: 'Matthew',
+          chapter: 6,
+          verses: '19-21',
+          separatorBefore: ';',
+        ),
+      ]),
+    );
+
+    final referenceLinks = tester.widgetList<ReferenceHoverText>(
+      find.byType(ReferenceHoverText),
+    );
+    expect(referenceLinks.map((link) => link.labelOverride), [
+      '6:25–34',
+      '19–21',
+    ]);
+    expect(find.text('; '), findsOneWidget);
+  });
+
   testWidgets('continuous preview keeps the exact compact cell reference', (
     tester,
   ) async {
@@ -1805,11 +1949,13 @@ void main() {
               .getTopLeft(find.byKey(ValueKey<String>('column-${gospel.name}')))
               .dy,
         )
-        .toSet();
-    expect(columnTops, hasLength(1));
+        .toList();
+    expect(columnTops.toSet(), hasLength(4));
+    expect(columnTops, orderedEquals(columnTops.toList()..sort()));
     expect(find.byIcon(Icons.visibility_outlined), findsNothing);
     expect(find.byIcon(Icons.visibility_off_outlined), findsNothing);
-    expect(find.byIcon(Icons.remove_circle_outline), findsNWidgets(4));
+    expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+    expect(find.byIcon(Icons.add_circle_outline), findsNothing);
     final matthewButton = tester.widget<IconButton>(
       find.descendant(
         of: find.byKey(const ValueKey<String>('column-matthew')),
@@ -1817,6 +1963,15 @@ void main() {
       ),
     );
     expect(matthewButton.tooltip, 'Hide Matthew column');
+    expect(matthewButton.isSelected, isTrue);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey<String>('sort-section'))).dy,
+      tester
+          .getTopLeft(
+            find.byKey(const ValueKey<String>('visible-columns-section')),
+          )
+          .dy,
+    );
     Future<void> toggle(Gospel gospel) async {
       final button = find.descendant(
         of: find.byKey(ValueKey<String>('column-${gospel.name}')),
@@ -1841,6 +1996,11 @@ void main() {
       ),
     );
     expect(finalButton.onPressed, isNull);
+    expect(finalButton.isSelected, isTrue);
+    final hiddenMatthewButton = tester.widget<IconButton>(
+      find.byKey(const ValueKey<String>('column-toggle-matthew')),
+    );
+    expect(hiddenMatthewButton.isSelected, isFalse);
 
     final reset = find.byKey(const ValueKey<String>('reset-columns'));
     await tester.ensureVisible(reset);
@@ -1851,7 +2011,7 @@ void main() {
     expect(sort.isDefault, isTrue);
   });
 
-  testWidgets('combined sort control uses a two-row narrow layout', (
+  testWidgets('combined sort control stacks its sections on narrow screens', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(500, 780));
@@ -1874,21 +2034,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
 
-    final matthewTop = tester
-        .getTopLeft(find.byKey(const ValueKey<String>('column-matthew')))
-        .dy;
-    final markTop = tester
-        .getTopLeft(find.byKey(const ValueKey<String>('column-mark')))
-        .dy;
-    final lukeTop = tester
-        .getTopLeft(find.byKey(const ValueKey<String>('column-luke')))
-        .dy;
-    final johnTop = tester
-        .getTopLeft(find.byKey(const ValueKey<String>('column-john')))
-        .dy;
-    expect(markTop, matthewTop);
-    expect(johnTop, lukeTop);
-    expect(lukeTop, greaterThan(matthewTop));
+    final sortSection = find.byKey(const ValueKey<String>('sort-section'));
+    final columnsSection = find.byKey(
+      const ValueKey<String>('visible-columns-section'),
+    );
+    await tester.ensureVisible(columnsSection);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(columnsSection).dy,
+      greaterThan(tester.getTopLeft(sortSection).dy),
+    );
+    final columnTops = Gospel.values
+        .map(
+          (gospel) => tester
+              .getTopLeft(find.byKey(ValueKey<String>('column-${gospel.name}')))
+              .dy,
+        )
+        .toList();
+    expect(columnTops.toSet(), hasLength(4));
+    expect(columnTops, orderedEquals(columnTops.toList()..sort()));
     expect(tester.takeException(), isNull);
   });
 
@@ -1951,16 +2115,15 @@ void main() {
       ),
     );
     expect(arabicMatthewButton.tooltip, 'إخفاء عمود متى');
-    final columnLefts = Gospel.values
-        .map(
-          (gospel) => tester
-              .getTopLeft(find.byKey(ValueKey<String>('column-${gospel.name}')))
-              .dx,
-        )
-        .toList();
     expect(
-      columnLefts,
-      orderedEquals(columnLefts.toList()..sort((a, b) => b.compareTo(a))),
+      tester.getCenter(find.byKey(const ValueKey<String>('sort-section'))).dx,
+      greaterThan(
+        tester
+            .getCenter(
+              find.byKey(const ValueKey<String>('visible-columns-section')),
+            )
+            .dx,
+      ),
     );
     expect(find.textContaining('Matthew'), findsNothing);
     expect(find.textContaining('Mark'), findsNothing);

@@ -363,6 +363,8 @@ class ProfileEditorState extends State<ProfileEditor> {
         zoomLevel: _zoom,
         interlinearEnabled: _interlinearEnabled,
         showTopicNamesInChapter: _showTopicNames,
+        showTranslationLabels:
+            widget.initialProfile.preferences.showTranslationLabels,
       ),
     );
 

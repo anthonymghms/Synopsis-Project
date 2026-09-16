@@ -169,9 +169,25 @@ class ReferenceCell:
         parts: list[str] = []
         for index, segment in enumerate(self.segments):
             if index > 0:
-                separator = segment.separator_before or ReferenceSeparator.non_continuous
-                parts.append(f" {separator.value} ")
-            parts.append(segment.display_reference)
+                separator = (
+                    segment.separator_before or ReferenceSeparator.non_continuous
+                )
+                parts.append(
+                    " + "
+                    if separator == ReferenceSeparator.continuous
+                    else f"{separator.value} "
+                )
+            previous = self.segments[index - 1] if index > 0 else None
+            can_inherit_chapter = (
+                previous is not None
+                and segment.chapter == previous.chapter
+                and segment.separator_before != ReferenceSeparator.continuous
+            )
+            parts.append(
+                segment.verses
+                if can_inherit_chapter
+                else segment.display_reference
+            )
         return "".join(parts)
 
     def to_firestore(self) -> dict[str, Any]:

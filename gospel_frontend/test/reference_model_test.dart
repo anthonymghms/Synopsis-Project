@@ -80,6 +80,17 @@ void main() {
       expect(continuous.displayValue, '10:40 11:10');
     });
 
+    test('semicolon selections in the same chapter omit repeated chapters', () {
+      for (final value in const <String>[
+        'Matthew 6:25-34; 6:19-21',
+        'Matthew 6:25-34; 19-21',
+      ]) {
+        final cell = HarmonyReferenceCell.parse(value, book: 'Matthew');
+
+        expect(cell.displayValue, '6:25–34; 19–21');
+      }
+    });
+
     test('preview sections group comma and plus but split on semicolon', () {
       final cell = HarmonyReferenceCell.parse(
         'Luke 1:40, 52; 4:42-44 + 5:1-2',

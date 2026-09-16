@@ -334,9 +334,13 @@ String formatHarmonyReferenceCellDisplay(
     final first = segments[groupStart];
     final last = segments[groupEnd];
     final separator = first.separatorBefore;
+    // Once a chapter has been established, any later single-segment selection
+    // from that chapter can use verse-only notation. This applies to both
+    // comma-separated selections and non-contiguous semicolon selections (for
+    // example, `6:25–34; 19–21`).
     final omitChapter =
         groupStart > 0 &&
-        separator == ReferenceSeparator.sameChapter &&
+        separator != ReferenceSeparator.continuous &&
         first.chapter == segments[groupStart - 1].chapter &&
         groupStart == groupEnd;
 
