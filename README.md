@@ -348,8 +348,7 @@ key beside the application.
 
 ## One-time administrator bootstrap
 
-No account in the inspected Firebase project currently has an admin role or
-custom claim. From a trusted backend machine, grant the first administrator:
+From a trusted backend machine, grant administrator access to an existing account:
 
 ```sh
 ./venv/bin/python scripts/set_admin.py --email admin@example.com
@@ -372,6 +371,34 @@ firebase deploy --only firestore:rules,storage
 The new rules prevent users from creating or modifying their own authorization
 fields, keep all data writes behind the Admin SDK, limit import-history reads to
 admins, and make staged source uploads backend-only.
+
+### Profile setup after an admin's first login
+
+Administrator access does not skip the one-time profile setup. The bootstrap
+script writes the server-managed role; the user's first successful profile save
+adds their details, preferences, and `profileCompleted` while preserving that role.
+
+If **Save and continue** reports **Changes could not be saved**, check that the
+Firestore rules have been deployed with the current client. Profile writes include
+`topicLanguage`, `bibleLanguage`, `bibleVersion`, and `showTranslationLabels` under
+`preferences`. Older rules reject those keys even when the account is an admin.
+The translation-label preference is optional for older clients, but must be a
+boolean when present. Publish the matching rules from `gospel_frontend`:
+
+```sh
+npx firebase-tools deploy --only firestore:rules --project synopsis-224b0
+```
+
+Changing this rules file locally does not update the live Firebase project.
+
+Profile rule regression tests run against a local emulator and a dedicated demo
+project, without production credentials (requires Java and the Firebase CLI):
+
+```sh
+cd gospel_frontend
+npx firebase-tools emulators:exec --only firestore --project demo-synopsis-profile \
+  "../venv/bin/python -m unittest discover -s ../tests -p test_profile_rules.py -v"
+```
 
 ## Testing an Admin Portal import
 

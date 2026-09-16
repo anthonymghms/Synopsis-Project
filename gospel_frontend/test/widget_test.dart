@@ -1017,6 +1017,11 @@ void main() {
       find.byKey(const ValueKey<String>('filter-sort-luke')),
       findsOneWidget,
     );
+    final filterLukeChoice = tester.widget<RadioListTile<TopicSortMode>>(
+      find.byKey(const ValueKey<String>('filter-sort-luke')),
+    );
+    expect((filterLukeChoice.title as Text).data, 'Luke');
+    expect(find.textContaining('chronology'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey<String>('filter-sort-luke')));
     await tester.pump();
@@ -1037,6 +1042,65 @@ void main() {
     expect(selectedSort.gospel, Gospel.john);
     expect(commits, 1);
   });
+
+  testWidgets(
+    'filter dialog stays compact while building and clearing a filter',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var selected = const GospelFilterState();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HarmonyFilterButton(
+              filterState: selected,
+              uiLanguage: kBaseLanguageOptions.first,
+              topics: const <Topic>[],
+              columns: const ColumnVisibilityState(),
+              onChanged: (state) => selected = state,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Filter'));
+      await tester.pumpAndSettle();
+
+      final surface = find.byKey(
+        const ValueKey<String>('draggable-dialog-surface'),
+      );
+      final compactHeight = tester.getSize(surface).height;
+      expect(compactHeight, lessThan(720));
+      final compactFooterGap =
+          tester
+              .getTopLeft(find.byKey(const ValueKey<String>('apply-filter')))
+              .dy -
+          tester
+              .getBottomLeft(
+                find.text('The table and topic counts update as you choose.'),
+              )
+              .dy;
+      expect(compactFooterGap, inInclusiveRange(0, 80));
+
+      await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
+      await tester.pumpAndSettle();
+
+      final activeHeight = tester.getSize(surface).height;
+      expect(selected.includeMask, Gospel.mark.bit);
+      expect(activeHeight, closeTo(compactHeight, 0.1));
+      expect(activeHeight, lessThanOrEqualTo(720));
+
+      await tester.tap(find.byKey(const ValueKey<String>('include-mark')));
+      await tester.pumpAndSettle();
+
+      expect(selected.isActive, isFalse);
+      expect(tester.getSize(surface).height, closeTo(compactHeight, 0.1));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'English set filter builds union then exclusion with live counts',
@@ -2084,12 +2148,19 @@ void main() {
     expect(find.text('الترتيب والأعمدة'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
-    expect(
-      tester.getSize(
-        find.byKey(const ValueKey<String>('draggable-dialog-surface')),
-      ),
-      const Size(700, 820),
+    final dialogSize = tester.getSize(
+      find.byKey(const ValueKey<String>('draggable-dialog-surface')),
     );
+    expect(dialogSize.width, 700);
+    expect(dialogSize.height, lessThan(650));
+    final footerGap =
+        tester.getTopLeft(find.widgetWithText(FilledButton, 'تم')).dy -
+        tester
+            .getBottomLeft(
+              find.text('يجب إبقاء عمود إنجيل واحد ظاهرًا على الأقل.'),
+            )
+            .dy;
+    expect(footerGap, inInclusiveRange(0, 60));
     expect(find.text('الترتيب بحسب'), findsOneWidget);
     expect(find.text('التنسيق العام'), findsOneWidget);
     expect(find.text('إنجيل متى'), findsOneWidget);
@@ -2097,16 +2168,11 @@ void main() {
     expect(find.text('إنجيل لوقا'), findsOneWidget);
     expect(find.text('إنجيل يوحنا'), findsOneWidget);
     final defaultSortText = tester.widget<Text>(find.text('التنسيق العام'));
-    for (final label in const [
-      'إنجيل متى',
-      'إنجيل مرقس',
-      'إنجيل لوقا',
-      'إنجيل يوحنا',
-    ]) {
-      expect(
-        tester.widget<Text>(find.text(label)).style,
-        defaultSortText.style,
+    for (final gospel in Gospel.values) {
+      final choice = tester.widget<RadioListTile<TopicSortMode>>(
+        find.byKey(ValueKey<String>('sort-${gospel.name}')),
       );
+      expect((choice.title as Text).style, defaultSortText.style);
     }
     final arabicMatthewButton = tester.widget<IconButton>(
       find.descendant(
@@ -2345,7 +2411,7 @@ void main() {
     expect(find.text('نص المقارنة.'), findsOneWidget);
   });
 
-  testWidgets('combined sort picker exposes Default and all chronologies', (
+  testWidgets('combined sort picker exposes Default and every Gospel', (
     tester,
   ) async {
     var state = const GospelSortState();
@@ -2367,10 +2433,18 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('sort-button')));
     await tester.pumpAndSettle();
     expect(find.text('Default'), findsOneWidget);
-    expect(find.text('Matthew chronology'), findsOneWidget);
-    expect(find.text('Mark chronology'), findsOneWidget);
-    expect(find.text('Luke chronology'), findsOneWidget);
-    expect(find.text('John chronology'), findsOneWidget);
+    for (final entry in const <Gospel, String>{
+      Gospel.matthew: 'Matthew',
+      Gospel.mark: 'Mark',
+      Gospel.luke: 'Luke',
+      Gospel.john: 'John',
+    }.entries) {
+      final choice = tester.widget<RadioListTile<TopicSortMode>>(
+        find.byKey(ValueKey<String>('sort-${entry.key.name}')),
+      );
+      expect((choice.title as Text).data, entry.value);
+    }
+    expect(find.textContaining('chronology'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey<String>('sort-luke')));
     await tester.pump();

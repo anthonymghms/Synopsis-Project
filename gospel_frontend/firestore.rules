@@ -48,7 +48,8 @@ service cloud.firestore {
             'showDiacritics',
             'zoomLevel',
             'interlinearEnabled',
-            'showTopicNamesInChapter'
+            'showTopicNamesInChapter',
+            'showTranslationLabels'
           ])
           && data.menuLanguage is string
           && data.menuLanguage.size() <= 40
@@ -70,7 +71,10 @@ service cloud.firestore {
           && data.zoomLevel >= 0.8
           && data.zoomLevel <= 1.6
           && data.interlinearEnabled is bool
-          && data.showTopicNamesInChapter is bool;
+          && data.showTopicNamesInChapter is bool
+          // Optional for profiles written before translation labels existed.
+          && (!data.keys().hasAny(['showTranslationLabels'])
+              || data.showTranslationLabels is bool);
     }
 
     function validCompletedProfile(data) {

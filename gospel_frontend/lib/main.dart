@@ -364,7 +364,6 @@ class LocalizedUiLabels {
   final String sort;
   final String sortBy;
   final String defaultSort;
-  final String chronology;
   final String visibleColumns;
   final String resetColumns;
   final String filter;
@@ -472,7 +471,6 @@ class LocalizedUiLabels {
     required this.sort,
     required this.sortBy,
     required this.defaultSort,
-    required this.chronology,
     required this.visibleColumns,
     required this.resetColumns,
     required this.filter,
@@ -656,7 +654,6 @@ const List<LanguageOption> kBaseLanguageOptions = [
       sort: 'Sort & Columns',
       sortBy: 'Sort by',
       defaultSort: 'Default',
-      chronology: 'chronology',
       visibleColumns: 'Visible columns',
       resetColumns: 'Reset columns',
       filter: 'Filter',
@@ -782,7 +779,6 @@ const List<LanguageOption> kBaseLanguageOptions = [
       sort: 'الترتيب والأعمدة',
       sortBy: 'الترتيب بحسب',
       defaultSort: 'التنسيق العام',
-      chronology: 'إنجيل',
       visibleColumns: 'الأعمدة الظاهرة',
       resetColumns: 'إعادة إظهار الأعمدة',
       filter: 'تصفية',
@@ -3020,28 +3016,45 @@ class _DraggableDialogShellState extends State<DraggableDialogShell> {
       ),
     );
 
+    final content = Column(
+      mainAxisSize: widget.shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
+      children: [
+        header,
+        const Divider(height: 1),
+        if (widget.shrinkWrap)
+          Flexible(fit: FlexFit.loose, child: widget.child)
+        else
+          Expanded(child: widget.child),
+        if (widget.footer != null) ...[
+          const Divider(height: 1),
+          widget.footer!,
+        ],
+      ],
+    );
+    final surface = widget.shrinkWrap
+        ? ConstrainedBox(
+            key: const ValueKey<String>('draggable-dialog-surface'),
+            constraints: BoxConstraints(
+              minWidth: dialogSize.width,
+              maxWidth: dialogSize.width,
+              maxHeight: dialogSize.height,
+            ),
+            child: content,
+          )
+        : SizedBox(
+            key: const ValueKey<String>('draggable-dialog-surface'),
+            width: dialogSize.width,
+            height: dialogSize.height,
+            child: content,
+          );
+
     final dialog = Dialog(
       insetPadding: fullScreen ? EdgeInsets.zero : EdgeInsets.all(compactInset),
       shape: fullScreen
           ? const RoundedRectangleBorder()
           : RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        key: const ValueKey<String>('draggable-dialog-surface'),
-        width: dialogSize.width,
-        height: dialogSize.height,
-        child: Column(
-          children: [
-            header,
-            const Divider(height: 1),
-            Expanded(child: widget.child),
-            if (widget.footer != null) ...[
-              const Divider(height: 1),
-              widget.footer!,
-            ],
-          ],
-        ),
-      ),
+      child: surface,
     );
     final positioned = fullScreen
         ? SafeArea(child: dialog)
@@ -3077,12 +3090,9 @@ class _HarmonySortChoices extends StatelessWidget {
   final TextStyle? textStyle;
   final double tileHeight;
 
-  String _gospelChronologyLabel(Gospel gospel) {
-    final labels = uiLanguage.ui;
-    final gospelName = _localizedGospelName(gospel, labels, uiLanguage);
-    return uiLanguage.code == 'arabic'
-        ? '${labels.chronology} $gospelName'
-        : '$gospelName ${labels.chronology}';
+  String _gospelSortLabel(Gospel gospel) {
+    final gospelName = _localizedGospelName(gospel, uiLanguage.ui, uiLanguage);
+    return uiLanguage.code == 'arabic' ? 'إنجيل $gospelName' : gospelName;
   }
 
   @override
@@ -3114,7 +3124,7 @@ class _HarmonySortChoices extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 controlAffinity: ListTileControlAffinity.leading,
                 value: TopicSortMode.forGospel(gospel),
-                title: Text(_gospelChronologyLabel(gospel), style: textStyle),
+                title: Text(_gospelSortLabel(gospel), style: textStyle),
               ),
             ),
         ],
@@ -4046,10 +4056,13 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
   @override
   Widget build(BuildContext context) {
     final labels = widget.uiLanguage.ui;
+    final viewport = MediaQuery.sizeOf(context);
+    final isCompactViewport = viewport.width < 600 || viewport.height < 650;
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
         maxWidth: 760,
+        shrinkWrap: !isCompactViewport,
         title: Text(
           labels.filter,
           style: Theme.of(
