@@ -476,6 +476,29 @@ flutter test
 flutter build web --release --dart-define=API_BASE_URL=http://127.0.0.1:8010
 ```
 
+The browser print lifecycle check runs separately in Chrome:
+
+```sh
+cd gospel_frontend
+flutter test --platform chrome test/browser/topics_table_browser.dart
+```
+
+## Table selection, export, and printing
+
+Verified administrators can select and copy table and reading text, and use
+**Export CSV** in the web table toolbar. The UTF-8 CSV preserves Arabic text and
+exports every row in the current filtered result, in the selected sort order,
+with the visible Gospel columns and original topic numbers.
+
+**Print / PDF** and the browser's Print command use the same complete table.
+The print layout fits the selected columns to landscape paper, wraps long
+content, repeats the column headings, and paginates all rows, including those
+below the screen. Choose the browser's **Save as PDF** destination for a PDF.
+
+The X on an active **Filter** control clears the filter. The X on
+**Sort & Columns** restores default topic order and all four Gospel columns.
+Both changes update the URL so browser back/forward restores the prior view.
+
 ## Security findings
 
 - `serviceAccountKey.json` exists locally with restrictive permissions, is

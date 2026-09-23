@@ -22,6 +22,8 @@ class AdminAccess {
   final FirebaseFirestore _firestore;
   final Map<String, Future<bool>> _cache = <String, Future<bool>>{};
 
+  void clearCache() => _cache.clear();
+
   Future<bool> currentUserIsAdmin({bool forceRefresh = false}) {
     final user = _auth.currentUser;
     if (user == null) return Future<bool>.value(false);

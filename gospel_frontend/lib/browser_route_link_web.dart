@@ -9,6 +9,8 @@ import 'dart:ui_web' as ui_web;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
+import 'admin_content_scope.dart';
 
 typedef BrowserRouteLinkBuilder =
     Widget Function(BuildContext context, VoidCallback? followLink);
@@ -127,10 +129,11 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
 
   void _follow() {
     final target = widget.uri;
-    if (target == null ||
-        !mounted ||
-        BrowserRouteLinkNavigation.isBlocked ||
-        _browserModifierPressed) {
+    if (target == null || !mounted || BrowserRouteLinkNavigation.isBlocked) {
+      return;
+    }
+    if (_browserModifierPressed) {
+      if (AdminContentScope.allowsSelection(context)) _openInNewTab();
       return;
     }
     final now = DateTime.now().microsecondsSinceEpoch;
@@ -232,15 +235,32 @@ class _BrowserRouteLinkState extends State<BrowserRouteLink> {
   @override
   Widget build(BuildContext context) {
     final href = _href;
+    final allowsSelection = AdminContentScope.allowsSelection(context);
     final followLink = widget.uri == null ? null : _follow;
     final child = Semantics(
       link: widget.uri != null,
-      linkUrl: widget.uri,
+      // A native semantics anchor also follows its href after a selection drag.
+      // Keep the accessible link action, with Flutter owning admin navigation.
+      linkUrl: allowsSelection ? null : widget.uri,
       child: widget.builder(context, followLink),
     );
 
     if (href == null) {
       return child;
+    }
+
+    if (allowsSelection) {
+      // The transparent DOM anchor can activate on mouse-up after a selection
+      // drag. Let Flutter arbitrate taps vs selection for admins instead.
+      return Listener(
+        onPointerDown: (event) {
+          if (event.buttons == kMiddleMouseButton &&
+              !BrowserRouteLinkNavigation.isBlocked) {
+            _openInNewTab();
+          }
+        },
+        child: child,
+      );
     }
 
     return Stack(

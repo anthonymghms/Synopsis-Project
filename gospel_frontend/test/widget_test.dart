@@ -1229,7 +1229,7 @@ void main() {
     expect(find.text('1 topics'), findsWidgets);
   });
 
-  testWidgets('filter browser uses a full-height mobile layout', (
+  testWidgets('filter dialog stays inset and scrollable on mobile', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 780);
@@ -1256,11 +1256,21 @@ void main() {
     await tester.tap(find.text('Filter'));
     await tester.pumpAndSettle();
 
-    final dialogSize = tester.getSize(find.byType(Dialog));
-    expect(dialogSize.width, greaterThanOrEqualTo(380));
-    expect(dialogSize.height, greaterThanOrEqualTo(760));
+    final dialogSize = tester.getSize(
+      find.byKey(const ValueKey<String>('draggable-dialog-surface')),
+    );
+    expect(dialogSize.width, 358);
+    expect(dialogSize.height, lessThanOrEqualTo(720));
     expect(find.text('Include Gospels'), findsOneWidget);
     expect(find.text('Apply filter'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('filter-sort-john')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('filter-sort-john')));
+    await tester.tap(find.byKey(const ValueKey<String>('apply-filter')));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

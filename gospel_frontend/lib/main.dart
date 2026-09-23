@@ -21,6 +21,9 @@ import 'package:gospel_frontend/gospel_filter.dart';
 import 'package:gospel_frontend/admin_portal.dart';
 import 'package:gospel_frontend/catalog_events.dart';
 import 'package:gospel_frontend/admin_access.dart';
+import 'package:gospel_frontend/admin_content_scope.dart';
+import 'package:gospel_frontend/topics_table_document.dart';
+import 'package:gospel_frontend/topics_table_output.dart';
 import 'package:gospel_frontend/reference_model.dart';
 import 'package:gospel_frontend/topic_language_catalog.dart';
 
@@ -3187,11 +3190,16 @@ class HarmonyFilterButton extends StatelessWidget {
       size: 18,
     );
     if (filterState.isActive) {
-      return FilledButton.icon(
+      return _ActiveToolbarControl(
         onPressed: () => _showFilterDialog(context),
-        style: _toolbarFilledStyle(context),
         icon: icon,
-        label: Text(labels.filter, overflow: TextOverflow.ellipsis),
+        label: labels.filter,
+        resetKey: 'clear-filter-button',
+        resetTooltip: labels.clearFilter,
+        onReset: () {
+          onChanged(const GospelFilterState());
+          onInteractionEnd?.call();
+        },
       );
     }
     return OutlinedButton.icon(
@@ -3199,6 +3207,58 @@ class HarmonyFilterButton extends StatelessWidget {
       style: _toolbarOutlinedStyle(context),
       icon: icon,
       label: Text(labels.filter, overflow: TextOverflow.ellipsis),
+    );
+  }
+}
+
+/// Separate tap targets keep resetting from opening the configuration dialog.
+class _ActiveToolbarControl extends StatelessWidget {
+  const _ActiveToolbarControl({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    required this.onReset,
+    required this.resetKey,
+    required this.resetTooltip,
+  });
+
+  final String label;
+  final Widget icon;
+  final VoidCallback onPressed;
+  final VoidCallback onReset;
+  final String resetKey;
+  final String resetTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primary,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FilledButton.icon(
+            onPressed: onPressed,
+            style: _toolbarFilledStyle(context),
+            icon: icon,
+            label: Text(label, overflow: TextOverflow.ellipsis),
+          ),
+          IconButton(
+            key: ValueKey<String>(resetKey),
+            tooltip: resetTooltip,
+            onPressed: onReset,
+            color: scheme.onPrimary,
+            iconSize: 16,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: const EdgeInsets.all(6),
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -4056,13 +4116,11 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
   @override
   Widget build(BuildContext context) {
     final labels = widget.uiLanguage.ui;
-    final viewport = MediaQuery.sizeOf(context);
-    final isCompactViewport = viewport.width < 600 || viewport.height < 650;
     return Directionality(
       textDirection: widget.uiLanguage.direction,
       child: DraggableDialogShell(
         maxWidth: 760,
-        shrinkWrap: !isCompactViewport,
+        shrinkWrap: true,
         title: Text(
           labels.filter,
           style: Theme.of(
@@ -4183,12 +4241,20 @@ class HarmonySortButton extends StatelessWidget {
     final icon = const Icon(Icons.sort, size: 18);
     final label = Text(labels.sort, overflow: TextOverflow.ellipsis);
     return active
-        ? FilledButton.icon(
+        ? _ActiveToolbarControl(
             key: const ValueKey<String>('sort-button'),
             onPressed: () => _showDialog(context),
-            style: _toolbarFilledStyle(context),
             icon: icon,
-            label: label,
+            label: labels.sort,
+            resetKey: 'clear-sort-button',
+            resetTooltip: uiLanguage.code == 'arabic'
+                ? 'إعادة الترتيب والأعمدة إلى الافتراضي'
+                : 'Reset sorting and columns',
+            onReset: () {
+              onChanged(const GospelSortState());
+              onColumnsChanged(const ColumnVisibilityState());
+              onInteractionEnd?.call();
+            },
           )
         : OutlinedButton.icon(
             key: const ValueKey<String>('sort-button'),
@@ -4824,6 +4890,7 @@ class AuthGate extends StatelessWidget {
             builder: builder,
           );
         }
+        adminAccess.clearCache();
         UserProfileController.instance.clear();
         return const AuthScreen();
       },
@@ -4848,6 +4915,8 @@ class _AuthenticatedProfileGate extends StatefulWidget {
 
 class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
   late Future<UserProfile> _loadFuture;
+  bool _allowAdminContent = false;
+  bool _adminContentLoaded = false;
 
   @override
   void initState() {
@@ -4871,10 +4940,14 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
   }
 
   Future<UserProfile> _load({bool force = false}) async {
+    _adminContentLoaded = false;
+    final adminFuture = adminAccess.currentUserIsAdmin(forceRefresh: force);
     final profile = await UserProfileController.instance.loadForUser(
       widget.user,
       force: force,
     );
+    _allowAdminContent = await adminFuture;
+    _adminContentLoaded = true;
     _applyUserPreferencesToLegacyControllers(profile.preferences);
     return profile;
   }
@@ -4895,7 +4968,7 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
             ? controller.profile
             : null;
         if (snapshot.connectionState != ConnectionState.done &&
-            cachedProfile == null) {
+            (cachedProfile == null || !_adminContentLoaded)) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
@@ -4945,7 +5018,12 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
         if (!profile.profileCompleted) {
           return ProfileSetupScreen(profile: profile);
         }
-        return widget.builder(context);
+        return AdminContentScope(
+          enabled: _allowAdminContent,
+          child: _allowAdminContent
+              ? SelectionArea(child: Builder(builder: widget.builder))
+              : Builder(builder: widget.builder),
+        );
       },
     );
   }
@@ -5172,7 +5250,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
   final Map<String, String> _selectedVersions = {};
   SharedPreferences? _prefs;
   String? _pendingTopicId;
-  bool _isAdmin = false;
   bool _routeProvidedInitialVersion = false;
   bool _topicsLoadRequested = false;
   late GospelFilterState _filterState;
@@ -5232,7 +5309,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _initializePreferences();
     _refreshLanguagesFromFirestore();
     _refreshTopicLanguages();
-    _loadAdminState();
     catalogRevision.addListener(_catalogChanged);
   }
 
@@ -5292,16 +5368,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _sortState = sort;
       _columnVisibility = columns;
       _committedControlSignature = _controlSignature;
-    });
-  }
-
-  Future<void> _loadAdminState() async {
-    final isAdmin = await adminAccess.currentUserIsAdmin();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _isAdmin = isAdmin;
     });
   }
 
@@ -5669,112 +5735,139 @@ class _TopicListScreenState extends State<TopicListScreen> {
     final languageOption = _languageOption;
     final menuLanguage = MenuLanguageScope.of(context);
     final processed = _processedTopics();
-    return Directionality(
-      textDirection: _topicLanguageOption.direction,
-      child: MainScaffold(
-        title: '',
-        topNavigation: _buildGlobalTopNavigation(
-          context: context,
-          contentLanguage: languageOption,
-          contentVersion: _apiVersionFor(languageOption),
-        ),
-        settingsLabel: menuLanguage.ui.settings,
-        logoutLabel: menuLanguage.ui.logout,
-        accountTooltip: menuLanguage.ui.account,
-        showAdmin: _isAdmin,
-        adminLabel: menuLanguage.code == 'arabic' ? 'الإدارة' : 'Admin',
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-            ? Center(child: Text(_error!))
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppToolbar(
-                    maxContentWidth: _maxHarmonyTableWidth,
-                    language: languageOption,
-                    version: _apiVersionFor(languageOption),
-                    languages: _primaryLanguageOptions(),
-                    languagesLoading: _languagesLoading,
-                    onLanguageChanged: _updateLanguage,
-                    onVersionChanged: (version) =>
-                        _updateVersionForLanguage(languageOption, version),
-                    onTranslationChanged: _updateContentTranslation,
-                    trailingActions: [
-                      if (_isAdmin)
-                        FilledButton.icon(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  menuLanguage.pdfUnavailableMessage,
-                                ),
-                              ),
-                            );
-                          },
-                          style: _toolbarFilledStyle(context),
-                          icon: const Icon(
-                            Icons.picture_as_pdf_outlined,
-                            size: 18,
+    final isAdmin = AdminContentScope.allowsSelection(context);
+    final document = _loading || _error != null
+        ? null
+        : buildTopicsTableDocument(
+            topics: processed.topics,
+            sourceIndexes: processed.sourceIndexes,
+            topicLanguage: _topicLanguageOption,
+            visibleGospels: _columnVisibility.visibleGospels.toList(),
+            title: menuLanguage.ui.title,
+          );
+    return TopicsTablePrintScope(
+      document: document,
+      child: Directionality(
+        textDirection: _topicLanguageOption.direction,
+        child: MainScaffold(
+          title: '',
+          topNavigation: _buildGlobalTopNavigation(
+            context: context,
+            contentLanguage: languageOption,
+            contentVersion: _apiVersionFor(languageOption),
+          ),
+          settingsLabel: menuLanguage.ui.settings,
+          logoutLabel: menuLanguage.ui.logout,
+          accountTooltip: menuLanguage.ui.account,
+          showAdmin: isAdmin,
+          adminLabel: menuLanguage.code == 'arabic' ? 'الإدارة' : 'Admin',
+          body: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+              ? Center(child: Text(_error!))
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppToolbar(
+                      maxContentWidth: _maxHarmonyTableWidth,
+                      language: languageOption,
+                      version: _apiVersionFor(languageOption),
+                      languages: _primaryLanguageOptions(),
+                      languagesLoading: _languagesLoading,
+                      onLanguageChanged: _updateLanguage,
+                      onVersionChanged: (version) =>
+                          _updateVersionForLanguage(languageOption, version),
+                      onTranslationChanged: _updateContentTranslation,
+                      trailingActions: [
+                        if (isAdmin && kIsWeb)
+                          FilledButton.icon(
+                            key: const ValueKey<String>('export-topics-csv'),
+                            onPressed: document == null
+                                ? null
+                                : () => downloadTopicsCsv(
+                                    document,
+                                    'gospel-topics-${_topicLanguageOption.code}.csv',
+                                  ),
+                            style: _toolbarFilledStyle(context),
+                            icon: const Icon(Icons.download_outlined, size: 18),
+                            label: Text(
+                              menuLanguage.code == 'arabic'
+                                  ? 'تصدير CSV'
+                                  : 'Export CSV',
+                            ),
                           ),
-                          label: Text(menuLanguage.downloadLabel),
-                        ),
-                      if (_isAdmin)
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            _tableKey.currentState?.resetScroll();
-                          },
-                          style: _toolbarOutlinedStyle(context),
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: Text(menuLanguage.resetLabel),
-                        ),
-                      HarmonySortButton(
-                        state: _sortState,
-                        columns: _columnVisibility,
-                        uiLanguage: menuLanguage,
-                        onChanged: _setSortState,
-                        onColumnsChanged: _setColumnVisibility,
-                        onInteractionEnd: _commitControlState,
-                      ),
-                      HarmonyFilterButton(
-                        filterState: _filterState,
-                        sortState: _sortState,
-                        uiLanguage: menuLanguage,
-                        topics: _topics,
-                        columns: _columnVisibility,
-                        currentResultCount: processed.visibleTopicCount,
-                        onChanged: _setFilterState,
-                        onSortChanged: _setSortState,
-                        onInteractionEnd: _commitControlState,
-                      ),
-                      _buildHarmonyResultCountChip(
-                        context: context,
-                        uiLanguage: menuLanguage,
-                        count: processed.visibleTopicCount,
-                      ),
-                      if (_filterState.isActive)
-                        _buildActiveSetFilterChip(
-                          context: context,
-                          state: _filterState,
+                        if (kIsWeb)
+                          OutlinedButton.icon(
+                            key: const ValueKey<String>('print-topics-table'),
+                            onPressed: document == null
+                                ? null
+                                : printTopicsTable,
+                            style: _toolbarOutlinedStyle(context),
+                            icon: const Icon(Icons.print_outlined, size: 18),
+                            label: Text(
+                              menuLanguage.code == 'arabic'
+                                  ? 'طباعة / PDF'
+                                  : 'Print / PDF',
+                            ),
+                          ),
+                        if (isAdmin)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              _tableKey.currentState?.resetScroll();
+                            },
+                            style: _toolbarOutlinedStyle(context),
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: Text(menuLanguage.resetLabel),
+                          ),
+                        HarmonySortButton(
+                          state: _sortState,
+                          columns: _columnVisibility,
                           uiLanguage: menuLanguage,
-                          onDeleted: _clearFilter,
+                          onChanged: _setSortState,
+                          onColumnsChanged: _setColumnVisibility,
+                          onInteractionEnd: _commitControlState,
                         ),
-                    ],
-                  ),
-                  const Divider(height: 0),
-                  Expanded(
-                    child: HarmonyTable(
-                      key: _tableKey,
-                      topics: processed.topics,
-                      topicDisplayIndexes: processed.sourceIndexes,
-                      languageOption: languageOption,
-                      topicLanguage: _topicLanguageOption,
-                      apiVersion: _apiVersionFor(languageOption),
-                      visibleGospels: _columnVisibility.visibleGospels.toList(),
+                        HarmonyFilterButton(
+                          filterState: _filterState,
+                          sortState: _sortState,
+                          uiLanguage: menuLanguage,
+                          topics: _topics,
+                          columns: _columnVisibility,
+                          currentResultCount: processed.visibleTopicCount,
+                          onChanged: _setFilterState,
+                          onSortChanged: _setSortState,
+                          onInteractionEnd: _commitControlState,
+                        ),
+                        _buildHarmonyResultCountChip(
+                          context: context,
+                          uiLanguage: menuLanguage,
+                          count: processed.visibleTopicCount,
+                        ),
+                        if (_filterState.isActive)
+                          _buildActiveSetFilterChip(
+                            context: context,
+                            state: _filterState,
+                            uiLanguage: menuLanguage,
+                            onDeleted: _clearFilter,
+                          ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+                    const Divider(height: 0),
+                    Expanded(
+                      child: HarmonyTable(
+                        key: _tableKey,
+                        topics: processed.topics,
+                        topicDisplayIndexes: processed.sourceIndexes,
+                        languageOption: languageOption,
+                        topicLanguage: _topicLanguageOption,
+                        apiVersion: _apiVersionFor(languageOption),
+                        visibleGospels: _columnVisibility.visibleGospels
+                            .toList(),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -5801,6 +5894,84 @@ class _TopicListScreenState extends State<TopicListScreen> {
       ),
     );
   }
+}
+
+TopicsTableDocument buildTopicsTableDocument({
+  required List<Topic> topics,
+  required TopicLanguageOption topicLanguage,
+  required List<Gospel> visibleGospels,
+  required String title,
+  List<int>? sourceIndexes,
+}) {
+  return TopicsTableDocument(
+    title: title,
+    isRtl: topicLanguage.direction == TextDirection.rtl,
+    headers: [
+      topicLanguage.subjectsLabel,
+      for (final gospel in visibleGospels)
+        topicLanguage.gospelNames[Gospel.values.indexOf(gospel)],
+    ],
+    rows: [
+      for (var i = 0; i < topics.length; i++)
+        [
+          '${_localizedTopicNumber(_topicNumberForDisplay(topics[i], zeroBasedIndex: sourceIndexes?[i] ?? i), topicLanguage)} ${topics[i].name}',
+          for (final gospel in visibleGospels)
+            _harmonyReferenceCellText(topics[i], gospel, topicLanguage.code),
+        ],
+    ],
+  );
+}
+
+String _harmonyReferenceCellText(Topic topic, Gospel gospel, String language) {
+  final references = topic.references
+      .where((ref) => _canonicalGospelForReference(ref) == gospel)
+      .where(_referenceHasData)
+      .where((ref) => ref.formattedReference.trim().isNotEmpty)
+      .toList();
+  if (references.isEmpty) return '—';
+  return [
+    for (var i = 0; i < references.length; i++)
+      '${_harmonyReferenceSeparator(references[i], i, language)}'
+          '${formatVerseRef(_harmonyReferenceLabel(references, i), language).text}',
+  ].join();
+}
+
+String _harmonyReferenceLabel(List<GospelReference> references, int index) {
+  final reference = references[index];
+  final verses = reference.verses.trim();
+  final verseParts = verses.split('-');
+  final nextIsContinuous =
+      index + 1 < references.length &&
+      references[index + 1].separatorBefore == '+';
+
+  if (nextIsContinuous && reference.chapter > 0 && verseParts.isNotEmpty) {
+    return '${reference.chapter}:${verseParts.first.trim()}';
+  }
+  if (reference.separatorBefore == '+' &&
+      reference.chapter > 0 &&
+      verseParts.isNotEmpty) {
+    return '${reference.chapter}:${verseParts.last.trim()}';
+  }
+  if (reference.separatorBefore != '+' &&
+      index > 0 &&
+      reference.chapter == references[index - 1].chapter) {
+    return verses.replaceAll('-', '–');
+  }
+  return reference.formattedReference.replaceAll('-', '–');
+}
+
+String _harmonyReferenceSeparator(
+  GospelReference reference,
+  int index,
+  String language,
+) {
+  if (index == 0) return '';
+  final isArabic = language == 'arabic';
+  return switch (reference.separatorBefore) {
+    '+' => ' ',
+    ',' => isArabic ? '، ' : ', ',
+    _ => isArabic ? '؛ ' : '; ',
+  };
 }
 
 class HarmonyTable extends StatefulWidget {
@@ -6068,42 +6239,6 @@ class _HarmonyTableState extends State<HarmonyTable> {
     }
   }
 
-  String _displayVerseRange(String verses) => verses.replaceAll('-', '–');
-
-  String _displayReferenceLabel(List<GospelReference> references, int index) {
-    final reference = references[index];
-    final verses = reference.verses.trim();
-    final verseParts = verses.split('-');
-    final nextIsContinuous =
-        index + 1 < references.length &&
-        references[index + 1].separatorBefore == '+';
-
-    if (nextIsContinuous && reference.chapter > 0 && verseParts.isNotEmpty) {
-      return '${reference.chapter}:${verseParts.first.trim()}';
-    }
-    if (reference.separatorBefore == '+' &&
-        reference.chapter > 0 &&
-        verseParts.isNotEmpty) {
-      return '${reference.chapter}:${verseParts.last.trim()}';
-    }
-    if (reference.separatorBefore != '+' &&
-        index > 0 &&
-        reference.chapter == references[index - 1].chapter) {
-      return _displayVerseRange(verses);
-    }
-    return _displayVerseRange(reference.formattedReference);
-  }
-
-  String _displaySeparatorBefore(GospelReference reference, int index) {
-    if (index == 0) return '';
-    final isArabic = widget.languageOption.code == 'arabic';
-    return switch (reference.separatorBefore) {
-      '+' => ' ',
-      ',' => isArabic ? '، ' : ', ',
-      _ => isArabic ? '؛ ' : '; ',
-    };
-  }
-
   Widget _buildReferenceCell(
     Topic topic,
     int displayIndex,
@@ -6194,7 +6329,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
             ? !_isArabicWithoutDiacritics(widget.apiVersion)
             : null,
         tooltipMessage: tooltipMessage,
-        labelOverride: _displayReferenceLabel(filteredRefs, index),
+        labelOverride: _harmonyReferenceLabel(filteredRefs, index),
         enableHoverPreview: !useCombinedHoverPreview,
         showHoverTooltip: false,
         openInNewTab: true,
@@ -6203,7 +6338,11 @@ class _HarmonyTableState extends State<HarmonyTable> {
       final semanticLink = relationLabel.isEmpty
           ? referenceLink
           : Semantics(label: relationLabel, child: referenceLink);
-      final separator = _displaySeparatorBefore(ref, index);
+      final separator = _harmonyReferenceSeparator(
+        ref,
+        index,
+        widget.languageOption.code,
+      );
       if (separator.isNotEmpty) {
         children.add(Text(separator, style: style));
       }
@@ -7090,6 +7229,12 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
                       (verse) => Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: RichText(
+                          selectionRegistrar: SelectionContainer.maybeOf(
+                            context,
+                          ),
+                          selectionColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.3),
                           textScaler: TextScaler.linear(
                             ZoomController.instance.textScale,
                           ),
@@ -7843,6 +7988,10 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: RichText(
+        selectionRegistrar: SelectionContainer.maybeOf(context),
+        selectionColor: Theme.of(
+          context,
+        ).colorScheme.primary.withValues(alpha: 0.3),
         textScaler: TextScaler.linear(ZoomController.instance.textScale),
         text: TextSpan(
           style: bodyStyle,
@@ -9142,6 +9291,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           : null,
       padding: const EdgeInsets.only(bottom: 12),
       child: RichText(
+        selectionRegistrar: SelectionContainer.maybeOf(context),
+        selectionColor: Theme.of(
+          context,
+        ).colorScheme.primary.withValues(alpha: 0.3),
         textScaler: TextScaler.linear(_textScale),
         textAlign: TextAlign.start,
         text: TextSpan(
@@ -10500,6 +10653,10 @@ class InterlinearVerseGroup extends StatelessWidget {
               child: Directionality(
                 textDirection: translation.direction,
                 child: RichText(
+                  selectionRegistrar: SelectionContainer.maybeOf(context),
+                  selectionColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.3),
                   textScaler: scaler,
                   textAlign: TextAlign.start,
                   text: TextSpan(
@@ -12362,6 +12519,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: RichText(
+        selectionRegistrar: SelectionContainer.maybeOf(context),
+        selectionColor: Theme.of(
+          context,
+        ).colorScheme.primary.withValues(alpha: 0.3),
         textScaler: TextScaler.linear(_textScale),
         text: TextSpan(
           style: baseStyle,
