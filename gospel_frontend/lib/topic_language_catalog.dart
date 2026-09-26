@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'interface_translations.dart';
 
 const topicLanguageApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -18,6 +19,7 @@ class TopicLanguageOption {
     this.topicCount = 0,
     this.canonicalTopicCount = 0,
     this.complete = false,
+    this.interfaceTranslations = const {},
   });
 
   final String code;
@@ -28,6 +30,7 @@ class TopicLanguageOption {
   final int topicCount;
   final int canonicalTopicCount;
   final bool complete;
+  final Map<String, String> interfaceTranslations;
 
   bool get isRtl => direction == TextDirection.rtl;
 
@@ -42,9 +45,25 @@ class TopicLanguageOption {
         ? Map<String, dynamic>.from(rawGospels)
         : const <String, dynamic>{};
     const canonicalGospels = ['Matthew', 'Mark', 'Luke', 'John'];
+    final rawInterface = json['interfaceTranslations'];
+    final interfaceTranslations = <String, String>{
+      if (rawInterface is Map)
+        for (final entry in rawInterface.entries)
+          if (entry.value is String &&
+              (entry.value as String).trim().isNotEmpty)
+            entry.key.toString(): (entry.value as String).trim(),
+    };
+    final labels = LocalizedUiLabels({
+      ...bundledLabelsForLanguage(code),
+      ...interfaceTranslations,
+    });
     final gospelNames = [
       for (final gospel in canonicalGospels)
-        (gospelMap[gospel] ?? gospel).toString().trim(),
+        interfaceTranslations['gospel$gospel'] ??
+            ((gospelMap[gospel]?.toString().trim().isNotEmpty == true &&
+                    gospelMap[gospel] != gospel)
+                ? gospelMap[gospel].toString().trim()
+                : labels.text('gospel$gospel')),
     ];
     final subjects = (json['subjectsLabel'] ?? '').toString().trim();
     return TopicLanguageOption(
@@ -52,11 +71,8 @@ class TopicLanguageOption {
       label: (json['label'] ?? code).toString().trim(),
       direction: direction,
       gospelNames: gospelNames,
-      subjectsLabel: subjects.isNotEmpty
-          ? subjects
-          : code.toLowerCase() == 'arabic'
-          ? 'المواضيع'
-          : 'Subjects',
+      subjectsLabel: subjects.isNotEmpty ? subjects : labels.subjectsHeader,
+      interfaceTranslations: interfaceTranslations,
       topicCount: _asInt(json['topicCount']),
       canonicalTopicCount: _asInt(json['canonicalTopicCount']),
       complete: json['complete'] == true,
@@ -127,6 +143,9 @@ class TopicLanguageCatalog {
         .toList(growable: false);
     if (options.isEmpty) {
       return bundledTopicLanguages;
+    }
+    for (final option in options) {
+      registerInterfaceTranslations(option.code, option.interfaceTranslations);
     }
     return options;
   }

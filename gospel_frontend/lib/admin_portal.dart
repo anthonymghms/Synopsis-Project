@@ -8,6 +8,9 @@ import 'admin_api_client.dart';
 import 'admin_file_picker.dart';
 import 'catalog_events.dart';
 import 'user_profile.dart';
+import 'csv_download.dart';
+
+part 'interface_import_wizard.dart';
 
 class AdminPortal extends StatefulWidget {
   const AdminPortal({
@@ -92,6 +95,21 @@ class _AdminPortalState extends State<AdminPortal> {
       builder: (_) => BibleImportWizard(
         client: _client,
         arabic: _arabic,
+        onCompleted: _importCompleted,
+        filePicker: widget.filePicker,
+      ),
+    );
+  }
+
+  Future<void> _openInterfaceTranslations(String language, String label) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => InterfaceImportWizard(
+        client: _client,
+        arabic: _arabic,
+        language: language,
+        languageLabel: label,
         onCompleted: _importCompleted,
         filePicker: widget.filePicker,
       ),
@@ -256,6 +274,7 @@ class _AdminPortalState extends State<AdminPortal> {
           labels: labels,
           onAdd: _openTopics,
           onUpdateHarmony: _openHarmony,
+          onInterfaceTranslations: _openInterfaceTranslations,
         );
       case 3:
         return _HistoryList(
@@ -453,6 +472,7 @@ class _TopicList extends StatelessWidget {
     required this.labels,
     required this.onAdd,
     required this.onUpdateHarmony,
+    required this.onInterfaceTranslations,
   });
   final List<Map<String, dynamic>> data;
   final Map<String, dynamic> harmony;
@@ -460,6 +480,7 @@ class _TopicList extends StatelessWidget {
   final _AdminLabels labels;
   final VoidCallback onAdd;
   final VoidCallback onUpdateHarmony;
+  final void Function(String language, String label) onInterfaceTranslations;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -505,17 +526,47 @@ class _TopicList extends StatelessWidget {
       ),
       for (final item in data)
         Card(
-          child: ListTile(
-            leading: const Icon(Icons.table_chart_outlined),
-            title: Text(item['name']?.toString() ?? item['id'].toString()),
-            subtitle: Text(
-              '${item['topics'] ?? 0} / ${harmony['canonicalTopicCount'] ?? 0} ${labels.topicRecords.toLowerCase()} · '
-              '${(item['direction'] ?? 'ltr').toString().toUpperCase()}',
-            ),
-            trailing: _StatusChip(
-              active: item['active'] != false,
-              labels: labels,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.table_chart_outlined),
+                title: Text(item['name']?.toString() ?? item['id'].toString()),
+                subtitle: Text(
+                  '${item['topics'] ?? 0} / ${harmony['canonicalTopicCount'] ?? 0} ${labels.topicRecords.toLowerCase()} · '
+                  '${(item['direction'] ?? 'ltr').toString().toUpperCase()}',
+                ),
+                trailing: _StatusChip(
+                  active: item['active'] != false,
+                  labels: labels,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      key: ValueKey('interface-translations-${item['id']}'),
+                      onPressed: () => onInterfaceTranslations(
+                        item['id'].toString(),
+                        (item['name'] ?? item['id']).toString(),
+                      ),
+                      icon: const Icon(Icons.translate),
+                      label: Text(labels.interfaceTranslations),
+                    ),
+                    if (item['interfaceTranslationStatus']
+                        case final Map status)
+                      Text(
+                        '${status['translated']} / ${status['total']} ${labels.interfaceLabelsCount}'
+                        '${status['complete'] == true ? '' : ' · ${labels.missingInterfaceLabels}'}',
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       if (legacyDatasets.isNotEmpty) ...[
@@ -1884,6 +1935,24 @@ class _AdminLabels {
   String get updateMaster =>
       t('Import / Replace Master', 'استيراد / استبدال الجدول الرئيسي');
   String get addTopicLanguage => t('Add Topic Language', 'إضافة لغة مواضيع');
+  String get interfaceTranslations =>
+      t('Interface translations', 'ترجمة الواجهة');
+  String get interfaceLabelsCount =>
+      t('interface labels translated', 'عنوان واجهة مترجم');
+  String get downloadInterfaceTemplate =>
+      t('Download translation sheet', 'تنزيل جدول الترجمة');
+  String get importInterfaceTranslations =>
+      t('Import interface translations', 'استيراد ترجمة الواجهة');
+  String get replaceInterfaceTranslations => t(
+    'Replace the uploaded interface translations for this language',
+    'استبدال ترجمة الواجهة المرفوعة لهذه اللغة',
+  );
+  String get missingInterfaceLabels =>
+      t('Labels using English fallback', 'العناوين التي تستخدم الإنجليزية');
+  String get interfaceCsvInstructions => t(
+    'Download the sheet, edit the Translation column in Excel, then save as CSV UTF-8. Keep the Key column and placeholders such as {book}, {gospel}, and {number} unchanged. This sheet covers reader menus, navigation, Gospel names, chapter headings, and account settings. Blank or absent translations use the bundled language, then English. Importing replaces previous interface overrides.',
+    'نزّل الجدول وعدّل عمود Translation في Excel ثم احفظه بصيغة CSV UTF-8. احتفظ بعمود Key والمتغيرات مثل {book} و{gospel} و{number} كما هي. يشمل الجدول قوائم القارئ والتنقل وأسماء الأناجيل وعناوين الفصول. تستخدم الخانات الفارغة ترجمة اللغة المضمنة ثم الإنجليزية. يحل الاستيراد محل ترجمة الواجهة المرفوعة سابقًا.',
+  );
   String get legacyDatasets =>
       t('Legacy duplicated datasets', 'مجموعات البيانات القديمة المكررة');
   String get legacyDatasetsNotice => t(

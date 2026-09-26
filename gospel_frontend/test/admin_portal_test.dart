@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,9 +17,18 @@ class _FakeAdminClient implements AdminClient {
   Map<String, String>? uploadFields;
   List<AdminUploadFile>? uploadFiles;
   String? uploadFileField;
+  String? postPath;
+  Map<String, dynamic>? postBody;
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
+    if (path.startsWith('/admin/interface-translations/template/')) {
+      return {
+        'filename': 'interface_french.csv',
+        'csv':
+            '\ufeffKey,English,Translation\r\nnextTopic,Next topic,Sujet suivant\r\n',
+      };
+    }
     if (path == '/admin/overview') {
       return <String, dynamic>{
         'counts': <String, dynamic>{
@@ -45,7 +55,11 @@ class _FakeAdminClient implements AdminClient {
   Future<Map<String, dynamic>> postJson(
     String path,
     Map<String, dynamic> body,
-  ) async => <String, dynamic>{'status': 'queued'};
+  ) async {
+    postPath = path;
+    postBody = body;
+    return <String, dynamic>{'status': 'queued'};
+  }
 
   @override
   Future<Map<String, dynamic>> upload(
@@ -138,6 +152,95 @@ Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets(
+    'interface sheet downloads, validates and imports for the selected language',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final client = _FakeAdminClient(
+        uploadResponse: {
+          'importId': '0123456789abcdef0123456789abcdef',
+          'valid': true,
+          'collision': true,
+          'stats': {'labels': 1},
+          'errors': [],
+          'warnings': [],
+          'missingKeys': [],
+          'preview': [
+            {
+              'key': 'nextTopic',
+              'english': 'Next topic',
+              'translation': 'Sujet suivant',
+            },
+          ],
+        },
+      );
+      final picker = _FakeAdminFilePicker(
+        result: [
+          AdminUploadFile(
+            name: 'french.csv',
+            bytes: Uint8List.fromList(
+              utf8.encode('Key,Translation\nnextTopic,Sujet suivant\n'),
+            ),
+          ),
+        ],
+      );
+      String? downloaded;
+      var completed = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: InterfaceImportWizard(
+            client: client,
+            arabic: false,
+            language: 'french',
+            languageLabel: 'Français',
+            filePicker: picker,
+            onCompleted: () => completed++,
+            csvDownloader: (contents, filename) async {
+              downloaded = contents;
+              expect(filename, 'interface_french.csv');
+            },
+          ),
+        ),
+      );
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('download-interface-template')),
+      );
+      await tester.pumpAndSettle();
+      expect(downloaded, contains('Sujet suivant'));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('select-interface-file')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('validate-interface-upload')),
+      );
+      await tester.pumpAndSettle();
+      expect(client.uploadPath, '/admin/interface-translations/validate');
+      expect(client.uploadFields, {'language': 'french'});
+      expect(client.uploadFileField, 'file');
+      final button = find.byKey(const ValueKey('import-interface-upload'));
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('replace-interface-translations')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(tester, button);
+      await tester.pumpAndSettle();
+      expect(client.postPath, '/admin/interface-translations/import');
+      expect(client.postBody?['replace'], isTrue);
+      expect(completed, 1);
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('non-admin cannot open the portal', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

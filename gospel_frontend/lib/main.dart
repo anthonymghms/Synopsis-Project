@@ -11,6 +11,8 @@ import 'package:gospel_frontend/profile_setup_screen.dart';
 import 'package:gospel_frontend/user_profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
+import 'interface_translations.dart';
+export 'interface_translations.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
@@ -352,222 +354,6 @@ class BibleVersion {
   const BibleVersion({required this.id, required this.label});
 }
 
-class LocalizedUiLabels {
-  final String title;
-  final String description;
-  final String downloadPdf;
-  final String resetTable;
-  final String pdfUnavailableMessage;
-  final String subjectsHeader;
-  final List<String> gospelHeaders;
-  final String tooltipMessage;
-  final String comparePrompt;
-  final String columns;
-  final String showColumns;
-  final String sort;
-  final String sortBy;
-  final String defaultSort;
-  final String visibleColumns;
-  final String resetColumns;
-  final String filter;
-  final String operation;
-  final String union;
-  final String intersection;
-  final String includeGospels;
-  final String exclude;
-  final String currentFilter;
-  final String finalResult;
-  final String topics;
-  final String references;
-  final String atLeastOneColumnVisible;
-  final String filterUpdatesLive;
-  final String gospelCombinations;
-  final String searchFilters;
-  final String included;
-  final String excluded;
-  final String unrestricted;
-  final String fourIncludedGospels;
-  final String threeIncludedGospels;
-  final String twoIncludedGospels;
-  final String oneIncludedGospel;
-  final String noExcludedGospels;
-  final String oneExcludedGospel;
-  final String twoExcludedGospels;
-  final String threeExcludedGospels;
-  final String applyFilter;
-  final String noMatchingFilterCombinations;
-  final String clearFilter;
-  final String allTopics;
-  final String results;
-  final String language;
-  final String version;
-  final String bibleLanguage;
-  final String translation;
-  final String changeTopicLanguage;
-  final String addTranslation;
-  final String addComparison;
-  final String interlinearView;
-  final String zoom;
-  final String backToMainTable;
-  final String nextChapter;
-  final String previousChapter;
-  final String nextTopic;
-  final String previousTopic;
-  final String nextBook;
-  final String previousBook;
-  final String chapter;
-  final String addDiacritics;
-  final String removeDiacritics;
-  final String selectVersion;
-  final String selectVersions;
-  final String selectTranslationToAdd;
-  final String selectLanguage;
-  final String versions;
-  final String noAlternativeVersions;
-  final String comparisonScopeChapter;
-  final String comparisons;
-  final String change;
-  final String changeTranslation;
-  final String changeMainTranslation;
-  final String removeComparison;
-  final String editComparisonRange;
-  final String cancel;
-  final String done;
-  final String save;
-  final String saveRange;
-  final String customRange;
-  final String entireChapter;
-  final String highlightedReference;
-  final String startVerse;
-  final String endVerse;
-  final String selected;
-  final String showTranslationLabels;
-  final String duplicateComparison;
-  final String noPassageText;
-  final String unableToOpenReference;
-  final String topicNotFound;
-  final String reference;
-  final String clickToReadInChapter;
-  final String clickToReadAllReferences;
-  final String showTopicNames;
-  final String hideTopicNames;
-  final String menuLanguage;
-  final String settings;
-  final String logout;
-  final String account;
-  final String continueAction;
-  final String compare;
-  final String chooseAuthors;
-
-  const LocalizedUiLabels({
-    required this.title,
-    required this.description,
-    required this.downloadPdf,
-    required this.resetTable,
-    required this.pdfUnavailableMessage,
-    required this.subjectsHeader,
-    required this.gospelHeaders,
-    required this.tooltipMessage,
-    required this.comparePrompt,
-    required this.columns,
-    required this.showColumns,
-    required this.sort,
-    required this.sortBy,
-    required this.defaultSort,
-    required this.visibleColumns,
-    required this.resetColumns,
-    required this.filter,
-    required this.operation,
-    required this.union,
-    required this.intersection,
-    required this.includeGospels,
-    required this.exclude,
-    required this.currentFilter,
-    required this.finalResult,
-    required this.topics,
-    required this.references,
-    required this.atLeastOneColumnVisible,
-    required this.filterUpdatesLive,
-    required this.gospelCombinations,
-    required this.searchFilters,
-    required this.included,
-    required this.excluded,
-    required this.unrestricted,
-    required this.fourIncludedGospels,
-    required this.threeIncludedGospels,
-    required this.twoIncludedGospels,
-    required this.oneIncludedGospel,
-    required this.noExcludedGospels,
-    required this.oneExcludedGospel,
-    required this.twoExcludedGospels,
-    required this.threeExcludedGospels,
-    required this.applyFilter,
-    required this.noMatchingFilterCombinations,
-    required this.clearFilter,
-    required this.allTopics,
-    required this.results,
-    required this.language,
-    required this.version,
-    required this.bibleLanguage,
-    required this.translation,
-    required this.changeTopicLanguage,
-    required this.addTranslation,
-    required this.addComparison,
-    required this.interlinearView,
-    required this.zoom,
-    required this.backToMainTable,
-    required this.nextChapter,
-    required this.previousChapter,
-    required this.nextTopic,
-    required this.previousTopic,
-    required this.nextBook,
-    required this.previousBook,
-    required this.chapter,
-    required this.addDiacritics,
-    required this.removeDiacritics,
-    required this.selectVersion,
-    required this.selectVersions,
-    required this.selectTranslationToAdd,
-    required this.selectLanguage,
-    required this.versions,
-    required this.noAlternativeVersions,
-    required this.comparisonScopeChapter,
-    required this.comparisons,
-    required this.change,
-    required this.changeTranslation,
-    required this.changeMainTranslation,
-    required this.removeComparison,
-    required this.editComparisonRange,
-    required this.cancel,
-    required this.done,
-    required this.save,
-    required this.saveRange,
-    required this.customRange,
-    required this.entireChapter,
-    required this.highlightedReference,
-    required this.startVerse,
-    required this.endVerse,
-    required this.selected,
-    required this.showTranslationLabels,
-    required this.duplicateComparison,
-    required this.noPassageText,
-    required this.unableToOpenReference,
-    required this.topicNotFound,
-    required this.reference,
-    required this.clickToReadInChapter,
-    required this.clickToReadAllReferences,
-    required this.showTopicNames,
-    required this.hideTopicNames,
-    required this.menuLanguage,
-    required this.settings,
-    required this.logout,
-    required this.account,
-    required this.continueAction,
-    required this.compare,
-    required this.chooseAuthors,
-  });
-}
-
 class LanguageOption {
   final List<BibleVersion> versions;
   final String code;
@@ -640,117 +426,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       BibleVersion(id: 'ASV', label: 'ASV'),
     ],
     direction: TextDirection.ltr,
-    ui: LocalizedUiLabels(
-      title: 'Harmony of the Gospels',
-      description:
-          'Explore a side-by-side overview of the key events recorded by Matthew, '
-          'Mark, Luke, and John. Tap a subject to read the passages together.',
-      downloadPdf: 'Download PDF',
-      resetTable: 'Reset Table',
-      pdfUnavailableMessage: 'PDF download will be available soon.',
-      subjectsHeader: 'Subjects',
-      gospelHeaders: ['Matthew', 'Mark', 'Luke', 'John'],
-      tooltipMessage: 'Click to view more',
-      comparePrompt: 'Select authors to compare',
-      columns: 'Columns',
-      showColumns: 'Show columns',
-      sort: 'Sort & Columns',
-      sortBy: 'Sort by',
-      defaultSort: 'Default',
-      visibleColumns: 'Visible columns',
-      resetColumns: 'Reset columns',
-      filter: 'Filter',
-      operation: 'Operation',
-      union: 'Union',
-      intersection: 'Intersection',
-      includeGospels: 'Include Gospels',
-      exclude: 'Exclude',
-      currentFilter: 'Current filter',
-      finalResult: 'Final',
-      topics: 'topics',
-      references: 'references',
-      atLeastOneColumnVisible:
-          'At least one Gospel column must remain visible.',
-      filterUpdatesLive: 'The table and topic counts update as you choose.',
-      gospelCombinations: 'Gospel combinations',
-      searchFilters: 'Search filters',
-      included: 'Included',
-      excluded: 'Excluded',
-      unrestricted: 'Any',
-      fourIncludedGospels: 'Four included',
-      threeIncludedGospels: 'Three included',
-      twoIncludedGospels: 'Two included',
-      oneIncludedGospel: 'One included',
-      noExcludedGospels: 'No excluded Gospels',
-      oneExcludedGospel: 'One excluded Gospel',
-      twoExcludedGospels: 'Two excluded Gospels',
-      threeExcludedGospels: 'Three excluded Gospels',
-      applyFilter: 'Apply filter',
-      noMatchingFilterCombinations: 'No matching filter combinations',
-      clearFilter: 'Clear filter',
-      allTopics: 'All topics',
-      results: 'results',
-      language: 'Language',
-      version: 'Version',
-      bibleLanguage: 'Language',
-      translation: 'Translation',
-      changeTopicLanguage: 'Change topic language',
-      addTranslation: 'Add translation',
-      addComparison: 'Add comparison',
-      interlinearView: 'Interlinear View',
-      zoom: 'Zoom',
-      backToMainTable: 'Back to main table',
-      nextChapter: 'Next chapter',
-      previousChapter: 'Previous chapter',
-      nextTopic: 'Next topic',
-      previousTopic: 'Previous topic',
-      nextBook: 'Next book',
-      previousBook: 'Previous book',
-      chapter: 'Chapter',
-      addDiacritics: 'Add diacritics',
-      removeDiacritics: 'Remove diacritics',
-      selectVersion: 'Select version',
-      selectVersions: 'Select versions',
-      selectTranslationToAdd: 'Select translations to add',
-      selectLanguage: 'Select language',
-      versions: 'Versions',
-      noAlternativeVersions: 'No alternative versions available',
-      comparisonScopeChapter: 'Comparison scope: Entire chapter',
-      comparisons: 'Comparisons',
-      change: 'Change',
-      changeTranslation: 'Change translation',
-      changeMainTranslation: 'Change main translation',
-      removeComparison: 'Remove comparison',
-      editComparisonRange: 'Edit comparison range',
-      cancel: 'Cancel',
-      done: 'Done',
-      save: 'Save',
-      saveRange: 'Save range',
-      customRange: 'Custom range',
-      entireChapter: 'Entire chapter',
-      highlightedReference: 'Highlighted reference',
-      startVerse: 'Start verse',
-      endVerse: 'End verse',
-      selected: 'Selected',
-      showTranslationLabels: 'Show translation at the end of each verse',
-      duplicateComparison:
-          'A comparison with this translation and range already exists.',
-      noPassageText: 'No passage text is available for this translation yet.',
-      unableToOpenReference: 'Unable to open reference.',
-      topicNotFound: 'Topic not found',
-      reference: 'Reference',
-      clickToReadInChapter: 'Click to read in chapter',
-      clickToReadAllReferences: 'Click to read all references',
-      showTopicNames: 'Show topic names',
-      hideTopicNames: 'Hide topic names',
-      menuLanguage: 'Menu language',
-      settings: 'Settings',
-      logout: 'Logout',
-      account: 'Account',
-      continueAction: 'Continue',
-      compare: 'Compare',
-      chooseAuthors: 'Choose authors',
-    ),
+    ui: LocalizedUiLabels(englishInterfaceTranslations),
   ),
   LanguageOption(
     code: 'arabic',
@@ -765,115 +441,7 @@ const List<LanguageOption> kBaseLanguageOptions = [
       BibleVersion(id: 'New Arabic Version-', label: 'كتاب الحياة'),
     ],
     direction: TextDirection.rtl,
-    ui: LocalizedUiLabels(
-      title: 'تناغم الأناجيل',
-      description:
-          'استكشف نظرة عامة جنبًا إلى جنب على الأحداث الرئيسية التي سجلها '
-          'متى ومرقس ولوقا ويوحنا. اضغط على موضوع لقراءة المقاطع معًا.',
-      downloadPdf: 'تحميل PDF',
-      resetTable: 'إعادة تعيين الجدول',
-      pdfUnavailableMessage: 'سيكون تنزيل ملف PDF متاحًا قريبًا.',
-      subjectsHeader: 'المواضيع',
-      gospelHeaders: ['متى', 'مرقس', 'لوقا', 'يوحنا'],
-      tooltipMessage: 'اضغط لعرض المزيد',
-      comparePrompt: 'اختر الأناجيل للمقارنة',
-      columns: 'الأعمدة',
-      showColumns: 'إظهار الأعمدة',
-      sort: 'الترتيب والأعمدة',
-      sortBy: 'الترتيب بحسب',
-      defaultSort: 'التنسيق العام',
-      visibleColumns: 'الأعمدة الظاهرة',
-      resetColumns: 'إعادة إظهار الأعمدة',
-      filter: 'تصفية',
-      operation: 'العملية',
-      union: 'اتحاد',
-      intersection: 'تقاطع',
-      includeGospels: 'الأناجيل المشمولة',
-      exclude: 'استبعاد',
-      currentFilter: 'التصفية الحالية',
-      finalResult: 'النتيجة النهائية',
-      topics: 'موضوعًا',
-      references: 'مرجعًا',
-      atLeastOneColumnVisible: 'يجب إبقاء عمود إنجيل واحد ظاهرًا على الأقل.',
-      filterUpdatesLive: 'يتحدث الجدول وعدد المواضيع مع كل اختيار.',
-      gospelCombinations: 'تركيبات الأناجيل',
-      searchFilters: 'البحث في التصفيات',
-      included: 'مشمولة',
-      excluded: 'مستبعدة',
-      unrestricted: 'غير مقيّد',
-      fourIncludedGospels: 'أربعة أناجيل مشمولة',
-      threeIncludedGospels: 'ثلاثة أناجيل مشمولة',
-      twoIncludedGospels: 'إنجيلان مشمولان',
-      oneIncludedGospel: 'إنجيل واحد مشمول',
-      noExcludedGospels: 'لا توجد أناجيل مستبعدة',
-      oneExcludedGospel: 'إنجيل واحد مستبعد',
-      twoExcludedGospels: 'إنجيلان مستبعدان',
-      threeExcludedGospels: 'ثلاثة أناجيل مستبعدة',
-      applyFilter: 'تطبيق التصفية',
-      noMatchingFilterCombinations: 'لا توجد تصفيات مطابقة',
-      clearFilter: 'إزالة التصفية',
-      allTopics: 'كل المواضيع',
-      results: 'نتيجة',
-      language: 'اللغة',
-      version: 'الترجمة',
-      bibleLanguage: 'اللغة',
-      translation: 'الترجمة',
-      changeTopicLanguage: 'تغيير لغة المواضيع',
-      addTranslation: 'إضافة ترجمة',
-      addComparison: 'إضافة مقارنة',
-      interlinearView: 'العرض المتوازي',
-      zoom: 'التكبير',
-      backToMainTable: 'العودة إلى الجدول الرئيسي',
-      nextChapter: 'الفصل التالي',
-      previousChapter: 'الفصل السابق',
-      nextTopic: 'الموضوع التالي',
-      previousTopic: 'الموضوع السابق',
-      nextBook: 'السفر التالي',
-      previousBook: 'السفر السابق',
-      chapter: 'الفصل',
-      addDiacritics: 'إضافة الحركات',
-      removeDiacritics: 'إزالة الحركات',
-      selectVersion: 'اختر الترجمة',
-      selectVersions: 'اختر الترجمات',
-      selectTranslationToAdd: 'اختر ترجمات لإضافتها',
-      selectLanguage: 'اختر اللغة',
-      versions: 'الترجمات',
-      noAlternativeVersions: 'لا توجد ترجمات بديلة متاحة',
-      comparisonScopeChapter: 'نطاق المقارنة: الفصل كاملًا',
-      comparisons: 'المقارنات',
-      change: 'تغيير',
-      changeTranslation: 'تغيير الترجمة',
-      changeMainTranslation: 'تغيير الترجمة الرئيسية',
-      removeComparison: 'إزالة المقارنة',
-      editComparisonRange: 'تعديل نطاق المقارنة',
-      cancel: 'إلغاء',
-      done: 'تم',
-      save: 'حفظ',
-      saveRange: 'حفظ النطاق',
-      customRange: 'نطاق مخصص',
-      entireChapter: 'الفصل كاملًا',
-      highlightedReference: 'المرجع المحدد',
-      startVerse: 'آية البداية',
-      endVerse: 'آية النهاية',
-      selected: 'المحدد',
-      showTranslationLabels: 'إظهار الترجمة عند نهاية كل عدد',
-      duplicateComparison: 'توجد مقارنة بهذه الترجمة وهذا النطاق بالفعل.',
-      noPassageText: 'لا يتوفر نص لهذا المقطع في هذه الترجمة بعد.',
-      unableToOpenReference: 'تعذر فتح المرجع.',
-      topicNotFound: 'لم يتم العثور على الموضوع',
-      reference: 'مرجع',
-      clickToReadInChapter: 'قراءة ضمن الفصل',
-      clickToReadAllReferences: 'قراءة كل المراجع',
-      showTopicNames: 'إظهار أسماء المواضيع',
-      hideTopicNames: 'إخفاء أسماء المواضيع',
-      menuLanguage: 'لغة القوائم',
-      settings: 'الإعدادات',
-      logout: 'تسجيل الخروج',
-      account: 'الحساب',
-      continueAction: 'متابعة',
-      compare: 'قارن',
-      chooseAuthors: 'اختر الأناجيل',
-    ),
+    ui: LocalizedUiLabels(arabicInterfaceTranslations),
   ),
 ];
 
@@ -970,6 +538,12 @@ Future<void> loadPrimaryLanguageCatalogs({
   // topic request must not reset an imported Bible language to English.
   _supportedLanguages = catalogs[0] as List<LanguageOption>;
   _supportedTopicLanguages = catalogs[1] as List<TopicLanguageOption>;
+  for (final language in _supportedTopicLanguages) {
+    registerInterfaceTranslations(
+      language.code,
+      language.interfaceTranslations,
+    );
+  }
   _primaryLanguageCatalogsLoaded = true;
 }
 
@@ -1003,6 +577,7 @@ LanguageOption _fallbackLanguageOption(
     code: normalizedCode,
     label: _formatLanguageLabel(languageId),
     apiLanguage: languageId,
+    ui: LocalizedUiLabels.forLanguage(languageId),
     apiVersion: apiVersion,
     versions: sanitizedVersions,
     direction: TextDirection.ltr,
@@ -1275,9 +850,13 @@ class MenuLanguageScope extends InheritedNotifier<ValueNotifier<String>> {
       }
     }
     if (topicLanguage == null) {
-      return primary;
+      return primary.copyWith(ui: LocalizedUiLabels.forLanguage(primary.code));
     }
     return primary.copyWith(
+      ui: LocalizedUiLabels.forLanguage(
+        primary.code,
+        topicLanguage.interfaceTranslations,
+      ),
       label: topicLanguage.label,
       direction: topicLanguage.direction,
       localizedGospelNames: topicLanguage.gospelNames,
@@ -2376,16 +1955,10 @@ String localizedLanguageNameForMenu(
   String languageCode,
   String fallbackLabel,
 ) {
-  if (menuLanguage.code.toLowerCase() == 'arabic') {
-    return switch (languageCode.toLowerCase()) {
-      'english' => 'الإنجليزية',
-      'arabic' => 'العربية',
-      _ => fallbackLabel,
-    };
-  }
-  return switch (languageCode.toLowerCase()) {
-    'english' => 'English',
-    'arabic' => 'Arabic',
+  return switch (interfaceLanguageKey(languageCode)) {
+    'english' => menuLanguage.ui.text('languageEnglish'),
+    'arabic' => menuLanguage.ui.text('languageArabic'),
+    'french' => menuLanguage.ui.text('languageFrench'),
     _ => fallbackLabel,
   };
 }
@@ -3845,10 +3418,8 @@ String _wordedFilterExpression(
         ? uiLanguage.ui.union
         : uiLanguage.ui.intersection;
   }
-  final isArabic = uiLanguage.code == 'arabic';
-  final operationConnector = state.mode == GospelFilterMode.union
-      ? (isArabic ? ' أو ' : ' union ')
-      : (isArabic ? ' و' : ' intersection ');
+  final operationConnector =
+      ' ${uiLanguage.ui.text(state.mode == GospelFilterMode.union ? 'filterUnionConnector' : 'filterIntersectionConnector')} ';
   final included = _localizedGospelList(
     state.includedGospels,
     uiLanguage,
@@ -3859,9 +3430,11 @@ String _wordedFilterExpression(
     final excluded = _localizedGospelList(
       state.excludedGospels,
       uiLanguage,
-      separator: isArabic ? ' و' : ' and ',
+      separator: ' ${uiLanguage.ui.text('filterAndConnector')} ',
     );
-    buffer.write(isArabic ? '، مع استبعاد $excluded' : ', excluding $excluded');
+    buffer.write(
+      uiLanguage.ui.text('filterExcluding').replaceAll('{books}', excluded),
+    );
   }
   return buffer.toString();
 }
@@ -4249,9 +3822,7 @@ class HarmonySortButton extends StatelessWidget {
             icon: icon,
             label: labels.sort,
             resetKey: 'clear-sort-button',
-            resetTooltip: uiLanguage.code == 'arabic'
-                ? 'إعادة الترتيب والأعمدة إلى الافتراضي'
-                : 'Reset sorting and columns',
+            resetTooltip: labels.text('resetSortingColumns'),
             onReset: () {
               onChanged(const GospelSortState());
               onColumnsChanged(const ColumnVisibilityState());
@@ -4324,10 +3895,9 @@ class _HarmonySortAndColumnsDialogState
   String _columnToggleTooltip(Gospel gospel, LocalizedUiLabels labels) {
     final gospelName = _localizedGospelName(gospel, labels, widget.uiLanguage);
     final isVisible = _columns.isVisible(gospel);
-    if (widget.uiLanguage.code == 'arabic') {
-      return isVisible ? 'إخفاء عمود $gospelName' : 'إظهار عمود $gospelName';
-    }
-    return isVisible ? 'Hide $gospelName column' : 'Show $gospelName column';
+    return labels
+        .text(isVisible ? 'hideGospelColumn' : 'showGospelColumn')
+        .replaceAll('{book}', gospelName);
   }
 
   Widget _sortSection(LocalizedUiLabels labels) {
@@ -5735,7 +5305,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
           logoutLabel: menuLanguage.ui.logout,
           accountTooltip: menuLanguage.ui.account,
           showAdmin: isAdmin,
-          adminLabel: menuLanguage.code == 'arabic' ? 'الإدارة' : 'Admin',
+          adminLabel: menuLanguage.ui.text('admin'),
           body: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
@@ -5765,11 +5335,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                                   ),
                             style: _toolbarFilledStyle(context),
                             icon: const Icon(Icons.download_outlined, size: 18),
-                            label: Text(
-                              menuLanguage.code == 'arabic'
-                                  ? 'تصدير CSV'
-                                  : 'Export CSV',
-                            ),
+                            label: Text(menuLanguage.ui.text('exportCsv')),
                           ),
                         if (kIsWeb)
                           OutlinedButton.icon(
@@ -5779,11 +5345,7 @@ class _TopicListScreenState extends State<TopicListScreen> {
                                 : printTopicsTable,
                             style: _toolbarOutlinedStyle(context),
                             icon: const Icon(Icons.print_outlined, size: 18),
-                            label: Text(
-                              menuLanguage.code == 'arabic'
-                                  ? 'طباعة / PDF'
-                                  : 'Print / PDF',
-                            ),
+                            label: Text(menuLanguage.ui.text('printPdf')),
                           ),
                         if (isAdmin)
                           OutlinedButton.icon(
@@ -8190,7 +7752,7 @@ class ChapterNav extends StatelessWidget {
     final chapterTitle = '${labels.chapter} $chapterNumber';
     final title = bookTitle.trim().isEmpty
         ? chapterTitle
-        : '${bookTitle.trim()} — $chapterTitle';
+        : labels.formatChapterTitle(bookTitle.trim(), chapterNumber);
 
     Widget fixedDirectionIcon(IconData icon) {
       return Directionality(
@@ -8453,10 +8015,74 @@ bool shouldShowStickyChapterNavigation({
       bottomNavigation.top > viewport.bottom - 0.5;
 }
 
-class _ChapterVerseGroup {
-  const _ChapterVerseGroup({required this.title, required this.verses});
+class ChapterTopicHeading extends StatelessWidget {
+  const ChapterTopicHeading({
+    super.key,
+    required this.topic,
+    required this.language,
+    required this.version,
+  });
 
-  final String? title;
+  final Topic topic;
+  final LanguageOption language;
+  final String version;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final labels = MenuLanguageScope.of(context).ui;
+    final borderRadius = BorderRadius.circular(8);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 10),
+      child: Tooltip(
+        message: labels.clickToReadAllReferences,
+        child: BrowserRouteLink(
+          uri: _topicUri(topic: topic, language: language, version: version),
+          openInNewTab: true,
+          builder: (context, followLink) => Material(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.35,
+            ),
+            borderRadius: borderRadius,
+            child: InkWell(
+              onTap: followLink,
+              borderRadius: borderRadius,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        topic.name.trim(),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.open_in_new,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChapterVerseGroup {
+  const _ChapterVerseGroup({required this.topic, required this.verses});
+
+  final Topic? topic;
   final List<_VerseLine> verses;
 }
 
@@ -8758,17 +8384,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     return widget.displayBook.trim();
   }
 
-  String get _displayBookLabel {
-    final book = widget.displayBook.trim();
-    if (book.isEmpty) {
-      return book;
-    }
-    final option = _languageOptionForApiLanguage(widget.language);
-    if (option == null) {
-      return book;
-    }
-    return _displayGospelName(book, option);
-  }
+  String get _displayBookLabel =>
+      _displayGospelName(_currentCanonicalBook, MenuLanguageScope.of(context));
 
   String _slugBookForId(String book) {
     final canonical = _normalizeGospelName(book);
@@ -9367,11 +8984,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
   List<_ChapterVerseGroup> _buildChapterVerseGroups(List<_VerseLine> verses) {
     if (!_showTopicNames || verses.isEmpty || _harmonyTopics.isEmpty) {
-      return [_ChapterVerseGroup(title: null, verses: verses)];
+      return [_ChapterVerseGroup(topic: null, verses: verses)];
     }
 
     final canonicalBook = _currentCanonicalBook;
-    final topicByVerse = <int, String>{};
+    final topicByVerse = <int, Topic>{};
     for (final topic in _harmonyTopics) {
       final topicTitle = topic.name.trim();
       if (topicTitle.isEmpty) {
@@ -9385,17 +9002,17 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
           reference,
         ).toList()..sort();
         for (final number in verseNumbers) {
-          topicByVerse.putIfAbsent(number, () => topicTitle);
+          topicByVerse.putIfAbsent(number, () => topic);
         }
       }
     }
 
     if (topicByVerse.isEmpty) {
-      return [_ChapterVerseGroup(title: null, verses: verses)];
+      return [_ChapterVerseGroup(topic: null, verses: verses)];
     }
 
     final groups = <_ChapterVerseGroup>[];
-    String? currentTitle;
+    Topic? currentTopic;
     var currentVerses = <_VerseLine>[];
 
     void flush() {
@@ -9404,7 +9021,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       }
       groups.add(
         _ChapterVerseGroup(
-          title: currentTitle,
+          topic: currentTopic,
           verses: List<_VerseLine>.from(currentVerses),
         ),
       );
@@ -9413,17 +9030,17 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
 
     for (final verse in verses) {
       final number = verse.number;
-      final title = number == null ? null : topicByVerse[number];
-      if (currentVerses.isNotEmpty && title != currentTitle) {
+      final topic = number == null ? null : topicByVerse[number];
+      if (currentVerses.isNotEmpty && topic != currentTopic) {
         flush();
       }
-      currentTitle = title;
+      currentTopic = topic;
       currentVerses.add(verse);
     }
     flush();
 
     return groups.isEmpty
-        ? [_ChapterVerseGroup(title: null, verses: verses)]
+        ? [_ChapterVerseGroup(topic: null, verses: verses)]
         : groups;
   }
 
@@ -9440,25 +9057,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final widgets = <Widget>[];
 
     for (final group in groups) {
-      final title = group.title?.trim();
-      if (title != null && title.isNotEmpty) {
+      final topic = group.topic;
+      if (topic != null && topic.name.trim().isNotEmpty) {
         widgets.add(
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.only(top: 8, bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.35,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              title,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+          ChapterTopicHeading(
+            topic: topic,
+            language: _languageOption,
+            version: _activeVersion,
           ),
         );
       }
@@ -10346,10 +9951,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     if (book.isEmpty) {
       return _labels.reference;
     }
-    if (MenuLanguageScope.of(context).code == 'arabic') {
-      return 'إنجيل $book';
-    }
-    return 'Gospel of $book';
+    return _labels.formatGospelTitle(book);
   }
 
   @override

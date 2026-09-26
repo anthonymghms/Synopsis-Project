@@ -7,6 +7,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from admin_api import admin_api
 from services.firebase_service import firestore_client
+from services.interface_translation_service import clean_translations, translation_status
 
 
 db = firestore_client()
@@ -816,6 +817,8 @@ def _topic_language_metadata(language: str) -> dict | None:
         "active": data.get("active", True) is not False,
         "topicCount": topic_count,
         "canonicalSource": str(data.get("canonicalSource") or "harmony/canonical"),
+        "interfaceTranslations": clean_translations(data.get("interfaceTranslations")),
+        "interfaceTranslationStatus": translation_status(language, data.get("interfaceTranslations")),
         "updatedAt": updated_at,
     }
 

@@ -16,6 +16,12 @@ from services.admin_auth import (
 )
 from services.bible_import_service import parse_usfm_files
 from services.localization_import_service import parse_topic_localization_csv
+from services.interface_translation_service import (
+    clean_translations,
+    interface_csv_template,
+    parse_interface_csv,
+    translation_status,
+)
 from services.firebase_service import (
     FirebaseImportRepository,
     ImportCollisionError,
@@ -175,6 +181,99 @@ def localization_template():
     response.headers["Content-Disposition"] = "attachment; filename=topic_localization_template.csv"
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@admin_api.route("/admin/interface-translations/template/<language>", methods=["GET"])
+def interface_translation_template(language: str):
+    _admin()
+    try:
+        language = _language_id(language)
+        metadata = FirebaseImportRepository().interface_translation_metadata(language)
+    except ValueError as exc:
+        return _error("invalid_metadata", str(exc), 400)
+    except ImportRecordError as exc:
+        return _error("language_not_found", str(exc), 404)
+    # Preserve Gospel display names already entered with the topic language.
+    # Unedited canonical English names should still use the bundled translation.
+    gospels = metadata.get("gospels") or {}
+    existing = {
+        f"gospel{book}": name for book, name in gospels.items()
+        if isinstance(name, str) and name.strip() and name.strip() != book
+    } if isinstance(gospels, dict) else {}
+    existing.update(clean_translations(metadata.get("interfaceTranslations")))
+    return _response({
+        "filename": f"interface_{language}.csv",
+        "csv": interface_csv_template(language, existing),
+        "coverage": translation_status(language, metadata.get("interfaceTranslations")),
+    })
+
+
+@admin_api.route("/admin/interface-translations/validate", methods=["POST"])
+def validate_interface_translations():
+    admin = _admin()
+    upload = request.files.get("file")
+    if upload is None:
+        return _error("missing_file", "Select one interface CSV file.", 400)
+    repository = FirebaseImportRepository()
+    try:
+        language = _language_id(request.form.get("language"))
+        filename = safe_filename(upload.filename or "")
+        if not filename.lower().endswith(".csv"):
+            raise ValueError("Interface translations must use the .csv extension.")
+        metadata = repository.interface_translation_metadata(language)
+    except ValueError as exc:
+        return _error("invalid_metadata", str(exc), 400)
+    except ImportRecordError as exc:
+        return _error("language_not_found", str(exc), 404)
+    raw = upload.read()
+    result = parse_interface_csv(raw, language)
+    import_id = new_import_id()
+    repository.create_import(import_id=import_id, import_type="interface_translation",
+                             language=language, uploaded_by=admin["uid"], filenames=[filename])
+    try:
+        collision = bool(metadata.get("interfaceRevision"))
+        summary = result.summary()
+        if result.report.valid:
+            repository.upload_sources(import_id=import_id, import_type="interface_translation",
+                                      language=language, files=[(filename, raw)])
+        repository.update_import(import_id,
+            status="validated" if result.report.valid else "validation_failed",
+            stage="Ready to import" if result.report.valid else "Validation failed",
+            validation=summary["stats"], errors=summary["errors"], warnings=summary["warnings"],
+            collision=collision, destination=f"harmony_localizations/{language}")
+        return _response({"importId": import_id, "language": language,
+                          "collision": collision, **summary})
+    except Exception:
+        _logger.exception("Interface translation validation failed")
+        repository.update_import(import_id, status="validation_failed", stage="Validation failed")
+        return _error("validation_failed", "The interface upload could not be staged.", 500)
+
+
+@admin_api.route("/admin/interface-translations/import", methods=["POST"])
+def import_interface_translations():
+    return _start_import("interface_translation")
+
+
+def _run_interface_translation_import(import_id: str, replace: bool) -> None:
+    repository = FirebaseImportRepository()
+    try:
+        record = repository.get_import(import_id)
+        repository.update_import(import_id, status="importing", stage="Validating interface translations")
+        files = repository.download_sources(record)
+        result = parse_interface_csv(files[0][1], record["language"])
+        if not result.report.valid:
+            raise ImportRecordError("The staged interface CSV no longer passes validation.")
+        repository.activate_interface_translations(
+            import_id=import_id, language=record["language"],
+            translations=result.translations, replace=replace)
+    except (ImportRecordError, ImportCollisionError) as exc:
+        repository.update_import(import_id, status="failed", stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed", "message": str(exc)}])
+    except Exception:
+        _logger.exception("Interface translation import failed")
+        repository.update_import(import_id, status="failed", stage="Failed",
+            errors=[{"severity": "error", "code": "import_failed",
+                     "message": "The interface translation import failed. Please try again."}])
 
 
 @admin_api.route("/admin/harmony/migration-report", methods=["GET"])
@@ -744,6 +843,7 @@ def _start_import(expected_type: str):
         "bible": _run_bible_import,
         "harmony": _run_harmony_import,
         "topic_localization": _run_topic_localization_import,
+        "interface_translation": _run_interface_translation_import,
     }
     runner = runners[expected_type]
     _executor.submit(runner, import_id, payload.get("replace") is True)

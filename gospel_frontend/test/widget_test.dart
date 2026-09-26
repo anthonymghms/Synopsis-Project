@@ -71,7 +71,7 @@ void main() {
   );
 
   testWidgets(
-    'imported French is selectable with English menus after both catalogs load',
+    'imported French is selectable with French menus after both catalogs load',
     (tester) async {
       final english = kBaseLanguageOptions.first;
       final french = english.copyWith(
@@ -145,7 +145,7 @@ void main() {
         ),
       );
       expect(
-        find.text('Français: Matthieu, Marc, Luc, Jean / Settings'),
+        find.text('Français: Matthieu, Marc, Luc, Jean / Paramètres'),
         findsOneWidget,
       );
     },

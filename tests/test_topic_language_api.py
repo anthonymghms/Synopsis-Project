@@ -177,6 +177,18 @@ class TopicLanguageApiTests(unittest.TestCase):
         app_module.db.documents["harmony_localizations/french"]["topicCount"] = 3
         self.assertTrue(catalog()["french"]["complete"])
 
+    def test_catalog_and_localization_expose_interface_overrides(self):
+        app_module.db.documents["harmony_localizations/english"]["interfaceTranslations"] = {
+            "nextTopic": "Following subject", "invalidKey": "ignored", "previousTopic": "",
+        }
+        catalog = self.client.get("/topic-languages").get_json()
+        english = next(item for item in catalog["languages"] if item["id"] == "english")
+        self.assertEqual(english["interfaceTranslations"], {"nextTopic": "Following subject"})
+        self.assertTrue(english["interfaceTranslationStatus"]["complete"])
+        payload = self.client.get("/topic-localizations/english").get_json()
+        self.assertEqual(payload["language"]["interfaceTranslations"], english["interfaceTranslations"])
+        self.assertEqual(payload["topics"][0]["name"], "Birth of Jesus")
+
     def test_topic_language_is_independent_from_bible_query(self):
         response = self.client.get(
             "/topics?topicLanguage=english&bibleLanguage=arabic&language=arabic&version=Van%20Dyke"

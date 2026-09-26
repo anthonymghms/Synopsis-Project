@@ -14,6 +14,7 @@ from firebase_admin import credentials, firestore, storage
 
 from .bible_import_service import BibleParseResult
 from .localization_import_service import TopicLocalizationRecord
+from .interface_translation_service import clean_translations, translation_status
 from .topic_import_service import TopicRecord, records_from_firestore
 
 
@@ -419,6 +420,43 @@ class FirebaseImportRepository:
                 record.physical_segment_count for record in records
             ),
         }
+
+    def interface_translation_metadata(self, language: str) -> dict[str, Any]:
+        snapshot = self.db.collection("harmony_localizations").document(language).get()
+        if not snapshot.exists:
+            raise ImportRecordError("Add this topic language before importing its interface translations.")
+        return snapshot.to_dict() or {}
+
+    def activate_interface_translations(
+        self, *, import_id: str, language: str, translations: dict[str, str], replace: bool,
+    ) -> dict[str, Any]:
+        metadata = self.interface_translation_metadata(language)
+        if metadata.get("interfaceRevision") and not replace:
+            raise ImportCollisionError("Interface translations already exist. Confirm replacement to continue.")
+        translations = clean_translations(translations)
+        if not translations:
+            raise ImportRecordError("No valid interface translations were supplied.")
+        status = translation_status(language, translations)
+        outcome = {"destination": f"harmony_localizations/{language}",
+                   "interfaceRevision": import_id, "labelsProcessed": len(translations)}
+        batch = self.db.batch()
+        batch.set(self.db.collection("interface_translation_revisions").document(import_id), {
+            "language": language, "translations": translations, "status": "ready",
+            "createdAt": firestore.SERVER_TIMESTAMP,
+        })
+        # Merge only these top-level fields: replacing the map removes obsolete
+        # overrides without touching topic names, Gospel metadata, or Bible text.
+        fields = {"interfaceTranslations": translations, "interfaceRevision": import_id,
+                  "interfaceTranslationStatus": status, "updatedAt": firestore.SERVER_TIMESTAMP}
+        batch.set(self.db.collection("harmony_localizations").document(language),
+                  fields, merge=list(fields))
+        batch.set(self.db.collection("admin_imports").document(import_id), {
+            **outcome, "status": "completed", "stage": "Completed",
+            "recordsProcessed": len(translations), "completedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+        batch.commit()
+        return outcome
 
     def activate_topic_localization(
         self,
@@ -988,6 +1026,9 @@ class FirebaseImportRepository:
                     "active": (data or {}).get("active", True),
                     "updatedAt": (data or {}).get("updatedAt"),
                     "source": "canonical-localization",
+                    "interfaceTranslationStatus": translation_status(
+                        localization_ref.id, (data or {}).get("interfaceTranslations")
+                    ),
                 }
             )
         for reference_ref in self.db.collection("references").list_documents():

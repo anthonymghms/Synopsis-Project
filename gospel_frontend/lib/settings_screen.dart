@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'browser_route_link.dart';
 
 import 'profile_editor.dart';
+import 'interface_translations.dart';
 import 'user_profile.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -19,6 +20,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late String _menuLanguage =
       UserProfileController.instance.preferences.menuLanguage;
 
+  LocalizedUiLabels get _labels => LocalizedUiLabels.forLanguage(_menuLanguage);
+
   bool get _arabic => _menuLanguage.toLowerCase() == 'arabic';
 
   Future<void> _save(UserProfile profile) async {
@@ -33,18 +36,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final discard = await showBrowserSafeDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(_arabic ? 'تجاهل التغييرات؟' : 'Discard changes?'),
-        content: Text(
-          _arabic ? 'لديك تغييرات غير محفوظة.' : 'You have unsaved changes.',
-        ),
+        title: Text(_labels.text('discardChanges')),
+        content: Text(_labels.text('unsavedChanges')),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: Text(_arabic ? 'متابعة التعديل' : 'Keep editing'),
+            child: Text(_labels.text('keepEditing')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text(_arabic ? 'تجاهل' : 'Discard'),
+            child: Text(_labels.text('discard')),
           ),
         ],
       ),
@@ -57,7 +58,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final profile = UserProfileController.instance.profile;
-    final title = _arabic ? 'الإعدادات' : 'Settings';
+    final title = _labels.settings;
     if (profile == null) {
       return Scaffold(
         appBar: AppBar(title: Text(title)),
@@ -103,15 +104,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Text(
-                                _arabic ? 'إجراءات الحساب' : 'Account actions',
+                                _labels.text('accountActions'),
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               if (profile.createdAt != null) ...[
                                 const SizedBox(height: 12),
                                 Text(
-                                  _arabic
-                                      ? 'تاريخ إنشاء الحساب: ${_formatDate(profile.createdAt!)}'
-                                      : 'Account created: ${_formatDate(profile.createdAt!)}',
+                                  _labels
+                                      .text('accountCreated')
+                                      .replaceAll(
+                                        '{date}',
+                                        _formatDate(profile.createdAt!),
+                                      ),
                                 ),
                               ],
                               const SizedBox(height: 16),
@@ -128,9 +132,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     }
                                   },
                                   icon: const Icon(Icons.logout),
-                                  label: Text(
-                                    _arabic ? 'تسجيل الخروج' : 'Sign out',
-                                  ),
+                                  label: Text(_labels.logout),
                                 ),
                               ),
                             ],

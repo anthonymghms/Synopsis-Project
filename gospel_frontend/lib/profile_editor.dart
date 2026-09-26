@@ -2,74 +2,85 @@ import 'package:flutter/material.dart';
 
 import 'preference_language_catalog.dart';
 import 'user_profile.dart';
+import 'interface_translations.dart';
 
 typedef ProfileSaveCallback = Future<void> Function(UserProfile profile);
 
 class ProfileEditorLabels {
-  const ProfileEditorLabels._({required this.arabic});
-
+  const ProfileEditorLabels._(this.language);
   factory ProfileEditorLabels.forLanguage(String language) =>
-      ProfileEditorLabels._(arabic: language.toLowerCase() == 'arabic');
-
-  final bool arabic;
-
+      ProfileEditorLabels._(language);
+  final String language;
+  bool get arabic => interfaceLanguageKey(language) == 'arabic';
   String get completeProfile =>
-      arabic ? 'إكمال الملف الشخصي' : 'Complete profile';
-  String get setupDescription => arabic
-      ? 'أضف معلومات أساسية واختر لغة القراءة والترجمة المفضلة.'
-      : 'Add a few basics and choose your preferred reading language and translation.';
-  String get profile => arabic ? 'الملف الشخصي' : 'Profile';
-  String get languageTranslation =>
-      arabic ? 'اللغة والترجمة' : 'Language and translation';
-  String get readingPreferences =>
-      arabic ? 'تفضيلات القراءة' : 'Reading preferences';
-  String get accountInformation =>
-      arabic ? 'معلومات الحساب' : 'Account information';
-  String get firstName => arabic ? 'الاسم الأول' : 'First name';
-  String get lastName => arabic ? 'اسم العائلة' : 'Last name';
-  String get displayName => arabic ? 'اسم العرض' : 'Display name';
-  String get country => arabic ? 'البلد' : 'Country';
-  String get timezone => arabic ? 'المنطقة الزمنية' : 'Time zone';
-  String get yearOfBirth => arabic ? 'سنة الميلاد' : 'Year of birth';
+      LocalizedUiLabels.forLanguage(language).text('profile.completeProfile');
+  String get setupDescription =>
+      LocalizedUiLabels.forLanguage(language).text('profile.setupDescription');
+  String get profile =>
+      LocalizedUiLabels.forLanguage(language).text('profile.profile');
+  String get languageTranslation => LocalizedUiLabels.forLanguage(
+    language,
+  ).text('profile.languageTranslation');
+  String get readingPreferences => LocalizedUiLabels.forLanguage(
+    language,
+  ).text('profile.readingPreferences');
+  String get accountInformation => LocalizedUiLabels.forLanguage(
+    language,
+  ).text('profile.accountInformation');
+  String get firstName =>
+      LocalizedUiLabels.forLanguage(language).text('profile.firstName');
+  String get lastName =>
+      LocalizedUiLabels.forLanguage(language).text('profile.lastName');
+  String get displayName =>
+      LocalizedUiLabels.forLanguage(language).text('profile.displayName');
+  String get country =>
+      LocalizedUiLabels.forLanguage(language).text('profile.country');
+  String get timezone =>
+      LocalizedUiLabels.forLanguage(language).text('profile.timezone');
+  String get yearOfBirth =>
+      LocalizedUiLabels.forLanguage(language).text('profile.yearOfBirth');
   String get organization =>
-      arabic ? 'الكنيسة أو المؤسسة' : 'Church or organization';
-  String get bio => arabic ? 'نبذة قصيرة' : 'Short profile description';
-  String get email => arabic ? 'البريد الإلكتروني' : 'Email';
-  String get contentLanguage => arabic ? 'اللغة' : 'Language';
+      LocalizedUiLabels.forLanguage(language).text('profile.organization');
+  String get bio => LocalizedUiLabels.forLanguage(language).text('profile.bio');
+  String get email =>
+      LocalizedUiLabels.forLanguage(language).text('profile.email');
+  String get contentLanguage =>
+      LocalizedUiLabels.forLanguage(language).text('profile.contentLanguage');
   String get preferredVersion =>
-      arabic ? 'الترجمة المفضلة' : 'Preferred translation';
-  String get defaultZoom => arabic ? 'التكبير الافتراضي' : 'Default zoom';
-  String get showDiacritics => arabic
-      ? 'إظهار الحركات العربية افتراضيًا'
-      : 'Show Arabic diacritics by default';
-  String get showTopicNames => arabic
-      ? 'إظهار أسماء المواضيع داخل الفصول'
-      : 'Show topic names inside chapters';
-  String get interlinear => arabic
-      ? 'تفعيل العرض المتوازي افتراضيًا'
-      : 'Enable interlinear view by default';
-  String get saveChanges => arabic ? 'حفظ التغييرات' : 'Save changes';
-  String get completeSetup => arabic ? 'حفظ ومتابعة' : 'Save and continue';
-  String get reset => arabic ? 'إلغاء التغييرات' : 'Reset unsaved changes';
+      LocalizedUiLabels.forLanguage(language).text('profile.preferredVersion');
+  String get defaultZoom =>
+      LocalizedUiLabels.forLanguage(language).text('profile.defaultZoom');
+  String get showDiacritics =>
+      LocalizedUiLabels.forLanguage(language).text('profile.showDiacritics');
+  String get showTopicNames =>
+      LocalizedUiLabels.forLanguage(language).text('profile.showTopicNames');
+  String get interlinear =>
+      LocalizedUiLabels.forLanguage(language).text('profile.interlinear');
+  String get saveChanges =>
+      LocalizedUiLabels.forLanguage(language).text('profile.saveChanges');
+  String get completeSetup =>
+      LocalizedUiLabels.forLanguage(language).text('profile.completeSetup');
+  String get reset =>
+      LocalizedUiLabels.forLanguage(language).text('profile.reset');
   String get requiredField =>
-      arabic ? 'هذا الحقل مطلوب.' : 'This field is required.';
-  String get invalidYear => arabic
-      ? 'أدخل سنة بين 1900 والسنة الحالية.'
-      : 'Enter a year between 1900 and the current year.';
-  String get tooLong => arabic ? 'النص طويل جدًا.' : 'This value is too long.';
-  String get selectLanguage => arabic ? 'اختر اللغة.' : 'Choose a language.';
+      LocalizedUiLabels.forLanguage(language).text('profile.requiredField');
+  String get invalidYear =>
+      LocalizedUiLabels.forLanguage(language).text('profile.invalidYear');
+  String get tooLong =>
+      LocalizedUiLabels.forLanguage(language).text('profile.tooLong');
+  String get selectLanguage =>
+      LocalizedUiLabels.forLanguage(language).text('profile.selectLanguage');
   String get selectVersion =>
-      arabic ? 'اختر ترجمة متاحة.' : 'Choose an available translation.';
-  String get loadError => arabic
-      ? 'تعذر تحميل اللغات. تم استخدام الخيارات الأساسية.'
-      : 'Languages could not be loaded. Bundled options are being used.';
-  String get unavailableVersion => arabic
-      ? 'الترجمة المحفوظة لم تعد متاحة. اختر ترجمة بديلة ثم احفظ.'
-      : 'The saved translation is no longer available. Choose a replacement and save.';
-  String get saveError => arabic
-      ? 'تعذر حفظ التغييرات. حاول مرة أخرى.'
-      : 'Changes could not be saved. Please try again.';
-  String get optional => arabic ? 'اختياري' : 'Optional';
+      LocalizedUiLabels.forLanguage(language).text('profile.selectVersion');
+  String get loadError =>
+      LocalizedUiLabels.forLanguage(language).text('profile.loadError');
+  String get unavailableVersion => LocalizedUiLabels.forLanguage(
+    language,
+  ).text('profile.unavailableVersion');
+  String get saveError =>
+      LocalizedUiLabels.forLanguage(language).text('profile.saveError');
+  String get optional =>
+      LocalizedUiLabels.forLanguage(language).text('profile.optional');
 }
 
 class ProfileEditor extends StatefulWidget {
@@ -130,16 +141,11 @@ class ProfileEditorState extends State<ProfileEditor> {
       PreferenceLanguageCatalog.resolve(_languages, _contentLanguage);
 
   String _localizedLanguageLabel(String code, String fallbackLabel) {
-    if (_labels.arabic) {
-      return switch (code.toLowerCase()) {
-        'english' => 'الإنجليزية',
-        'arabic' => 'العربية',
-        _ => fallbackLabel,
-      };
-    }
-    return switch (code.toLowerCase()) {
-      'english' => 'English',
-      'arabic' => 'Arabic',
+    final labels = LocalizedUiLabels.forLanguage(_menuLanguage);
+    return switch (interfaceLanguageKey(code)) {
+      'english' => labels.text('languageEnglish'),
+      'arabic' => labels.text('languageArabic'),
+      'french' => labels.text('languageFrench'),
       _ => fallbackLabel,
     };
   }

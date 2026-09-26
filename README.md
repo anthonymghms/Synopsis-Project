@@ -131,6 +131,7 @@ services/firebase_service.py
 services/admin_auth.py
 services/reference_parser.py
 services/localization_import_service.py
+services/interface_translation_service.py
 ```
 
 The CLI and web endpoints therefore use the same parser implementation.
@@ -240,8 +241,9 @@ bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
 caches and composes those responses. In the reader-facing client, one primary
 language controls topic names,
 Gospel headers, layout direction, reference links, and the main Bible text.
-Application menus use that language's shipped UI strings when available and
-otherwise fall back to English, while the imported content stays in its language.
+Application menus use uploaded interface translations, then bundled translations
+(English, Arabic, and French), then English for each missing key. Interface sheets
+cover reader menus, navigation/tooltips, Gospel headings, and account settings.
 Changing Language is an atomic operation and then prompts for a compatible
 translation when necessary. A different language is allowed only through the
 explicit Add translation/interlinear comparison flow.
@@ -265,8 +267,9 @@ complete topic localization and at least one compatible Bible version also
 appear in the main language selector and account settings. `/topic-languages`
 reports each localization's completeness against the current master topic
 count. Both catalogs load before saved preferences or reading links are
-resolved, so imported languages survive reloads. Languages without shipped
-UI strings use English menus until those strings are added.
+resolved, so imported languages survive reloads. Administrators can add interface
+translations without rebuilding the app. Missing keys are reported in the upload
+preview and the language list shows translation coverage.
 
 Every validation/import attempt has an `admin_imports/{importId}` audit record
 with the type, destination, filenames, uploader UID, timestamps, stage, status,
@@ -285,6 +288,7 @@ GET  /admin/imports
 GET  /admin/imports/{importId}
 GET  /admin/topics/template
 GET  /admin/localizations/template
+GET  /admin/interface-translations/template/{language}
 GET  /admin/harmony/migration-report
 GET  /harmony/topics
 GET  /topic-languages
@@ -293,6 +297,8 @@ POST /admin/topics/validate
 POST /admin/topics/import
 POST /admin/localizations/validate
 POST /admin/localizations/import
+POST /admin/interface-translations/validate
+POST /admin/interface-translations/import
 POST /admin/harmony/validate
 POST /admin/harmony/import
 POST /admin/bibles/validate
@@ -431,6 +437,50 @@ npx firebase-tools emulators:exec --only firestore --project demo-synopsis-profi
    Quote a topic name if it contains a comma.
 4. Validate the canonical-to-localized preview, import, then confirm language
    switching, Gospel labels, topic names, RTL/LTR, filters, and routes.
+
+### Translate menus and chapter headings
+
+1. Open **Admin → Harmony Topics** and choose **Interface translations** on
+   the existing language's card.
+2. Download the translation sheet. It contains `Key,English,Translation` columns
+   and is prefilled with that language's bundled or previously uploaded labels.
+3. Edit **Translation** in Excel and save as **CSV UTF-8**. Comma and semicolon
+   separators are accepted. Keep keys and placeholders unchanged. The two-column
+   `Key,Translation` format is also supported.
+4. Select the file, validate, and review the preview and missing-key warnings.
+   Unknown/duplicate keys, invalid UTF-8, malformed CSV, and changed placeholders
+   block the import. The interface-file limit is 512 KB.
+5. Import the sheet. Replacing previous uploaded labels requires the replacement
+   checkbox. Empty/absent entries reset to bundled labels, then English; they do
+   not preserve the previous upload's overrides.
+
+`gospelTitle` uses `{book}` (for example, `Évangile selon {book}`). `chapterTitle`
+uses `{gospel}` and `{number}` (for example, `{gospel} — Chapitre {number}`). The
+result is **Évangile selon Marc — Chapitre 1** without a row for each chapter.
+Chapter navigation and topic navigation have separate keys. Gospel names from
+topic-language metadata are reused; `gospelMatthew`, `gospelMark`, `gospelLuke`,
+and `gospelJohn` can override them in the interface sheet.
+
+Each import stages its CSV in Storage and atomically writes an immutable
+`interface_translation_revisions/{importId}` snapshot, the active
+`harmony_localizations/{language}.interfaceTranslations` map, and its audit record.
+It does not modify canonical references, topic names, or Bible text. The existing
+catalog refresh loads the changes after import; other open sessions see them on
+reload (public catalog responses may be cached for up to 60 seconds).
+
+Bundled labels live in `localization/interface_translations.json`, shared by the
+backend template/validator and the generated Flutter defaults. When changing
+bundled labels or adding keys, run:
+
+```sh
+python3 scripts/generate_interface_translations.py
+python3 scripts/generate_interface_translations.py --check
+```
+
+Deploy both the updated Flask backend (including the `localization` directory)
+and a rebuilt Flutter web app to enable the upload workflow. French menus and
+headings ship with the frontend and do not require reimporting French content.
+The admin portal and sign-in screens retain their existing English/Arabic UI.
 
 ### Update canonical Harmony references
 

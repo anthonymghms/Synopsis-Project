@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'browser_route_link.dart';
 import 'settings_screen.dart';
+import 'interface_translations.dart';
 import 'user_profile.dart';
 
 class MainScaffold extends StatelessWidget {
@@ -90,9 +91,9 @@ class MainScaffold extends StatelessWidget {
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(
-                            preferences.contentLanguage == 'arabic'
-                                ? 'تم حفظ الإعدادات.'
-                                : 'Settings saved.',
+                            LocalizedUiLabels.forLanguage(
+                              preferences.contentLanguage,
+                            ).text('settingsSaved'),
                           ),
                         ),
                       );
