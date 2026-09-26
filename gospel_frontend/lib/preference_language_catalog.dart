@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import 'topic_language_catalog.dart';
+
 class PreferenceVersionOption {
   const PreferenceVersionOption({required this.id, required this.label});
 
@@ -74,16 +76,27 @@ const List<PreferenceLanguageOption> bundledPreferenceLanguages =
     ];
 
 List<PreferenceLanguageOption> primaryPreferenceLanguageOptions(
-  Iterable<PreferenceLanguageOption> options,
-) {
-  final byCode = <String, PreferenceLanguageOption>{
-    for (final option in options)
-      if (option.versions.isNotEmpty) option.code.toLowerCase(): option,
-  };
+  Iterable<PreferenceLanguageOption> options, {
+  Iterable<TopicLanguageOption> topicLanguages = bundledTopicLanguages,
+}) {
+  final completeTopics = primaryTopicLanguageCodes(topicLanguages);
   return <PreferenceLanguageOption>[
-    for (final bundled in bundledPreferenceLanguages)
-      byCode[bundled.code] ?? bundled,
+    for (final option in options)
+      if (option.versions.isNotEmpty &&
+          completeTopics.contains(option.code.toLowerCase()))
+        option,
   ];
+}
+
+Future<List<PreferenceLanguageOption>> loadPrimaryPreferenceLanguages() async {
+  final catalogs = await Future.wait<Object>([
+    PreferenceLanguageCatalog().load(),
+    TopicLanguageCatalog().load(),
+  ]);
+  return primaryPreferenceLanguageOptions(
+    catalogs[0] as List<PreferenceLanguageOption>,
+    topicLanguages: catalogs[1] as List<TopicLanguageOption>,
+  );
 }
 
 class PreferenceLanguageCatalog {

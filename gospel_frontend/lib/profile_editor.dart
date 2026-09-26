@@ -80,6 +80,7 @@ class ProfileEditor extends StatefulWidget {
     this.setupMode = false,
     this.onDirtyChanged,
     this.onMenuLanguagePreview,
+    this.languageLoader = loadPrimaryPreferenceLanguages,
   });
 
   final UserProfile initialProfile;
@@ -87,6 +88,7 @@ class ProfileEditor extends StatefulWidget {
   final bool setupMode;
   final ValueChanged<bool>? onDirtyChanged;
   final ValueChanged<String>? onMenuLanguagePreview;
+  final Future<List<PreferenceLanguageOption>> Function() languageLoader;
 
   @override
   State<ProfileEditor> createState() => ProfileEditorState();
@@ -202,21 +204,30 @@ class ProfileEditorState extends State<ProfileEditor> {
 
   Future<void> _loadCatalog() async {
     try {
-      final languages = primaryPreferenceLanguageOptions(
-        await PreferenceLanguageCatalog().load(),
-      );
+      final languages = await widget.languageLoader();
       if (!mounted) {
         return;
       }
+      if (languages.isEmpty) {
+        throw StateError('No complete reading languages are available.');
+      }
+      // The initial bundled dropdown cannot resolve an imported language.
+      // Restore the saved choice against the complete catalog after loading.
+      final requestedLanguage =
+          widget.initialProfile.preferences.contentLanguage;
+      final requestedVersion = _requiresExplicitInitialVersion
+          ? _preferredVersion
+          : widget.initialProfile.preferences.preferredVersion;
       final selectedLanguage = PreferenceLanguageCatalog.resolve(
         languages,
-        _contentLanguage,
+        requestedLanguage,
       );
-      final supportsSaved = selectedLanguage.supportsVersion(_preferredVersion);
+      final supportsSaved = selectedLanguage.supportsVersion(requestedVersion);
       setState(() {
         _languages = languages;
         _contentLanguage = selectedLanguage.code;
         _menuLanguage = selectedLanguage.code;
+        _preferredVersion = requestedVersion;
         if (!supportsSaved && _preferredVersion.isNotEmpty) {
           _preferredVersion = selectedLanguage.sanitizeVersion(
             _preferredVersion,

@@ -141,6 +141,42 @@ class TopicLanguageApiTests(unittest.TestCase):
         self.assertTrue(english["language"]["complete"])
         self.assertEqual(english["topics"][0]["name"], "Birth of Jesus")
 
+    def test_catalog_reports_imported_language_completeness_after_master_changes(self):
+        app_module.db.documents["harmony_localizations/french"] = {
+            "label": "Français",
+            "direction": "ltr",
+            "topicCount": 2,
+            "active": True,
+        }
+        app_module.db.documents["harmony_localizations/inactive"] = {
+            "topicCount": 2,
+            "active": False,
+        }
+
+        def catalog():
+            response = self.client.get("/topic-languages")
+            self.assertEqual(response.status_code, 200)
+            return {item["id"]: item for item in response.get_json()["languages"]}
+
+        languages = catalog()
+        self.assertNotIn("inactive", languages)
+        self.assertEqual(languages["french"]["topicCount"], 2)
+        self.assertEqual(languages["french"]["canonicalTopicCount"], 2)
+        self.assertTrue(languages["french"]["complete"])
+
+        app_module.db.documents["harmony_revisions/rev/topics/3"] = {
+            "canonicalOrder": 3,
+            "entries": [],
+        }
+        app_module.db.documents["harmony/canonical"]["topicCount"] = 3
+        languages = catalog()
+        self.assertEqual(languages["french"]["canonicalTopicCount"], 3)
+        self.assertFalse(languages["french"]["complete"])
+        self.assertFalse(languages["english"]["complete"])
+
+        app_module.db.documents["harmony_localizations/french"]["topicCount"] = 3
+        self.assertTrue(catalog()["french"]["complete"])
+
     def test_topic_language_is_independent_from_bible_query(self):
         response = self.client.get(
             "/topics?topicLanguage=english&bibleLanguage=arabic&language=arabic&version=Van%20Dyke"

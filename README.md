@@ -238,8 +238,10 @@ bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
 `/harmony/topics` returns canonical coordinates only, while
 `/topic-localizations/{language}` returns table names and metadata. Flutter
 caches and composes those responses. In the reader-facing client, one primary
-language now controls the entire experience: application menus, topic names,
+language controls topic names,
 Gospel headers, layout direction, reference links, and the main Bible text.
+Application menus use that language's shipped UI strings when available and
+otherwise fall back to English, while the imported content stays in its language.
 Changing Language is an atomic operation and then prompts for a compatible
 translation when necessary. A different language is allowed only through the
 explicit Add translation/interlinear comparison flow.
@@ -258,10 +260,13 @@ import deletes those paths or immutable revisions.
 Bible language metadata remains under `bibles/{language}` and version metadata
 under `bibles/{language}/versions/{version}`. Topic localization activation
 never writes into the Bible catalog. Newly imported Bible languages can appear
-as comparison translations without a Dart source change. Promoting a language
-to the primary selector additionally requires shipped UI strings, a complete
-topic localization, and at least one compatible Bible version, preventing a
-partially translated interface.
+as comparison translations without a Dart source change. Languages with a
+complete topic localization and at least one compatible Bible version also
+appear in the main language selector and account settings. `/topic-languages`
+reports each localization's completeness against the current master topic
+count. Both catalogs load before saved preferences or reading links are
+resolved, so imported languages survive reloads. Languages without shipped
+UI strings use English menus until those strings are added.
 
 Every validation/import attempt has an `admin_imports/{importId}` audit record
 with the type, destination, filenames, uploader UID, timestamps, stage, status,

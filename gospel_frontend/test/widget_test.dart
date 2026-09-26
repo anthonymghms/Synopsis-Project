@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -68,20 +70,20 @@ void main() {
     },
   );
 
-  test('comparison-only translations are not offered as a primary locale', () {
-    final english = kBaseLanguageOptions.first;
-    final french = english.copyWith(
-      code: 'french',
-      label: 'Français',
-      apiLanguage: 'french',
-      apiVersion: 'lsg',
-      versions: const <BibleVersion>[BibleVersion(id: 'lsg', label: 'LSG')],
-    );
-    final fullBibleCatalog = <LanguageOption>[english, french];
+  testWidgets(
+    'imported French is selectable with English menus after both catalogs load',
+    (tester) async {
+      final english = kBaseLanguageOptions.first;
+      final french = english.copyWith(
+        code: 'french',
+        label: 'Français',
+        apiLanguage: 'french',
+        apiVersion: 'lsg',
+        versions: const <BibleVersion>[BibleVersion(id: 'lsg', label: 'LSG')],
+      );
+      final fullBibleCatalog = <LanguageOption>[english, french];
 
-    final primary = primaryLanguageOptionsFor(
-      bibleLanguages: fullBibleCatalog,
-      topicLanguages: <TopicLanguageOption>[
+      final topicLanguages = <TopicLanguageOption>[
         bundledTopicLanguages.first,
         const TopicLanguageOption(
           code: 'french',
@@ -93,16 +95,94 @@ void main() {
           canonicalTopicCount: 100,
           complete: true,
         ),
+      ];
+      final primary = primaryLanguageOptionsFor(
+        bibleLanguages: fullBibleCatalog,
+        topicLanguages: topicLanguages,
+      );
+
+      expect(fullBibleCatalog.map((option) => option.code), contains('french'));
+      expect(primary.map((option) => option.code), <String>[
+        'english',
+        'french',
+      ]);
+
+      addTearDown(() async {
+        await loadPrimaryLanguageCatalogs(
+          bibleLoader: () async => kBaseLanguageOptions,
+          topicLoader: () async => bundledTopicLanguages,
+        );
+        PrimaryLanguageController.instance.select('english');
+      });
+      final topics = Completer<List<TopicLanguageOption>>();
+      var loaded = false;
+      final loading = loadPrimaryLanguageCatalogs(
+        bibleLoader: () async => fullBibleCatalog,
+        topicLoader: () => topics.future,
+      ).then((_) => loaded = true);
+      await tester.pump();
+      expect(loaded, isFalse);
+      topics.complete(topicLanguages);
+      await loading;
+
+      PrimaryLanguageController.instance.select('french');
+      expect(PrimaryLanguageController.instance.languageCode, 'french');
+      expect(TopicLanguageSelectionController.instance.languageCode, 'french');
+      expect(MenuLanguageController.instance.languageCode, 'french');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MenuLanguageScope(
+            notifier: MenuLanguageController.instance.notifier,
+            child: Builder(
+              builder: (context) {
+                final language = MenuLanguageScope.of(context);
+                return Text(
+                  '${language.label}: ${language.gospelHeaders.join(', ')} / ${language.ui.settings}',
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.text('Français: Matthieu, Marc, Luc, Jean / Settings'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  test('primary languages require complete topics and a Bible version', () {
+    final english = kBaseLanguageOptions.first;
+    final bibleLanguages = [
+      english,
+      english.copyWith(code: 'french'),
+      english.copyWith(code: 'spanish'),
+      english.copyWith(code: 'german', versions: const []),
+    ];
+    final primary = primaryLanguageOptionsFor(
+      bibleLanguages: bibleLanguages,
+      topicLanguages: [
+        bundledTopicLanguages.first,
+        const TopicLanguageOption(
+          code: 'french',
+          label: 'Français',
+          direction: TextDirection.ltr,
+          gospelNames: ['Matthieu', 'Marc', 'Luc', 'Jean'],
+          subjectsLabel: 'Sujets',
+          topicCount: 289,
+          canonicalTopicCount: 291,
+        ),
+        const TopicLanguageOption(
+          code: 'german',
+          label: 'Deutsch',
+          direction: TextDirection.ltr,
+          gospelNames: [],
+          subjectsLabel: 'Subjects',
+          complete: true,
+        ),
       ],
     );
-
-    expect(fullBibleCatalog.map((option) => option.code), contains('french'));
-    expect(primary.map((option) => option.code), <String>['english']);
-
-    PrimaryLanguageController.instance.select('french');
-    expect(PrimaryLanguageController.instance.languageCode, 'english');
-    expect(TopicLanguageSelectionController.instance.languageCode, 'english');
-    expect(MenuLanguageController.instance.languageCode, 'english');
+    expect(primary.map((option) => option.code), ['english']);
   });
 
   test('mixed legacy routes use the Bible language as the primary locale', () {

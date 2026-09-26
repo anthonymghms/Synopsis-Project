@@ -81,6 +81,21 @@ const bundledTopicLanguages = <TopicLanguageOption>[
   ),
 ];
 
+Set<String> primaryTopicLanguageCodes(
+  Iterable<TopicLanguageOption> languages,
+) => {
+  for (final language in languages)
+    // Bundled entries have no counts until the server catalog loads. Once
+    // counts are available, even bundled languages must be complete.
+    if (language.complete ||
+        (language.topicCount == 0 &&
+            language.canonicalTopicCount == 0 &&
+            bundledTopicLanguages.any(
+              (bundled) => bundled.code == language.code.toLowerCase(),
+            )))
+      language.code.toLowerCase(),
+};
+
 class TopicLanguageCatalog {
   TopicLanguageCatalog({
     http.Client? client,

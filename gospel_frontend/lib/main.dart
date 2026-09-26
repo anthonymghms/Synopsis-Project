@@ -890,25 +890,11 @@ List<LanguageOption> primaryLanguageOptionsFor({
   required Iterable<LanguageOption> bibleLanguages,
   required Iterable<TopicLanguageOption> topicLanguages,
 }) {
-  final uiLanguageCodes = kBaseLanguageOptions
-      .map((option) => option.code.toLowerCase())
-      .toSet();
-  final bundledTopicCodes = bundledTopicLanguages
-      .map((option) => option.code.toLowerCase())
-      .toSet();
-  final completeTopicCodes = topicLanguages
-      .where(
-        (option) =>
-            option.complete ||
-            bundledTopicCodes.contains(option.code.toLowerCase()),
-      )
-      .map((option) => option.code.toLowerCase())
-      .toSet();
+  final completeTopicCodes = primaryTopicLanguageCodes(topicLanguages);
 
   return bibleLanguages
       .where(
         (option) =>
-            uiLanguageCodes.contains(option.code.toLowerCase()) &&
             completeTopicCodes.contains(option.code.toLowerCase()) &&
             option.versions.isNotEmpty,
       )
@@ -970,6 +956,22 @@ TopicLanguageOption _topicLanguageOptionForCode(String code) =>
     TopicLanguageCatalog.resolve(_supportedTopicLanguages, code);
 
 Future<List<LanguageOption>>? _languageOptionsLoadFuture;
+bool _primaryLanguageCatalogsLoaded = false;
+
+Future<void> loadPrimaryLanguageCatalogs({
+  Future<List<LanguageOption>> Function()? bibleLoader,
+  Future<List<TopicLanguageOption>> Function()? topicLoader,
+}) async {
+  final catalogs = await Future.wait<Object>([
+    (bibleLoader ?? _loadLanguagesFromFirestore)(),
+    (topicLoader ?? _loadTopicLanguages)(),
+  ]);
+  // Reconcile the selection only after both catalogs are available. A slower
+  // topic request must not reset an imported Bible language to English.
+  _supportedLanguages = catalogs[0] as List<LanguageOption>;
+  _supportedTopicLanguages = catalogs[1] as List<TopicLanguageOption>;
+  _primaryLanguageCatalogsLoaded = true;
+}
 
 final Map<String, LanguageOption> _baseLanguageLookup = {
   for (final option in kBaseLanguageOptions) option.code.toLowerCase(): option,
@@ -4662,9 +4664,6 @@ void main() async {
   await MenuLanguageController.instance.initialize(
     fallbackLanguageCode: LanguageSelectionController.instance.languageCode,
   );
-  PrimaryLanguageController.instance.select(
-    LanguageSelectionController.instance.languageCode,
-  );
   await ZoomController.instance.initialize();
   runApp(GospelApp());
 }
@@ -4699,6 +4698,7 @@ class _GospelAppState extends State<GospelApp> {
     }
     final preferences = profile.preferences;
     ZoomController.instance.update(preferences.zoomLevel);
+    if (!_primaryLanguageCatalogsLoaded) return;
     final primaryLanguage = _coercePrimaryLanguageOption(
       _languageOptionForCode(preferences.contentLanguage),
     ).code;
@@ -4781,12 +4781,6 @@ class _GospelAppState extends State<GospelApp> {
     if (path == '/reference') {
       final rawLanguage = rawPrimaryLanguage ?? defaultLanguage;
       final rawVersion = uri.queryParameters['version'] ?? defaultVersion;
-      final languageOption = _resolvePrimaryLanguageOption(
-        languageParam: rawLanguage,
-        versionParam: rawVersion,
-      );
-      final language = languageOption.apiLanguage;
-      final version = _sanitizeVersionForLanguage(languageOption, rawVersion);
       final bookDisplay =
           uri.queryParameters['bookDisplay'] ??
           uri.queryParameters['book'] ??
@@ -4806,22 +4800,28 @@ class _GospelAppState extends State<GospelApp> {
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
-          builder: (context) => ReferenceViewerPage(
-            displayBook: bookDisplay,
-            bookId: bookId,
-            chapter: chapter,
-            verses: verses,
-            language: language,
-            version: version,
-            topicLanguage: languageOption.code,
-            topicName: topicName,
-            referenceLabelOverride: label,
-            source: source,
-            topicId: topicId,
-            topicNumber: topicNumber,
-            gospel: gospel,
-            comparisonState: comparisons,
-          ),
+          builder: (context) {
+            final languageOption = _resolvePrimaryLanguageOption(
+              languageParam: rawLanguage,
+              versionParam: rawVersion,
+            );
+            return ReferenceViewerPage(
+              displayBook: bookDisplay,
+              bookId: bookId,
+              chapter: chapter,
+              verses: verses,
+              language: languageOption.apiLanguage,
+              version: _sanitizeVersionForLanguage(languageOption, rawVersion),
+              topicLanguage: languageOption.code,
+              topicName: topicName,
+              referenceLabelOverride: label,
+              source: source,
+              topicId: topicId,
+              topicNumber: topicNumber,
+              gospel: gospel,
+              comparisonState: comparisons,
+            );
+          },
         ),
       );
     }
@@ -4833,26 +4833,26 @@ class _GospelAppState extends State<GospelApp> {
       final initialTopicNumber = uri.queryParameters['topicNumber'] ?? '';
       final comparisons = uri.queryParameters['comparisons'] ?? '';
 
-      final languageOption = _resolvePrimaryLanguageOption(
-        languageParam: initialLanguage,
-        versionParam: initialVersion,
-      );
-      final sanitizedVersion = _sanitizeVersionForLanguage(
-        languageOption,
-        initialVersion,
-      );
-
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
-          builder: (context) => TopicDetailScreen(
-            languageOption: languageOption,
-            topicLanguage: languageOption.code,
-            apiVersion: sanitizedVersion,
-            topicId: initialTopicId,
-            topicNumber: initialTopicNumber,
-            comparisonState: comparisons,
-          ),
+          builder: (context) {
+            final languageOption = _resolvePrimaryLanguageOption(
+              languageParam: initialLanguage,
+              versionParam: initialVersion,
+            );
+            return TopicDetailScreen(
+              languageOption: languageOption,
+              topicLanguage: languageOption.code,
+              apiVersion: _sanitizeVersionForLanguage(
+                languageOption,
+                initialVersion,
+              ),
+              topicId: initialTopicId,
+              topicNumber: initialTopicNumber,
+              comparisonState: comparisons,
+            );
+          },
         ),
       );
     }
@@ -4946,6 +4946,11 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
       widget.user,
       force: force,
     );
+    try {
+      await loadPrimaryLanguageCatalogs();
+    } catch (_) {
+      // Bundled languages remain available if a catalog is unreachable.
+    }
     _allowAdminContent = await adminFuture;
     _adminContentLoaded = true;
     _applyUserPreferencesToLegacyControllers(profile.preferences);
@@ -5308,7 +5313,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _syncSelectedContentLanguage(_languageOption);
     _initializePreferences();
     _refreshLanguagesFromFirestore();
-    _refreshTopicLanguages();
     catalogRevision.addListener(_catalogChanged);
   }
 
@@ -5324,34 +5328,6 @@ class _TopicListScreenState extends State<TopicListScreen> {
     _topicLanguageOptionsLoadFuture = null;
     _ApiCache.clear();
     unawaited(_refreshLanguagesFromFirestore());
-    unawaited(_refreshTopicLanguages());
-  }
-
-  Future<void> _refreshTopicLanguages() async {
-    try {
-      final options = await _loadTopicLanguages();
-      if (!mounted) return;
-      var selected = _coercePrimaryLanguageOption(
-        _languageOptionForCode(_selectedLanguageCode),
-      ).code;
-      if (!options.any((option) => option.code == selected)) {
-        selected = _primaryLanguageOptions()
-            .firstWhere(
-              (option) => option.code == defaultLanguage,
-              orElse: () => _primaryLanguageOptions().first,
-            )
-            .code;
-      }
-      setState(() {
-        _supportedTopicLanguages = options;
-        _selectedLanguageCode = selected;
-        _selectedTopicLanguageCode = selected;
-      });
-      _syncSelectedContentLanguage(_languageOptionForCode(selected));
-      await fetchTopics();
-    } catch (_) {
-      // Keep the bundled topic localization when the remote catalog fails.
-    }
   }
 
   void _restoreControlStateFromUri(Uri uri) {
@@ -5455,12 +5431,11 @@ class _TopicListScreenState extends State<TopicListScreen> {
       _languagesLoading = true;
     });
     try {
-      final options = await _loadLanguagesFromFirestore();
+      await loadPrimaryLanguageCatalogs();
       if (!mounted) {
         return;
       }
       setState(() {
-        _supportedLanguages = options;
         _languagesLoading = false;
       });
 
@@ -5477,8 +5452,8 @@ class _TopicListScreenState extends State<TopicListScreen> {
           _selectedTopicLanguageCode = fallbackCode;
         });
         _syncSelectedContentLanguage(_languageOptionForCode(fallbackCode));
-        await fetchTopics();
       }
+      await fetchTopics();
     } catch (e) {
       if (!mounted) {
         return;

@@ -885,10 +885,16 @@ def get_canonical_harmony_topics():
 
 @app.route("/topic-languages", methods=["GET"])
 def get_topic_languages():
+    canonical_ref = _canonical_topics_collection()
+    canonical_count = len(_canonical_topic_payloads(canonical_ref)) if canonical_ref else 0
     languages = []
     for document in db.collection("harmony_localizations").list_documents():
         metadata = _topic_language_metadata(document.id)
         if metadata is not None and metadata["active"]:
+            metadata["canonicalTopicCount"] = canonical_count
+            metadata["complete"] = (
+                canonical_count > 0 and metadata["topicCount"] == canonical_count
+            )
             languages.append(metadata)
     languages.sort(key=lambda item: (item["label"].casefold(), item["id"]))
     return _json_response({"languages": languages}, cache_seconds=60)

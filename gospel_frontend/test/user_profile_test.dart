@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/preference_language_catalog.dart';
 import 'package:gospel_frontend/profile_editor.dart';
+import 'package:gospel_frontend/topic_language_catalog.dart';
 import 'package:gospel_frontend/user_profile.dart';
 
 void main() {
@@ -160,7 +161,85 @@ void main() {
         'english',
         'arabic',
       ]);
+
+      final withFrenchTopics = primaryPreferenceLanguageOptions(
+        [...bundledPreferenceLanguages, french],
+        topicLanguages: [
+          ...bundledTopicLanguages,
+          const TopicLanguageOption(
+            code: 'french',
+            label: 'Français',
+            direction: TextDirection.ltr,
+            gospelNames: ['Matthieu', 'Marc', 'Luc', 'Jean'],
+            subjectsLabel: 'Sujets',
+            topicCount: 291,
+            canonicalTopicCount: 291,
+            complete: true,
+          ),
+        ],
+      );
+      expect(withFrenchTopics.map((option) => option.code), [
+        'english',
+        'arabic',
+        'french',
+      ]);
     });
+  });
+
+  testWidgets('settings preserve a saved imported language and Bible version', (
+    tester,
+  ) async {
+    UserProfile? saved;
+    const french = PreferenceLanguageOption(
+      code: 'french',
+      label: 'Français',
+      direction: TextDirection.ltr,
+      defaultVersion: 'lsg',
+      versions: [PreferenceVersionOption(id: 'lsg', label: 'LSG')],
+    );
+    const profile = UserProfile(
+      firstName: 'Jean',
+      lastName: 'Martin',
+      displayName: 'Jean Martin',
+      email: 'reader@example.com',
+      profileCompleted: true,
+      preferences: UserPreferences(
+        contentLanguage: 'french',
+        preferredVersion: 'lsg',
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfileEditor(
+              initialProfile: profile,
+              languageLoader: () async => [
+                ...bundledPreferenceLanguages,
+                french,
+              ],
+              onSave: (profile) async => saved = profile,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('profile-content-language-french')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-version-french-lsg')),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.byKey(const Key('profile-save')));
+    await tester.tap(find.byKey(const Key('profile-save')));
+    await tester.pumpAndSettle();
+    expect(saved?.preferences.contentLanguage, 'french');
+    expect(saved?.preferences.topicLanguage, 'french');
+    expect(saved?.preferences.menuLanguage, 'french');
+    expect(saved?.preferences.preferredVersion, 'lsg');
   });
 
   testWidgets('Arabic profile editor is RTL and validates required names', (
