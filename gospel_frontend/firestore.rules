@@ -8,17 +8,35 @@ service cloud.firestore {
 
     function hasAdminClaim() {
       return request.auth != null
-          && (request.auth.token.admin == true
-              || request.auth.token.role == 'admin');
+          && (request.auth.token.get('admin', false) == true
+              || request.auth.token.get('isAdmin', false) == true
+              || request.auth.token.get('role', '') == 'admin'
+              || request.auth.token.get('roles', []).hasAny(['admin', 'ADMIN']));
     }
 
     function hasStoredAdminRole() {
       return request.auth != null
-          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
     }
 
     function isAdmin() {
-      return hasAdminClaim() || hasStoredAdminRole();
+      return request.auth != null
+          && (exists(/databases/$(database)/documents/memberships/$(request.auth.uid))
+              ? get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.get('role', '') == 'admin'
+              : (hasStoredAdminRole()
+                  || ((!exists(/databases/$(database)/documents/users/$(request.auth.uid))
+                       || !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['guest', 'subscribed', 'user', 'admin']))
+                      && hasAdminClaim())));
+    }
+
+    function hasActiveMembership() {
+      return request.auth != null
+          && exists(/databases/$(database)/documents/memberships/$(request.auth.uid))
+          && (get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.get('role', '') in ['admin', 'subscribed']
+              || (get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.get('role', '') == 'guest'
+                  && get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.get('guestExpiresAt', null) is timestamp
+                  && get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.guestExpiresAt > request.time));
     }
 
     function hasAuthenticatedEmail(data) {
@@ -196,21 +214,50 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // The Flutter client discovers supported languages and translations here.
-    // All writes remain server/Admin-SDK operations.
-    match /bibles/{document=**} {
+    // Settings remain usable after guest expiry. These exact catalog document
+    // levels contain labels/version identifiers, never chapter or verse text.
+    match /bibles/{language} {
       allow read: if request.auth != null;
       allow write: if false;
     }
 
+    match /bibles/{language}/{catalogCollection}/{catalogDocument} {
+      allow read: if request.auth != null
+          && (catalogCollection == 'versions'
+              || (catalogCollection in ['metadata', 'meta'] && catalogDocument == 'versions')
+              || (catalogCollection == 'version_manifest' && catalogDocument in ['index', 'all']));
+      allow write: if false;
+    }
+
+    // Legacy nested Bible content still requires active membership. Immutable
+    // imported/edited revisions are available only through the guarded API.
+    match /bibles/{document=**} {
+      allow read: if hasActiveMembership();
+      allow write: if false;
+    }
+
     match /references/{document=**} {
-      allow read: if request.auth != null;
+      allow read: if hasActiveMembership();
       allow write: if false;
     }
 
     match /admin_imports/{importId} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // Roles/expiry are created and updated exclusively by trusted backend code.
+    match /memberships/{userId} {
+      allow get: if isOwner(userId);
+      allow list, write: if false;
+    }
+
+    match /membership_config/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /admin_membership_edits/{document=**} {
+      allow read, write: if false;
     }
 
     match /reference_revisions/{document=**} {

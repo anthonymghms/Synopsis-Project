@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'preference_language_catalog.dart';
 import 'user_profile.dart';
 import 'interface_translations.dart';
+import 'native_language_names.dart';
 
 typedef ProfileSaveCallback = Future<void> Function(UserProfile profile);
 
@@ -91,7 +92,7 @@ class ProfileEditor extends StatefulWidget {
     this.setupMode = false,
     this.onDirtyChanged,
     this.onMenuLanguagePreview,
-    this.languageLoader = loadPrimaryPreferenceLanguages,
+    this.languageLoader = loadReaderPreferenceLanguages,
   });
 
   final UserProfile initialProfile;
@@ -126,6 +127,7 @@ class ProfileEditorState extends State<ProfileEditor> {
   String? _saveError;
   String? _versionWarning;
   late String _menuLanguage;
+  late String _topicLanguage;
   late String _contentLanguage;
   late String _preferredVersion;
   late String _timezone;
@@ -140,15 +142,8 @@ class ProfileEditorState extends State<ProfileEditor> {
   PreferenceLanguageOption get _contentOption =>
       PreferenceLanguageCatalog.resolve(_languages, _contentLanguage);
 
-  String _localizedLanguageLabel(String code, String fallbackLabel) {
-    final labels = LocalizedUiLabels.forLanguage(_menuLanguage);
-    return switch (interfaceLanguageKey(code)) {
-      'english' => labels.text('languageEnglish'),
-      'arabic' => labels.text('languageArabic'),
-      'french' => labels.text('languageFrench'),
-      _ => fallbackLabel,
-    };
-  }
+  String _localizedLanguageLabel(String code, String fallbackLabel) =>
+      nativeLanguageName(code, fallbackLabel);
 
   @override
   void initState() {
@@ -182,7 +177,8 @@ class ProfileEditorState extends State<ProfileEditor> {
       _languages,
       profile.preferences.contentLanguage,
     );
-    _menuLanguage = initialLanguage.code;
+    _menuLanguage = profile.preferences.menuLanguage;
+    _topicLanguage = profile.preferences.topicLanguage;
     _contentLanguage = initialLanguage.code;
     _preferredVersion = initialLanguage.sanitizeVersion(
       profile.preferences.preferredVersion,
@@ -215,7 +211,7 @@ class ProfileEditorState extends State<ProfileEditor> {
         return;
       }
       if (languages.isEmpty) {
-        throw StateError('No complete reading languages are available.');
+        throw StateError('No Bible translations are available.');
       }
       // The initial bundled dropdown cannot resolve an imported language.
       // Restore the saved choice against the complete catalog after loading.
@@ -232,7 +228,8 @@ class ProfileEditorState extends State<ProfileEditor> {
       setState(() {
         _languages = languages;
         _contentLanguage = selectedLanguage.code;
-        _menuLanguage = selectedLanguage.code;
+        _menuLanguage = widget.initialProfile.preferences.menuLanguage;
+        _topicLanguage = widget.initialProfile.preferences.topicLanguage;
         _preferredVersion = requestedVersion;
         if (!supportsSaved && _preferredVersion.isNotEmpty) {
           _preferredVersion = selectedLanguage.sanitizeVersion(
@@ -242,7 +239,7 @@ class ProfileEditorState extends State<ProfileEditor> {
         }
         _catalogLoading = false;
       });
-      widget.onMenuLanguagePreview?.call(selectedLanguage.code);
+      widget.onMenuLanguagePreview?.call(_menuLanguage);
     } catch (_) {
       if (!mounted) {
         return;
@@ -296,6 +293,7 @@ class ProfileEditorState extends State<ProfileEditor> {
     _bio.text = profile.bio;
     setState(() {
       _menuLanguage = profile.preferences.menuLanguage;
+      _topicLanguage = profile.preferences.topicLanguage;
       _contentLanguage = profile.preferences.contentLanguage;
       final option = PreferenceLanguageCatalog.resolve(
         _languages,
@@ -374,6 +372,8 @@ class ProfileEditorState extends State<ProfileEditor> {
       bio: _bio.text.trim(),
       profileCompleted: true,
       preferences: UserPreferences(
+        menuLanguage: _menuLanguage,
+        topicLanguage: _topicLanguage,
         contentLanguage: contentOption.code,
         preferredVersion: contentOption.sanitizeVersion(_preferredVersion),
         showDiacritics: contentOption.code == 'arabic' && _showDiacritics,
@@ -577,7 +577,10 @@ class ProfileEditorState extends State<ProfileEditor> {
                               );
                               setState(() {
                                 _contentLanguage = option.code;
-                                _menuLanguage = option.code;
+                                if (option.supportsTopics) {
+                                  _menuLanguage = option.code;
+                                  _topicLanguage = option.code;
+                                }
                                 _preferredVersion =
                                     widget.setupMode &&
                                         option.versions.length > 1
@@ -587,7 +590,7 @@ class ProfileEditorState extends State<ProfileEditor> {
                                     option.code == 'arabic' && _showDiacritics;
                                 _versionWarning = null;
                               });
-                              widget.onMenuLanguagePreview?.call(option.code);
+                              widget.onMenuLanguagePreview?.call(_menuLanguage);
                               _setDirty();
                             },
                     ),

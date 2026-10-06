@@ -29,27 +29,34 @@ def main() -> int:
     claims = dict(user.custom_claims or {})
     db = firestore_client()
     user_ref = db.collection("users").document(user.uid)
+    membership_ref = db.collection("memberships").document(user.uid)
     if args.remove:
         claims.pop("admin", None)
-        if claims.get("role") == "admin":
+        claims.pop("isAdmin", None)
+        if str(claims.get("role") or "").strip().lower() == "admin":
             claims.pop("role", None)
-        auth.set_custom_user_claims(user.uid, claims or None)
-        user_ref.set(
-            {"role": firestore.DELETE_FIELD, "updatedAt": firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
-        print(f"Removed administrator access for UID {user.uid}.")
+        if isinstance(claims.get("roles"), list):
+            claims["roles"] = [value for value in claims["roles"] if str(value).strip().lower() != "admin"]
+        role = "subscribed"
     else:
         claims["admin"] = True
         claims["role"] = "admin"
-        auth.set_custom_user_claims(user.uid, claims)
-        user_ref.set(
-            {"role": "admin", "updatedAt": firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
+        role = "admin"
+    batch = db.batch()
+    batch.set(user_ref, {"role": role, "updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
+    batch.set(membership_ref, {"role": role, "guestExpiresAt": None,
+                              "updatedAt": firestore.SERVER_TIMESTAMP, "updatedBy": "trusted_bootstrap",
+                              "origin": "trusted_bootstrap"}, merge=True)
+    batch.commit()
+    # Membership is authoritative even while a client retains old token claims.
+    # Preserve claims unrelated to administrator access.
+    auth.set_custom_user_claims(user.uid, claims or None)
+    if args.remove:
+        print(f"Removed administrator access for UID {user.uid}.")
+    else:
         print(
             f"Granted administrator access to UID {user.uid}. "
-            "The user must sign out and sign back in to refresh claims."
+            "Access takes effect on the next account access check."
         )
     return 0
 

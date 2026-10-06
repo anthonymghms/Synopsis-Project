@@ -238,21 +238,19 @@ bibles/{bibleLanguage}/versions/{version} Bible text and translation metadata
 
 `/harmony/topics` returns canonical coordinates only, while
 `/topic-localizations/{language}` returns table names and metadata. Flutter
-caches and composes those responses. In the reader-facing client, one primary
-language controls topic names,
-Gospel headers, layout direction, reference links, and the main Bible text.
-Application menus use uploaded interface translations, then bundled translations
-(English, Arabic, and French), then English for each missing key. Interface sheets
-cover reader menus, navigation/tooltips, Gospel headings, and account settings.
-Changing Language is an atomic operation and then prompts for a compatible
-translation when necessary. A different language is allowed only through the
-explicit Add translation/interlinear comparison flow.
+caches and composes those responses. The main table uses a primary language
+with a complete topic localization and compatible Bible translation. Passage and
+topic readers select their Bible language independently while retaining topic
+names and application menus in the chosen table language. Uploaded interface
+translations take precedence over bundled translations (English, Arabic, and
+French), then English for each missing key. Interface sheets cover reader menus,
+navigation/tooltips, Gospel headings, and account settings.
 
-For deployed-client compatibility, the primary language is still serialized
-to `menuLanguage`, `topicLanguage`, and `bibleLanguage`; those keys are mirrors,
-not independent preferences. The matching translation remains in
-`bibleVersion`. Older mixed profiles and URLs are normalized with the Bible
-content language taking precedence.
+Profiles and reading URLs preserve `menuLanguage`, `topicLanguage`, and
+`bibleLanguage` independently; `bibleVersion` identifies the compatible
+translation. A Bible-only language such as Ancient Greek therefore needs no
+matching topics or interface translation. Comparison translations remain
+available through Add translation/interlinear.
 
 During migration, `/topics` and the historic topic route compose the same data
 server-side and retain legacy `language` query handling. Missing canonical or
@@ -262,9 +260,9 @@ import deletes those paths or immutable revisions.
 Bible language metadata remains under `bibles/{language}` and version metadata
 under `bibles/{language}/versions/{version}`. Topic localization activation
 never writes into the Bible catalog. Newly imported Bible languages can appear
-as comparison translations without a Dart source change. Languages with a
-complete topic localization and at least one compatible Bible version also
-appear in the main language selector and account settings. `/topic-languages`
+in passage readers, account settings, and comparison selectors without a Dart
+source change. Languages with a complete topic localization and at least one
+compatible Bible version also appear in the main table language selector. `/topic-languages`
 reports each localization's completeness against the current master topic
 count. Both catalogs load before saved preferences or reading links are
 resolved, so imported languages survive reloads. Administrators can add interface
@@ -365,7 +363,8 @@ From a trusted backend machine, grant administrator access to an existing accoun
 ./venv/bin/python scripts/set_admin.py --email admin@example.com
 ```
 
-The user must sign out and sign back in afterward. Remove access with:
+Access changes take effect on the next account-access check (or after signing
+out and back in). Remove administrator access, retaining subscribed reading, with:
 
 ```sh
 ./venv/bin/python scripts/set_admin.py --email admin@example.com --remove
@@ -520,6 +519,146 @@ The admin portal and sign-in screens retain their existing English/Arabic UI.
 6. Select **Import Bible Translation**, confirm, and follow book-by-book stages.
 7. Return to the application, select the new language/version, and verify verse
    hover, chapter/reference pages, interlinear view, and Arabic diacritics.
+
+## Editing existing content and reviewing users
+
+In **Admin → Harmony Topics**, choose **Edit topics & language** for a language.
+Search by topic number or name and edit names directly. Language settings also
+edit the display name, text direction, and Gospel display names. Canonical Gospel
+references remain shared across languages; use **Import / Replace Master** to
+change the reference table. Legacy topic datasets also have an edit action.
+
+In **Admin → Bible Translations**, select a translation or its pencil button.
+Edit its display details or select a book and chapter, then choose **Edit verses &
+headings**. Verse numbers remain fixed. Saves only submit changed rows, preserve
+paragraph/poetry blocks, and activate immutable chapter revisions. Unsaved edits
+are protected on close, and concurrent changes return a reload conflict rather
+than overwriting another administrator's work.
+
+Content changes create audit records under `admin_content_edits/{editId}`.
+Topic edits create a new localization/reference revision. Bible chapter edits
+create `bible_chapter_revisions/{editId}/verses` and update the translation's
+`chapterOverrides` map atomically. Readers resolve these overrides before the
+original imported chapter. Replacing an entire Bible translation clears its
+prior overrides. Original imports/revisions are retained. These collections are
+accessed through the authenticated backend, not client Firestore writes.
+
+The editor APIs require the same verified administrator role as imports:
+
+```text
+GET/POST /admin/content/topics/{language}
+GET/POST /admin/content/bibles/{language}/{version}
+GET/POST /admin/content/bibles/{language}/{version}/{book}/{chapter}
+GET      /admin/users?pageSize=50&pageToken=...
+GET/POST /admin/users/{uid}
+GET      /account/access
+```
+
+GET editor responses include a `revision`; POST must send that revision. Stale
+saves return HTTP 409 with `content_conflict` and preserve the active content.
+The Users section lists all Firebase Authentication accounts across pages,
+including accounts without completed profiles, with their effective permissions,
+role source, disabled/verified status, and sign-in dates. Choose **Edit access**
+to assign Guest, Subscribed, or Administrator and set a guest's expiry date.
+The endpoint uses revision checks and audit records; administrators cannot change
+their own access. Firebase Authentication list-user permission is required for
+the backend service account.
+
+### Validated uploads and the Ancient Greek report
+
+**Validated** means the files passed checks and were staged; it does not mean
+they were imported. Import History and the dashboard now label this state
+**Awaiting import — not published**, show validated record counts, and offer
+**Review & finish import**. Open the record, inspect its files/counts/warnings,
+then choose **Finish import**. Existing destinations require replacement
+confirmation. Closing the progress window does not stop a submitted import.
+
+Read-only investigation on September 28, 2026 confirmed the reported
+`ancientgreek / TR` upload had four USFM files, 89 chapters, and 3,779 validated
+verses, with no warnings/errors and no final confirmation recorded. Its zero
+`recordsProcessed` count meant activation had not started. The source files are
+still staged; the new history action can finish this upload without re-uploading.
+
+Bible reader language selectors now list every imported Bible language,
+independently of available topic localizations. Reading URLs and profile
+preferences preserve separate Bible, topic, and menu languages. For example,
+Ancient Greek passages can be read with Arabic topic names and menus, and
+returning to the main table keeps the topic language. A Bible import does not
+create or require a matching topic language.
+
+The main table and primary reader language selectors switch menus, topics, and
+the Bible translation together when that language has topic translations.
+Menus, chapter headings, numbers, and navigation links
+follow the active route's menu language, including labels imported from the
+interface translation sheet. Covered pages and delayed profile loads cannot
+restore an older language after a selection. Browser/page navigation restores
+the returning page's language; opening or dismissing a popup does not change it.
+Selecting a Bible-only language such as Ancient Greek keeps the current topic
+and menu languages. Adding comparison translations or changing only a Bible
+version does not change the page language. Reselecting the current Bible
+language reconciles older shared links with different menu/topic languages.
+
+### Translation catalog and native language names
+
+**Add Bible Translation** offers Existing language, New language, and Standalone
+translation. Existing languages reuse their stored language name and direction;
+new languages request the name in its own spelling (for example English,
+العربية, Français, or Ἑλληνική). A standalone translation needs only its own
+name, identifier, direction, and USFM files; the server allocates an internal
+catalog identifier without creating topics or requiring language entry.
+
+Language selectors use native names regardless of the menu language. Unlisted
+languages use their administrator-provided name. Translation specifications are
+editable under the translation's pencil action, including display details,
+direction, diacritics metadata, and an optional related translation in the same
+language. Stable internal identifiers are preserved. Changing import metadata
+invalidates any earlier validation preview so a different set of specifications
+cannot accidentally publish a stale validated upload.
+
+### Membership roles and rollout
+
+The three roles are **Guest**, **Subscribed**, and **Administrator**. This is
+access administration, not payment processing. New accounts get 30 days from
+their Firebase Authentication creation time. Existing accounts before the
+persistent rollout boundary keep subscribed access; administrators retain their
+role. Admins may assign a custom guest expiry date or extend access. Calendar
+dates are inclusive in `MEMBERSHIP_TIMEZONE` (default `Asia/Beirut`); the UI shows
+the exact UTC cutoff as well.
+
+The backend checks authenticated membership for every reading route, and
+Firestore rules enforce expiry on direct Bible/topic content reads. Expired
+guests can still edit their own profile/settings and sign out. Reader caches,
+open previews, and admin controls respond to access changes; a stale admin token
+cannot override a demoted server membership. Language/version catalog metadata
+remains accessible to authenticated accounts for settings, without exposing
+nested Bible text.
+
+Server-managed records live in `memberships/{uid}`, the persistent policy in
+`membership_config/default`, and changes in `admin_membership_edits/{id}`.
+Clients cannot write these records. Membership takes precedence over legacy
+profile roles/custom claims; bootstrap administration remains available through
+`scripts/set_admin.py`.
+
+Deploy these changes together; older frontends do not send authenticated reading
+requests and must be replaced:
+
+1. Deploy the updated Flask modules and prepare the new Flutter build while
+   signups are closed during the rollout.
+2. On the deployment host, initialize the cutoff once before reopening signups:
+
+   ```sh
+   ./venv/bin/python scripts/initialize_membership.py
+   ```
+
+   Existing policy is never reset. An explicit offset-aware `--cutoff` may be
+   supplied on the first run. If the script is omitted, the first access/user-list
+   request creates the persistent boundary instead.
+3. Deploy `gospel_frontend/firestore.rules` and the updated Flutter web build,
+   then reopen signups and reload existing browser tabs.
+4. Verify a current admin, a subscribed account, an active guest, and an expired
+   guest. User lists and expiry dates should agree with `/account/access`.
+
+No live users or access roles are changed by building or running the unit tests.
 
 ## Automated checks
 

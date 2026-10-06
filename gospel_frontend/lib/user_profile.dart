@@ -29,14 +29,14 @@ class UserPreferences {
            menuLanguage ??
            defaultProfileContentLanguage,
        topicLanguage =
-           contentLanguage ??
            topicLanguage ??
            menuLanguage ??
+           contentLanguage ??
            defaultProfileTopicLanguage,
        menuLanguage =
-           contentLanguage ??
-           topicLanguage ??
            menuLanguage ??
+           topicLanguage ??
+           contentLanguage ??
            defaultProfileMenuLanguage;
 
   final String menuLanguage;
@@ -75,7 +75,21 @@ class UserPreferences {
         : defaultProfileVersion;
     final zoom = _asDouble(data['zoomLevel'] ?? legacy['zoomLevel']) ?? 1.0;
 
+    final topicLanguage = _firstNonEmpty(<dynamic>[
+      data['topicLanguage'],
+      data['preferredTopicLanguage'],
+      legacy['topicLanguage'],
+      legacy['preferredTopicLanguage'],
+      data['menuLanguage'],
+      legacy['menuLanguage'],
+    ], contentLanguage).toLowerCase();
+    final menuLanguage = _firstNonEmpty(<dynamic>[
+      data['menuLanguage'],
+      legacy['menuLanguage'],
+    ], topicLanguage).toLowerCase();
     return UserPreferences(
+      menuLanguage: menuLanguage,
+      topicLanguage: topicLanguage,
       contentLanguage: contentLanguage,
       preferredVersion: _firstNonEmpty(<dynamic>[
         data['bibleVersion'],
@@ -132,14 +146,10 @@ class UserPreferences {
     bool? showTopicNamesInChapter,
     bool? showTranslationLabels,
   }) {
-    final primaryLanguage = _firstNonEmpty(<dynamic>[
-      bibleLanguage,
-      contentLanguage,
-      topicLanguage,
-      menuLanguage,
-    ], this.contentLanguage);
     return UserPreferences(
-      contentLanguage: primaryLanguage,
+      menuLanguage: menuLanguage ?? this.menuLanguage,
+      topicLanguage: topicLanguage ?? this.topicLanguage,
+      contentLanguage: bibleLanguage ?? contentLanguage ?? this.contentLanguage,
       preferredVersion:
           bibleVersion ?? preferredVersion ?? this.preferredVersion,
       showDiacritics: showDiacritics ?? this.showDiacritics,
@@ -374,6 +384,7 @@ class UserProfileController extends ChangeNotifier {
   String? _loadedUid;
   Future<UserProfile>? _loadFuture;
   Future<void> _writeQueue = Future<void>.value();
+  int _profileRevision = 0;
 
   UserProfile? get profile => _profile;
   UserPreferences get preferences =>
@@ -392,16 +403,27 @@ class UserProfileController extends ChangeNotifier {
     if (_loadedUid != user.uid) {
       _profile = null;
       _loadFuture = null;
+      _profileRevision++;
     }
     _loadedUid = user.uid;
+    final startingRevision = _profileRevision;
     final future = _service.load(user).then((profile) async {
       if (_loadedUid != user.uid) {
         return profile;
       }
+      // A toolbar selection is applied optimistically while its remote write
+      // is pending. An older profile read must not restore the old language.
+      if (_profileRevision != startingRevision) {
+        return _profile ?? profile;
+      }
       _profile = profile;
+      _profileRevision++;
       await _syncLocalCache(profile.preferences);
+      if (_loadedUid != user.uid) {
+        return profile;
+      }
       notifyListeners();
-      return profile;
+      return _profile ?? profile;
     });
     _loadFuture = future;
     return future.whenComplete(() {
@@ -419,6 +441,7 @@ class UserProfileController extends ChangeNotifier {
     await _enqueueWrite(() => _service.save(user, sanitized));
     _loadedUid = user.uid;
     _profile = sanitized;
+    _profileRevision++;
     await _syncLocalCache(sanitized.preferences);
     notifyListeners();
   }
@@ -440,6 +463,7 @@ class UserProfileController extends ChangeNotifier {
     }
 
     _profile = currentProfile.copyWith(preferences: next);
+    _profileRevision++;
     await _syncLocalCache(next);
     notifyListeners();
     await _enqueueWrite(
@@ -454,6 +478,7 @@ class UserProfileController extends ChangeNotifier {
     _profile = null;
     _loadedUid = null;
     _loadFuture = null;
+    _profileRevision++;
     notifyListeners();
   }
 

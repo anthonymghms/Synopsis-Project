@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import app as app_module
 
@@ -63,6 +64,10 @@ class _Database:
 
 class TopicLanguageApiTests(unittest.TestCase):
     def setUp(self):
+        for target in ("app.verify_reader_authorization", "app.verify_identity"):
+            mock = patch(target, return_value={"uid": "reader"})
+            mock.start()
+            self.addCleanup(mock.stop)
         self.original_db = app_module.db
         app_module.db = _Database(
             {
@@ -188,6 +193,12 @@ class TopicLanguageApiTests(unittest.TestCase):
         payload = self.client.get("/topic-localizations/english").get_json()
         self.assertEqual(payload["language"]["interfaceTranslations"], english["interfaceTranslations"])
         self.assertEqual(payload["topics"][0]["name"], "Birth of Jesus")
+
+    def test_mutable_topic_content_does_not_cache_saved_names_or_catalog_labels(self):
+        for path in ["/harmony/topics", "/topic-languages", "/topic-localizations/english", "/topics?topicLanguage=english&language=arabic&version=Van%20Dyke", "/arabic/Van%20Dyke/topic/1?topicLanguage=english"]:
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_topic_language_is_independent_from_bible_query(self):
         response = self.client.get(

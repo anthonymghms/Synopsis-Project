@@ -1,3 +1,4 @@
+import 'account_access.dart';
 // main_scaffold.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -59,6 +60,7 @@ class MainScaffold extends StatelessWidget {
               onSelected: (value) async {
                 endAccountMenu();
                 if (value == 'logout') {
+                  accountAccess.clear();
                   UserProfileController.instance.clear();
                   await FirebaseAuth.instance.signOut();
                   if (context.mounted) {
@@ -77,8 +79,8 @@ class MainScaffold extends StatelessWidget {
                       final destination = Uri(
                         path: '/',
                         queryParameters: <String, String>{
-                          'menuLanguage': preferences.contentLanguage,
-                          'topicLanguage': preferences.contentLanguage,
+                          'menuLanguage': preferences.menuLanguage,
+                          'topicLanguage': preferences.topicLanguage,
                           'bibleLanguage': preferences.contentLanguage,
                           'language': preferences.contentLanguage,
                           'version': preferences.preferredVersion,

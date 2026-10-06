@@ -1,3 +1,4 @@
+import 'account_access.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'browser_route_link.dart';
@@ -123,6 +124,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 alignment: AlignmentDirectional.centerStart,
                                 child: OutlinedButton.icon(
                                   onPressed: () async {
+                                    accountAccess.clear();
                                     UserProfileController.instance.clear();
                                     await FirebaseAuth.instance.signOut();
                                     if (context.mounted) {

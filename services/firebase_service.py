@@ -863,6 +863,8 @@ class FirebaseImportRepository:
         related_translation: str | None,
         result: BibleParseResult,
         replace: bool,
+        standalone: bool = False,
+        preserve_language_metadata: bool = False,
         progress=None,
     ) -> dict[str, Any]:
         if self.bible_version_exists(language, version) and not replace:
@@ -918,6 +920,12 @@ class FirebaseImportRepository:
         language_ref = self.db.collection("bibles").document(language)
         versions = set(self.available_versions(language))
         versions.add(version)
+        current_language = language_ref.get()
+        current_metadata = current_language.to_dict() if current_language.exists else {}
+        if preserve_language_metadata and current_metadata:
+            language_display_name = current_metadata.get("label") or language_display_name
+            direction = current_metadata.get("direction") or direction
+        standalone = standalone or (current_metadata or {}).get("standalone") is True
         activation = self.db.batch()
         activation.set(
             language_ref,
@@ -925,6 +933,7 @@ class FirebaseImportRepository:
                 "id": language,
                 "label": language_display_name,
                 "direction": direction,
+                "standalone": standalone,
                 "active": True,
                 "versions": sorted(versions, key=str.casefold),
                 "defaultVersion": version,
@@ -942,6 +951,10 @@ class FirebaseImportRepository:
                 "active": True,
                 "activeRevision": import_id,
                 "activeBooksPath": active_path,
+                # A replacement import becomes the complete new text. Chapter
+                # edits from its predecessor must not override the new import.
+                "chapterOverrides": {},
+                "contentEditRevision": None,
                 "containsDiacritics": result.contains_diacritics,
                 "relatedTranslation": related_translation,
                 "bookCount": stats["books"],
@@ -1002,6 +1015,7 @@ class FirebaseImportRepository:
                     "id": language_ref.id,
                     "name": (data or {}).get("label", language_ref.id.title()),
                     "direction": (data or {}).get("direction", "rtl" if language_ref.id == "arabic" else "ltr"),
+                    "standalone": (data or {}).get("standalone") is True,
                     "versions": version_items,
                 }
             )

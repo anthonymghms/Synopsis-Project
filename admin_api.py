@@ -687,8 +687,12 @@ def validate_bible():
         return _error("missing_files", "Select at least one USFM file.", 400)
     if len(uploads) > 10:
         return _error("too_many_files", "This importer supports at most 10 USFM files per upload.", 400)
+    repository = FirebaseImportRepository()
     try:
-        language = _language_id(request.form.get("language"))
+        language_mode = str(request.form.get("languageMode") or "custom").strip()
+        if language_mode not in {"existing", "new", "standalone", "custom"}:
+            raise ValueError("Choose an existing language, a new language, or a standalone translation.")
+        language = f"translation_{new_import_id()[:16]}" if language_mode == "standalone" else _language_id(request.form.get("language"))
         language_display_name = _clean_text(
             request.form.get("languageDisplayName") or language.title(),
             "Language display name",
@@ -713,6 +717,29 @@ def validate_bible():
             max_length=80,
             required=False,
         ) or None
+        if language_mode == "standalone":
+            language_display_name = version_display_name
+            if related_translation:
+                raise ValueError("A standalone translation cannot relate to another translation.")
+        elif language_mode in {"existing", "new"}:
+            existing_language = repository.db.collection("bibles").document(language).get()
+            existing_topics = repository.db.collection("harmony_localizations").document(language).get()
+            has_legacy_versions = bool(repository.available_versions(language)) if not existing_language.exists else False
+            if language_mode == "existing":
+                if not existing_language.exists and not existing_topics.exists and not has_legacy_versions:
+                    raise ValueError("The selected language no longer exists. Reload the language list.")
+                catalog = (existing_language.to_dict() if existing_language.exists else existing_topics.to_dict()) or {}
+                if catalog.get("standalone") is True:
+                    raise ValueError("Choose a language rather than a standalone translation.")
+                language_display_name = str(catalog.get("label") or language_display_name)
+                direction = _direction(catalog.get("direction") or direction)
+            elif existing_language.exists or existing_topics.exists or has_legacy_versions:
+                raise ValueError("This language already exists. Choose Existing language to add its translation.")
+        if related_translation:
+            if related_translation.casefold() == version.casefold():
+                raise ValueError("A translation cannot relate to itself.")
+            if not repository.bible_version_exists(language, repository.resolve_version_id(language, related_translation)):
+                raise ValueError("The related translation must exist in the selected language.")
         declared_diacritics = str(request.form.get("containsDiacritics") or "auto").lower()
         if declared_diacritics not in {"auto", "true", "false"}:
             raise ValueError("Contains diacritics must be auto, true, or false.")
@@ -728,7 +755,6 @@ def validate_bible():
     except ValueError as exc:
         return _error("invalid_metadata", str(exc), 400)
 
-    repository = FirebaseImportRepository()
     version = repository.resolve_version_id(language, version)
     import_id = new_import_id()
     repository.create_import(
@@ -739,6 +765,8 @@ def validate_bible():
         uploaded_by=admin["uid"],
         filenames=[name for name, _ in files],
         metadata={
+            "languageMode": language_mode,
+            "standalone": language_mode == "standalone",
             "languageDisplayName": language_display_name,
             "direction": direction,
             "translationName": translation_name,
@@ -1101,6 +1129,8 @@ def _run_bible_import(import_id: str, replace: bool) -> None:
             related_translation=metadata.get("relatedTranslation"),
             result=result,
             replace=replace,
+            standalone=metadata.get("standalone") is True,
+            preserve_language_metadata=metadata.get("languageMode") == "existing",
             progress=lambda book: repository.update_import(
                 import_id, stage=f"Uploading {book}"
             ),

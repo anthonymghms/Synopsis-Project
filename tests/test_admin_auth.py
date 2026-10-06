@@ -32,10 +32,13 @@ class _Collection:
 
 
 class _Database:
-    def __init__(self, users):
+    def __init__(self, users, memberships=None):
         self._users = users
+        self._memberships = memberships or {}
 
     def collection(self, name):
+        if name == "memberships":
+            return _Collection(self._memberships)
         if name != "users":
             raise AssertionError(name)
         return _Collection(self._users)
@@ -84,6 +87,19 @@ class AdminAuthorizationTests(unittest.TestCase):
                 db=_Database({"normal": {"isAdmin": True}}),
             )
         self.assertEqual(raised.exception.status, 403)
+
+    def test_server_membership_demotion_overrides_stale_admin_claims_and_profile(self):
+        for role in ("guest", "subscribed", "invalid"):
+            with self.assertRaises(AdminAuthorizationError):
+                verify_admin_authorization(
+                    "Bearer token", verify_token=lambda token, check_revoked: {"uid": "admin-user", "admin": True},
+                    db=_Database({"admin-user": {"role": "admin"}}, {"admin-user": {"role": role}}),
+                )
+
+    def test_server_membership_promotion_does_not_require_new_token_claims(self):
+        result = verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "new-admin"},
+                                            db=_Database({}, {"new-admin": {"role": "admin"}}))
+        self.assertEqual(result["source"], "membership")
 
 
 if __name__ == "__main__":

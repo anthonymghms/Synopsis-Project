@@ -23,7 +23,7 @@ EMAIL = "profile-owner@example.com"
 RULES = Path(__file__).resolve().parents[1] / "gospel_frontend/firestore.rules"
 
 
-def _token(uid=UID):
+def _token(uid=UID, **claims):
     def encode(data):
         return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
 
@@ -38,6 +38,7 @@ def _token(uid=UID):
         "exp": now + 3600,
         "auth_time": now,
         "firebase": {"sign_in_provider": "password"},
+        **claims,
     }
     return f'{encode({"alg": "none", "typ": "JWT"})}.{encode(payload)}.'
 

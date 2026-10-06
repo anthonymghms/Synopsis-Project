@@ -5,12 +5,17 @@ import 'package:flutter/material.dart';
 
 import 'admin_access.dart';
 import 'admin_api_client.dart';
+import 'admin_users_panel.dart';
+import 'native_language_names.dart';
 import 'admin_file_picker.dart';
 import 'catalog_events.dart';
 import 'user_profile.dart';
 import 'csv_download.dart';
 
 part 'interface_import_wizard.dart';
+part 'admin_content_editors.dart';
+part 'admin_import_details.dart';
+part 'bible_import_wizard.dart';
 
 class AdminPortal extends StatefulWidget {
   const AdminPortal({
@@ -97,6 +102,7 @@ class _AdminPortalState extends State<AdminPortal> {
         arabic: _arabic,
         onCompleted: _importCompleted,
         filePicker: widget.filePicker,
+        maxUploadBytes: _maxUploadBytes,
       ),
     );
   }
@@ -114,6 +120,41 @@ class _AdminPortalState extends State<AdminPortal> {
         filePicker: widget.filePicker,
       ),
     );
+  }
+
+  Future<void> _openEditor(String language, [String? version]) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => version == null
+          ? TopicContentEditor(
+              client: _client,
+              arabic: _arabic,
+              language: language,
+              onSaved: _importCompleted,
+            )
+          : BibleContentEditor(
+              client: _client,
+              arabic: _arabic,
+              language: language,
+              version: version,
+              onSaved: _importCompleted,
+            ),
+    );
+  }
+
+  Future<void> _openImport(Map<String, dynamic> record) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ImportDetailsDialog(
+        client: _client,
+        arabic: _arabic,
+        importId: record['id'].toString(),
+        onCompleted: _importCompleted,
+      ),
+    );
+    _refresh();
   }
 
   @override
@@ -254,6 +295,7 @@ class _AdminPortalState extends State<AdminPortal> {
     _Destination(Icons.menu_book_outlined, labels.bibles),
     _Destination(Icons.table_chart_outlined, labels.topics),
     _Destination(Icons.history, labels.history),
+    _Destination(Icons.people_outline, labels.t('Users', 'المستخدمون')),
   ];
 
   Widget _sectionContent(Map<String, dynamic> overview, _AdminLabels labels) {
@@ -263,6 +305,7 @@ class _AdminPortalState extends State<AdminPortal> {
           data: _listOfMaps(overview['bibleLanguages']),
           labels: labels,
           onAdd: _openBible,
+          onEdit: (language, version) => _openEditor(language, version),
         );
       case 2:
         return _TopicList(
@@ -275,12 +318,17 @@ class _AdminPortalState extends State<AdminPortal> {
           onAdd: _openTopics,
           onUpdateHarmony: _openHarmony,
           onInterfaceTranslations: _openInterfaceTranslations,
+          onEdit: (language) => _openEditor(language),
         );
       case 3:
         return _HistoryList(
           data: _listOfMaps(overview['recentImports']),
           labels: labels,
+          onOpen: _openImport,
+          client: _client,
         );
+      case 4:
+        return AdminUsersPanel(client: _client, arabic: _arabic);
       default:
         return _Dashboard(
           overview: overview,
@@ -288,6 +336,7 @@ class _AdminPortalState extends State<AdminPortal> {
           addBible: _openBible,
           addTopics: _openTopics,
           updateHarmony: _openHarmony,
+          onOpenImport: _openImport,
         );
     }
   }
@@ -313,6 +362,7 @@ class _Dashboard extends StatelessWidget {
     required this.addBible,
     required this.addTopics,
     required this.updateHarmony,
+    required this.onOpenImport,
   });
 
   final Map<String, dynamic> overview;
@@ -320,6 +370,7 @@ class _Dashboard extends StatelessWidget {
   final VoidCallback addBible;
   final VoidCallback addTopics;
   final VoidCallback updateHarmony;
+  final ValueChanged<Map<String, dynamic>> onOpenImport;
 
   @override
   Widget build(BuildContext context) {
@@ -378,6 +429,7 @@ class _Dashboard extends StatelessWidget {
         _HistoryCards(
           data: _listOfMaps(overview['recentImports']),
           labels: labels,
+          onOpen: onOpenImport,
         ),
       ],
     );
@@ -413,10 +465,12 @@ class _BibleList extends StatelessWidget {
     required this.data,
     required this.labels,
     required this.onAdd,
+    required this.onEdit,
   });
   final List<Map<String, dynamic>> data;
   final _AdminLabels labels;
   final VoidCallback onAdd;
+  final void Function(String language, String version) onEdit;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -432,7 +486,10 @@ class _BibleList extends StatelessWidget {
           child: ExpansionTile(
             initiallyExpanded: true,
             title: Text(
-              language['name']?.toString() ?? language['id'].toString(),
+              nativeLanguageName(
+                language['id'].toString(),
+                language['name']?.toString() ?? language['id'].toString(),
+              ),
             ),
             subtitle: Text(
               '${_listOfMaps(language['versions']).length} ${labels.versions.toLowerCase()}',
@@ -452,9 +509,20 @@ class _BibleList extends StatelessWidget {
                         '${version['verses']} ${labels.verses.toLowerCase()}',
                     ].join(' · '),
                   ),
-                  trailing: _StatusChip(
-                    active: version['active'] != false,
-                    labels: labels,
+                  trailing: IconButton(
+                    key: ValueKey(
+                      'edit-bible-${language['id']}-${version['id']}',
+                    ),
+                    tooltip: labels.t('Edit translation', 'تعديل الترجمة'),
+                    onPressed: () => onEdit(
+                      language['id'].toString(),
+                      version['id'].toString(),
+                    ),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                  onTap: () => onEdit(
+                    language['id'].toString(),
+                    version['id'].toString(),
                   ),
                 ),
             ],
@@ -473,12 +541,14 @@ class _TopicList extends StatelessWidget {
     required this.onAdd,
     required this.onUpdateHarmony,
     required this.onInterfaceTranslations,
+    required this.onEdit,
   });
   final List<Map<String, dynamic>> data;
   final Map<String, dynamic> harmony;
   final List<Map<String, dynamic>> legacyDatasets;
   final _AdminLabels labels;
   final VoidCallback onAdd;
+  final ValueChanged<String> onEdit;
   final VoidCallback onUpdateHarmony;
   final void Function(String language, String label) onInterfaceTranslations;
 
@@ -531,7 +601,12 @@ class _TopicList extends StatelessWidget {
             children: [
               ListTile(
                 leading: const Icon(Icons.table_chart_outlined),
-                title: Text(item['name']?.toString() ?? item['id'].toString()),
+                title: Text(
+                  nativeLanguageName(
+                    item['id'].toString(),
+                    item['name']?.toString() ?? item['id'].toString(),
+                  ),
+                ),
                 subtitle: Text(
                   '${item['topics'] ?? 0} / ${harmony['canonicalTopicCount'] ?? 0} ${labels.topicRecords.toLowerCase()} · '
                   '${(item['direction'] ?? 'ltr').toString().toUpperCase()}',
@@ -548,6 +623,17 @@ class _TopicList extends StatelessWidget {
                   runSpacing: 8,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
+                    FilledButton.tonalIcon(
+                      key: ValueKey('edit-topics-${item['id']}'),
+                      onPressed: () => onEdit(item['id'].toString()),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: Text(
+                        labels.t(
+                          'Edit topics & language',
+                          'تعديل المواضيع واللغة',
+                        ),
+                      ),
+                    ),
                     OutlinedButton.icon(
                       key: ValueKey('interface-translations-${item['id']}'),
                       onPressed: () => onInterfaceTranslations(
@@ -581,8 +667,19 @@ class _TopicList extends StatelessWidget {
               for (final item in legacyDatasets)
                 ListTile(
                   dense: true,
+                  trailing: IconButton(
+                    tooltip: labels.t(
+                      'Edit topics & language',
+                      'تعديل المواضيع واللغة',
+                    ),
+                    onPressed: () => onEdit(item['id'].toString()),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
                   title: Text(
-                    item['name']?.toString() ?? item['id'].toString(),
+                    nativeLanguageName(
+                      item['id'].toString(),
+                      item['name']?.toString() ?? item['id'].toString(),
+                    ),
                   ),
                   subtitle: Text(
                     '${item['topics'] ?? 0} ${labels.topicRecords.toLowerCase()}',
@@ -639,54 +736,6 @@ class _SectionHeader extends StatelessWidget {
       ],
     ),
   );
-}
-
-class _HistoryList extends StatelessWidget {
-  const _HistoryList({required this.data, required this.labels});
-  final List<Map<String, dynamic>> data;
-  final _AdminLabels labels;
-
-  @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(24),
-    children: [
-      Text(labels.history, style: Theme.of(context).textTheme.headlineMedium),
-      const SizedBox(height: 16),
-      _HistoryCards(data: data, labels: labels),
-    ],
-  );
-}
-
-class _HistoryCards extends StatelessWidget {
-  const _HistoryCards({required this.data, required this.labels});
-  final List<Map<String, dynamic>> data;
-  final _AdminLabels labels;
-
-  @override
-  Widget build(BuildContext context) {
-    if (data.isEmpty) return Text(labels.noImports);
-    return Column(
-      children: [
-        for (final item in data)
-          Card(
-            child: ListTile(
-              leading: Icon(
-                item['type'] == 'bible' ? Icons.menu_book : Icons.table_chart,
-              ),
-              title: Text(
-                item['type'] == 'bible'
-                    ? '${item['language']} · ${item['version'] ?? ''}'
-                    : item['language']?.toString() ?? '',
-              ),
-              subtitle: Text(
-                '${item['stage'] ?? item['status'] ?? ''}${item['recordsProcessed'] != null ? ' · ${item['recordsProcessed']}' : ''}',
-              ),
-              trailing: Chip(label: Text(item['status']?.toString() ?? '')),
-            ),
-          ),
-      ],
-    );
-  }
 }
 
 class _AdminError extends StatelessWidget {
@@ -1115,331 +1164,6 @@ class _TopicImportWizardState extends State<TopicImportWizard> {
   }
 }
 
-class BibleImportWizard extends StatefulWidget {
-  const BibleImportWizard({
-    super.key,
-    required this.client,
-    required this.arabic,
-    required this.onCompleted,
-    this.filePicker = const PlatformAdminFilePicker(),
-  });
-  final AdminClient client;
-  final bool arabic;
-  final VoidCallback onCompleted;
-  final AdminFilePicker filePicker;
-
-  @override
-  State<BibleImportWizard> createState() => _BibleImportWizardState();
-}
-
-class _BibleImportWizardState extends State<BibleImportWizard> {
-  final _formKey = GlobalKey<FormState>();
-  final _language = TextEditingController(text: 'english');
-  final _languageName = TextEditingController(text: 'English');
-  final _translation = TextEditingController();
-  final _versionId = TextEditingController();
-  final _displayName = TextEditingController();
-  final _description = TextEditingController();
-  final _related = TextEditingController();
-  String _direction = 'ltr';
-  String _diacritics = 'auto';
-  List<AdminUploadFile> _files = [];
-  Map<String, dynamic>? _validation;
-  Map<String, dynamic>? _progress;
-  bool _busy = false;
-  bool _replace = false;
-  String? _error;
-
-  _AdminLabels get labels => _AdminLabels(widget.arabic);
-
-  @override
-  void dispose() {
-    for (final controller in [
-      _language,
-      _languageName,
-      _translation,
-      _versionId,
-      _displayName,
-      _description,
-      _related,
-    ]) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  Future<void> _pick() async {
-    try {
-      final files = await widget.filePicker.pickFiles(
-        allowedExtensions: const ['usfm'],
-        allowMultiple: true,
-      );
-      if (!mounted || files == null) return;
-      final validFiles = files
-          .where(
-            (file) =>
-                file.name.toLowerCase().endsWith('.usfm') && file.size > 0,
-          )
-          .take(10)
-          .toList();
-      if (validFiles.isEmpty || validFiles.length != files.length) {
-        setState(() => _error = labels.selectUsfm);
-        return;
-      }
-      setState(() {
-        _files = validFiles;
-        _validation = null;
-        _progress = null;
-        _error = null;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _error = labels.unableToOpenFile);
-    }
-  }
-
-  Future<void> _acceptDroppedFiles(DropDoneDetails details) async {
-    final candidates = details.files
-        .where((file) => file.name.toLowerCase().endsWith('.usfm'))
-        .toList();
-    if (candidates.isEmpty) {
-      setState(() => _error = labels.selectUsfm);
-      return;
-    }
-    final files = <AdminUploadFile>[];
-    for (final file in candidates.take(10)) {
-      files.add(
-        AdminUploadFile(name: file.name, bytes: await file.readAsBytes()),
-      );
-    }
-    if (!mounted) return;
-    setState(() {
-      _files = files;
-      _validation = null;
-      _progress = null;
-      _error = null;
-    });
-  }
-
-  Future<void> _validate() async {
-    if (!_formKey.currentState!.validate() || _files.isEmpty) {
-      setState(() => _error = labels.selectUsfm);
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final response = await widget.client.upload(
-        '/admin/bibles/validate',
-        fields: <String, String>{
-          'language': _language.text.trim(),
-          'languageDisplayName': _languageName.text.trim(),
-          'direction': _direction,
-          'translationName': _translation.text.trim(),
-          'versionId': _versionId.text.trim(),
-          'versionDisplayName': _displayName.text.trim(),
-          'description': _description.text.trim(),
-          'relatedTranslation': _related.text.trim(),
-          'containsDiacritics': _diacritics,
-        },
-        files: _files,
-        fileField: 'files',
-      );
-      if (mounted) setState(() => _validation = response);
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _import() async {
-    final validation = _validation;
-    if (validation == null || validation['valid'] != true) return;
-    if (validation['collision'] == true && !_replace) {
-      setState(() => _error = labels.replaceRequired);
-      return;
-    }
-    final confirmed = await _confirmImport(
-      context,
-      labels,
-      validation['collision'] == true,
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.client.postJson('/admin/bibles/import', <String, dynamic>{
-        'importId': validation['importId'],
-        'confirm': true,
-        'replace': _replace,
-      });
-      await _poll(validation['importId'].toString());
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _poll(String importId) async {
-    while (mounted) {
-      final response = await widget.client.getJson('/admin/imports/$importId');
-      final record = Map<String, dynamic>.from(response['import'] as Map);
-      setState(() => _progress = record);
-      final status = record['status']?.toString();
-      if (status == 'completed') {
-        widget.onCompleted();
-        return;
-      }
-      if (status == 'failed') {
-        final errors = _listOfMaps(record['errors']);
-        throw AdminApiException(
-          errors.isEmpty
-              ? labels.importFailed
-              : errors.first['message'].toString(),
-        );
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _WizardDialog(
-      title: labels.addBible,
-      closeLabel: labels.close,
-      busy: _busy,
-      child: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            _StepTitle(number: 1, title: labels.language),
-            _metadataFields(
-              _language,
-              _languageName,
-              labels,
-              (value) => setState(() => _direction = value),
-              _direction,
-            ),
-            const SizedBox(height: 20),
-            _StepTitle(number: 2, title: labels.translationMetadata),
-            TextFormField(
-              key: const ValueKey<String>('translation-name'),
-              controller: _translation,
-              decoration: InputDecoration(labelText: labels.translationName),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? labels.required
-                  : null,
-              onChanged: (value) {
-                if (_displayName.text.isEmpty) _displayName.text = value;
-                if (_versionId.text.isEmpty) {
-                  _versionId.text = value
-                      .toLowerCase()
-                      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-                      .replaceAll(RegExp(r'^_|_$'), '');
-                }
-              },
-            ),
-            TextFormField(
-              controller: _versionId,
-              decoration: InputDecoration(labelText: labels.internalKey),
-            ),
-            TextFormField(
-              controller: _displayName,
-              decoration: InputDecoration(labelText: labels.displayName),
-            ),
-            TextFormField(
-              controller: _description,
-              maxLines: 2,
-              decoration: InputDecoration(labelText: labels.description),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _diacritics,
-              decoration: InputDecoration(labelText: labels.diacritics),
-              items: [
-                DropdownMenuItem(
-                  value: 'auto',
-                  child: Text(labels.detectAutomatically),
-                ),
-                DropdownMenuItem(value: 'true', child: Text(labels.yes)),
-                DropdownMenuItem(value: 'false', child: Text(labels.no)),
-              ],
-              onChanged: (value) =>
-                  setState(() => _diacritics = value ?? 'auto'),
-            ),
-            TextFormField(
-              controller: _related,
-              decoration: InputDecoration(labelText: labels.relatedTranslation),
-            ),
-            const SizedBox(height: 20),
-            _StepTitle(number: 3, title: labels.uploadUsfm),
-            Text(labels.usfmFormat),
-            const SizedBox(height: 8),
-            DropTarget(
-              onDragDone: _busy ? null : _acceptDroppedFiles,
-              child: _UploadDropSurface(
-                message: _files.isEmpty
-                    ? labels.dropUsfm
-                    : labels.filesSelected(_files.length),
-                buttonLabel: labels.selectUsfm,
-                onPressed: _busy ? null : _pick,
-              ),
-            ),
-            if (_files.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(_files.map((file) => file.name).join(', ')),
-              ),
-            const SizedBox(height: 20),
-            _StepTitle(number: 4, title: labels.validatePreview),
-            FilledButton.icon(
-              key: const ValueKey<String>('validate-bible-upload'),
-              onPressed: _busy ? null : _validate,
-              icon: const Icon(Icons.fact_check_outlined),
-              label: Text(labels.validate),
-            ),
-            if (_error != null) _InlineError(_error!),
-            if (_validation != null) ...[
-              const SizedBox(height: 16),
-              _ValidationSummary(data: _validation!, labels: labels),
-              _BiblePreview(
-                data: _listOfMaps(_validation!['preview']),
-                labels: labels,
-              ),
-              if (_validation!['collision'] == true)
-                CheckboxListTile(
-                  value: _replace,
-                  onChanged: _busy
-                      ? null
-                      : (value) => setState(() => _replace = value == true),
-                  title: Text(labels.replaceExisting),
-                  subtitle: Text(labels.replaceWarning),
-                ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                key: const ValueKey<String>('import-bible-upload'),
-                onPressed: _busy || _validation!['valid'] != true
-                    ? null
-                    : _import,
-                icon: const Icon(Icons.cloud_upload_outlined),
-                label: Text(labels.importBible),
-              ),
-            ],
-            if (_progress != null)
-              _ProgressCard(data: _progress!, labels: labels),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 Widget _metadataFields(
   TextEditingController language,
   TextEditingController displayName,
@@ -1464,13 +1188,19 @@ Widget _metadataFields(
     TextFormField(
       key: const ValueKey<String>('language-display-name'),
       controller: displayName,
-      decoration: InputDecoration(labelText: labels.displayName),
+      decoration: InputDecoration(
+        labelText: labels.t(
+          'Language name (native spelling)',
+          'اسم اللغة بلغتها الأصلية',
+        ),
+      ),
       autovalidateMode: AutovalidateMode.onUserInteraction,
       validator: (value) =>
           value == null || value.trim().isEmpty ? labels.required : null,
       onChanged: (_) => onChanged?.call(),
     ),
     DropdownButtonFormField<String>(
+      isExpanded: true,
       initialValue: direction,
       decoration: InputDecoration(labelText: labels.direction),
       items: [
@@ -1904,21 +1634,26 @@ Future<bool?> _confirmImport(
   bool replacement,
 ) => showDialog<bool>(
   context: context,
-  builder: (context) => AlertDialog(
-    title: Text(replacement ? labels.confirmReplacement : labels.confirmImport),
-    content: Text(
-      replacement ? labels.replaceWarning : labels.confirmImportMessage,
+  builder: (context) => Directionality(
+    textDirection: labels.arabic ? TextDirection.rtl : TextDirection.ltr,
+    child: AlertDialog(
+      title: Text(
+        replacement ? labels.confirmReplacement : labels.confirmImport,
+      ),
+      content: Text(
+        replacement ? labels.replaceWarning : labels.confirmImportMessage,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(labels.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(replacement ? labels.replace : labels.importAction),
+        ),
+      ],
     ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.of(context).pop(false),
-        child: Text(labels.cancel),
-      ),
-      FilledButton(
-        onPressed: () => Navigator.of(context).pop(true),
-        child: Text(replacement ? labels.replace : labels.importAction),
-      ),
-    ],
   ),
 );
 

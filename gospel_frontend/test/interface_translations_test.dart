@@ -4,10 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:gospel_frontend/main.dart';
+import 'package:gospel_frontend/account_access.dart';
 import 'package:gospel_frontend/profile_editor.dart';
 import 'package:gospel_frontend/topic_language_catalog.dart';
 
 void main() {
+  setUp(() {
+    final previous = accountAccess;
+    accountAccess = AccountAccessController(
+      tokenProvider: () async => 'test-token',
+    );
+    addTearDown(() {
+      accountAccess.dispose();
+      accountAccess = previous;
+    });
+  });
   tearDown(() async {
     registerInterfaceTranslations('french', {});
     await loadPrimaryLanguageCatalogs(

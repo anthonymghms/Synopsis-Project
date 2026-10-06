@@ -15,7 +15,7 @@ void main() {
     expect(true, isTrue);
   });
 
-  test('language names follow the menu locale, not the content locale', () {
+  test('language names retain their native form across menu locales', () {
     final english = kBaseLanguageOptions.firstWhere(
       (option) => option.code == 'english',
     );
@@ -25,7 +25,7 @@ void main() {
 
     expect(
       localizedLanguageNameForMenu(arabic, english.code, english.label),
-      'الإنجليزية',
+      'English',
     );
     expect(
       localizedLanguageNameForMenu(arabic, arabic.code, arabic.label),
@@ -33,7 +33,7 @@ void main() {
     );
     expect(
       localizedLanguageNameForMenu(english, arabic.code, arabic.label),
-      'Arabic',
+      'العربية',
     );
     expect(
       english.ui.showTranslationLabels,
@@ -1470,7 +1470,7 @@ void main() {
     expect(topicLink.openInNewTab, isFalse);
   });
 
-  testWidgets('reference links mirror the primary language in every field', (
+  testWidgets('reference links preserve the actual menu and topic context', (
     tester,
   ) async {
     const reference = GospelReference(
@@ -1514,7 +1514,7 @@ void main() {
           matching: find.byType(BrowserRouteLink),
         ),
       );
-      expect(link.uri?.queryParameters['menuLanguage'], bibleLanguage.code);
+      expect(link.uri?.queryParameters['menuLanguage'], 'english');
       expect(link.uri?.queryParameters['topicLanguage'], bibleLanguage.code);
       expect(
         link.uri?.queryParameters['bibleLanguage'],
@@ -1548,6 +1548,13 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 1));
     expect(find.text('Click to read in chapter'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.text('Click to read in chapter'))
+          .style
+          ?.decoration,
+      TextDecoration.none,
+    );
 
     final referenceLinks = tester
         .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
@@ -1626,7 +1633,7 @@ void main() {
     await tester.tap(find.byTooltip('Language: English'));
     await tester.pumpAndSettle();
     expect(BrowserRouteLinkNavigation.isBlocked, isTrue);
-    await tester.tap(find.text('Arabic').last);
+    await tester.tap(find.text('العربية').last);
     await tester.pumpAndSettle();
 
     expect(selectedLanguage, isNull);
@@ -1643,36 +1650,37 @@ void main() {
     expect(translationChanges, 1);
   });
 
-  testWidgets('language selector caption and names follow Arabic UI', (
-    tester,
-  ) async {
-    MenuLanguageController.instance.update('arabic');
+  testWidgets(
+    'language selector localizes its caption but preserves native names',
+    (tester) async {
+      MenuLanguageController.instance.update('arabic');
 
-    await tester.pumpWidget(
-      MenuLanguageScope(
-        notifier: MenuLanguageController.instance.notifier,
-        child: MaterialApp(
-          home: Scaffold(
-            body: AppToolbar(
-              language: kBaseLanguageOptions.last,
-              version: 'Van Dyke-',
-              languages: kBaseLanguageOptions,
-              onLanguageChanged: (_) {},
-              onVersionChanged: (_) {},
+      await tester.pumpWidget(
+        MenuLanguageScope(
+          notifier: MenuLanguageController.instance.notifier,
+          child: MaterialApp(
+            home: Scaffold(
+              body: AppToolbar(
+                language: kBaseLanguageOptions.last,
+                version: 'Van Dyke-',
+                languages: kBaseLanguageOptions,
+                onLanguageChanged: (_) {},
+                onVersionChanged: (_) {},
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(find.byTooltip('اللغة: العربية'), findsOneWidget);
-    await tester.tap(find.byTooltip('اللغة: العربية'));
-    await tester.pumpAndSettle();
-    expect(find.text('الإنجليزية'), findsOneWidget);
-    expect(find.text('العربية'), findsWidgets);
+      expect(find.byTooltip('اللغة: العربية'), findsOneWidget);
+      await tester.tap(find.byTooltip('اللغة: العربية'));
+      await tester.pumpAndSettle();
+      expect(find.text('English'), findsOneWidget);
+      expect(find.text('العربية'), findsWidgets);
 
-    MenuLanguageController.instance.update('english');
-  });
+      MenuLanguageController.instance.update('english');
+    },
+  );
 
   testWidgets('desktop configuration dialogs drag and stay in the viewport', (
     tester,

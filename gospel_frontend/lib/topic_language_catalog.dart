@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'interface_translations.dart';
+import 'native_language_names.dart';
+import 'account_access.dart';
 
 const topicLanguageApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -68,7 +70,7 @@ class TopicLanguageOption {
     final subjects = (json['subjectsLabel'] ?? '').toString().trim();
     return TopicLanguageOption(
       code: code.toLowerCase(),
-      label: (json['label'] ?? code).toString().trim(),
+      label: nativeLanguageName(code, (json['label'] ?? code).toString()),
       direction: direction,
       gospelNames: gospelNames,
       subjectsLabel: subjects.isNotEmpty ? subjects : labels.subjectsHeader,
@@ -122,7 +124,10 @@ class TopicLanguageCatalog {
   final String baseUrl;
 
   Future<List<TopicLanguageOption>> load() async {
-    final response = await _client.get(Uri.parse('$baseUrl/topic-languages'));
+    final response = await accountAccess.authenticatedGet(
+      Uri.parse('$baseUrl/topic-languages'),
+      client: _client,
+    );
     if (response.statusCode != 200) {
       throw StateError(
         'Topic-language catalog returned ${response.statusCode}.',

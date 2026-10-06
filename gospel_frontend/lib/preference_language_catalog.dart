@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import 'topic_language_catalog.dart';
+import 'native_language_names.dart';
 
 class PreferenceVersionOption {
   const PreferenceVersionOption({required this.id, required this.label});
@@ -17,6 +18,7 @@ class PreferenceLanguageOption {
     required this.direction,
     required this.defaultVersion,
     required this.versions,
+    this.supportsTopics = true,
   });
 
   final String code;
@@ -24,6 +26,7 @@ class PreferenceLanguageOption {
   final TextDirection direction;
   final String defaultVersion;
   final List<PreferenceVersionOption> versions;
+  final bool supportsTopics;
 
   bool get isRtl => direction == TextDirection.rtl;
 
@@ -97,6 +100,27 @@ Future<List<PreferenceLanguageOption>> loadPrimaryPreferenceLanguages() async {
     catalogs[0] as List<PreferenceLanguageOption>,
     topicLanguages: catalogs[1] as List<TopicLanguageOption>,
   );
+}
+
+Future<List<PreferenceLanguageOption>> loadReaderPreferenceLanguages() async {
+  final catalogs = await Future.wait<Object>([
+    PreferenceLanguageCatalog().load(),
+    TopicLanguageCatalog().load(),
+  ]);
+  final topicCodes = primaryTopicLanguageCodes(
+    catalogs[1] as List<TopicLanguageOption>,
+  );
+  return [
+    for (final language in catalogs[0] as List<PreferenceLanguageOption>)
+      PreferenceLanguageOption(
+        code: language.code,
+        label: language.label,
+        direction: language.direction,
+        defaultVersion: language.defaultVersion,
+        versions: language.versions,
+        supportsTopics: topicCodes.contains(language.code.toLowerCase()),
+      ),
+  ];
 }
 
 class PreferenceLanguageCatalog {
@@ -223,9 +247,12 @@ class PreferenceLanguageCatalog {
       options.add(
         PreferenceLanguageOption(
           code: code,
-          label: data['label']?.toString().trim().isNotEmpty == true
-              ? data['label'].toString().trim()
-              : (bundled?.label ?? _titleCase(languageId)),
+          label: nativeLanguageName(
+            code,
+            data['label']?.toString() ??
+                bundled?.label ??
+                _titleCase(languageId),
+          ),
           direction: direction,
           defaultVersion: defaultVersion,
           versions: versions,

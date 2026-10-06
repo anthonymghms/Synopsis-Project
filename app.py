@@ -6,6 +6,12 @@ from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from admin_api import admin_api
+from admin_content_api import admin_content_api
+from admin_users_api import admin_users_api
+from services.admin_auth import AdminAuthorizationError, verify_identity
+from services.membership_service import verify_reader_authorization
+from services.admin_content_service import bible_verses_collection
+from services.bible_text_service import extract_verse_text
 from services.firebase_service import firestore_client
 from services.interface_translation_service import clean_translations, translation_status
 
@@ -17,6 +23,8 @@ app.config["MAX_CONTENT_LENGTH"] = int(
     os.environ.get("MAX_ADMIN_UPLOAD_BYTES", str(32 * 1024 * 1024))
 )
 app.register_blueprint(admin_api)
+app.register_blueprint(admin_content_api)
+app.register_blueprint(admin_users_api)
 
 
 def _cors_origins():
@@ -56,6 +64,27 @@ def _json_response(payload, status=200, cache_seconds=300):
     else:
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.before_request
+def enforce_reader_access():
+    if request.method == "OPTIONS":
+        return None
+    if request.endpoint == "get_topic_languages":
+        # Catalog metadata stays available to expired users for their settings.
+        verify_identity(request.headers.get("Authorization"))
+    elif request.endpoint in {
+        "get_topics", "get_topic", "get_verse", "get_chapter",
+        "get_canonical_harmony_topics", "get_topic_localization",
+    }:
+        verify_reader_authorization(request.headers.get("Authorization"))
+    return None
+
+
+@app.errorhandler(AdminAuthorizationError)
+def reader_access_error(error):
+    return _json_response({"error": {"code": error.code, "message": error.message}},
+                          status=error.status, cache_seconds=0)
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -480,26 +509,7 @@ def _resolve_book_document_id(language: str, version: str, book: str):
 
 
 def _extract_verse_text(data):
-    if not isinstance(data, dict):
-        return ""
-
-    text = (data.get("text") or "").strip()
-    if text:
-        return text
-
-    blocks_before = data.get("blocks_before")
-    if isinstance(blocks_before, list):
-        text_parts = []
-        for block in blocks_before:
-            if not isinstance(block, dict):
-                continue
-            part = (block.get("text") or "").strip()
-            if part:
-                text_parts.append(part)
-        if text_parts:
-            return " ".join(text_parts).strip()
-
-    return ""
+    return extract_verse_text(data)
 
 
 def _build_verse_payload(verse_identifier, data):
@@ -515,11 +525,7 @@ def _build_verse_payload(verse_identifier, data):
 
 def _load_single_verse(language, version, book_doc_id, chapter, verse_identifier):
     verse_ref = (
-        _bible_books_collection(language, version)
-        .document(book_doc_id)
-        .collection("chapters")
-        .document(str(chapter))
-        .collection("verses")
+        bible_verses_collection(db, language, version, book_doc_id, str(chapter))
         .document(str(verse_identifier))
     )
     verse_doc = verse_ref.get()
@@ -582,13 +588,7 @@ def get_chapter():
             status=404,
         )
 
-    verses_collection = (
-        _bible_books_collection(language, version)
-        .document(book)
-        .collection("chapters")
-        .document(str(chapter))
-        .collection("verses")
-    )
+    verses_collection = bible_verses_collection(db, language, version, book, str(chapter))
 
     verses = []
     for doc in verses_collection.stream():
@@ -882,7 +882,7 @@ def get_canonical_harmony_topics():
         )
     return _json_response(
         {"source": source, "topics": _canonical_topic_payloads(topics_ref)},
-        cache_seconds=60,
+        cache_seconds=0,
     )
 
 
@@ -900,7 +900,7 @@ def get_topic_languages():
             )
             languages.append(metadata)
     languages.sort(key=lambda item: (item["label"].casefold(), item["id"]))
-    return _json_response({"languages": languages}, cache_seconds=60)
+    return _json_response({"languages": languages}, cache_seconds=0)
 
 
 @app.route("/topic-localizations/<language>", methods=["GET"])
@@ -937,7 +937,7 @@ def get_topic_localization(language):
     metadata["canonicalTopicCount"] = canonical_count
     metadata["complete"] = canonical_count > 0 and len(topics) == canonical_count
     return _json_response(
-        {"language": metadata, "topics": topics}, cache_seconds=60
+        {"language": metadata, "topics": topics}, cache_seconds=0
     )
 
 
