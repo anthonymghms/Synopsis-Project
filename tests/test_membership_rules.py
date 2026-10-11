@@ -20,7 +20,7 @@ class MembershipRulesTests(unittest.TestCase):
         profile_rules.ProfileRulesTests.setUp(self)
 
     def write(self, path, data, *, admin=False, token=None):
-        fields = {key: ({"timestampValue": value} if key == "guestExpiresAt" and value is not None else _value(value))
+        fields = {key: ({"timestampValue": value} if key in {"guestExpiresAt", "subscriptionExpiresAt"} and value is not None else _value(value))
                   for key, value in data.items()}
         return requests.post(f"{self.base}/v1/{DATABASE}/documents:commit", timeout=10,
                              headers={"Authorization": "Bearer " + ("owner" if admin else token or _token())},
@@ -76,3 +76,32 @@ class MembershipRulesTests(unittest.TestCase):
         self.write("membership_config/default", {"policyVersion": 1}, admin=True)
         self.assertEqual(self.read("memberships/other").status_code, 403)
         self.assertEqual(self.read("membership_config/default", token=_token(admin=True)).status_code, 403)
+
+    def test_timed_subscription_expiry_and_permanent_compatibility(self):
+        path = "references/english/topics/1"
+        self.write(path, {"label": "Topic"}, admin=True)
+        for member, expected in [
+            ({"role": "subscribed"}, 200),
+            ({"role": "subscribed", "subscriptionPermanent": True}, 200),
+            ({"role": "subscribed", "subscriptionPermanent": False, "subscriptionExpiresAt": "2099-01-01T00:00:00Z"}, 200),
+            ({"role": "subscribed", "subscriptionPermanent": False, "subscriptionExpiresAt": "2000-01-01T00:00:00Z"}, 403),
+            ({"role": "subscribed", "subscriptionPermanent": False}, 403),
+        ]:
+            self.assertEqual(self.write(f"memberships/{UID}", member, admin=True).status_code, 200)
+            self.assertEqual(self.read(path).status_code, expected)
+
+    def test_suspended_and_terminated_admins_lose_direct_content_and_audit_access(self):
+        self.write("references/english/topics/1", {"label": "Topic"}, admin=True)
+        self.write("admin_imports/private", {"stage": "Ready"}, admin=True)
+        for status in ["suspended", "terminated", "deleting", "deleted"]:
+            self.write(f"memberships/{UID}", {"role": "admin", "accountStatus": status}, admin=True)
+            self.assertEqual(self.read("references/english/topics/1", token=_token(admin=True)).status_code, 403)
+            self.assertEqual(self.read("admin_imports/private", token=_token(admin=True)).status_code, 403)
+
+    def test_delete_tombstone_blocks_profile_recreation_and_activity_is_backend_only(self):
+        self.write(f"memberships/{UID}", {"role": "guest", "accountStatus": "deleted"}, admin=True)
+        self.assertEqual(profile_rules.ProfileRulesTests.write(self, profile_rules._profile()).status_code, 403)
+        for path in [f"user_activity/{UID}", f"user_activity/{UID}/sessions/session-1"]:
+            self.write(path, {"activeSeconds": 1}, admin=True)
+            self.assertEqual(self.read(path, token=_token(admin=True)).status_code, 403)
+            self.assertEqual(self.write(path, {"activeSeconds": 100}).status_code, 403)

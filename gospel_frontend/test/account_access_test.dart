@@ -8,6 +8,121 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test(
+    'timed subscriptions stop at their cutoff and malformed expiry denies access',
+    () {
+      final cutoff = DateTime.utc(2026, 10, 11, 18);
+      final timed = AccountAccess.fromJson({
+        'uid': 'reader',
+        'role': 'subscribed',
+        'canRead': true,
+        'accessStatus': 'active',
+        'subscriptionPermanent': false,
+        'subscriptionExpiresAt': cutoff.toIso8601String(),
+      });
+      expect(
+        timed.permitsReading(cutoff.subtract(const Duration(seconds: 1))),
+        isTrue,
+      );
+      expect(timed.permitsReading(cutoff), isFalse);
+      final invalid = AccountAccess.fromJson({
+        'uid': 'reader',
+        'role': 'subscribed',
+        'canRead': true,
+        'accessStatus': 'active',
+        'subscriptionPermanent': false,
+      });
+      expect(invalid.permitsReading(cutoff), isFalse);
+      for (final status in ['suspended', 'terminated', 'deleted']) {
+        expect(
+          AccountAccess(
+            uid: 'reader',
+            role: 'admin',
+            canRead: true,
+            status: status,
+          ).permitsReading(cutoff),
+          isFalse,
+        );
+      }
+    },
+  );
+
+  test('cached timed subscription expires using server time', () async {
+    var now = DateTime.utc(2026, 10, 11);
+    final controller = AccountAccessController(
+      clock: () => now,
+      tokenProvider: () async => 'token',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'uid': 'reader',
+            'role': 'subscribed',
+            'canRead': true,
+            'accessStatus': 'active',
+            'subscriptionPermanent': false,
+            'serverTime': DateTime.utc(2026, 10, 12).toIso8601String(),
+            'subscriptionExpiresAt': DateTime.utc(
+              2026,
+              10,
+              12,
+              0,
+              0,
+              10,
+            ).toIso8601String(),
+          }),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+    controller.beginSession('reader');
+    await controller.refresh();
+    expect(controller.canRead, isTrue);
+    now = now.add(const Duration(seconds: 10));
+    expect(controller.canRead, isFalse);
+    await expectLater(
+      controller.ensureCanRead(),
+      throwsA(isA<ReadingAccessException>()),
+    );
+  });
+  testWidgets('suspension takes priority over an old subscription cutoff', (
+    tester,
+  ) async {
+    final controller = AccountAccessController(
+      tokenProvider: () async => 'token',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'uid': 'reader',
+            'role': 'subscribed',
+            'canRead': false,
+            'accessStatus': 'suspended',
+            'subscriptionPermanent': false,
+            'subscriptionExpiresAt': DateTime.utc(2000).toIso8601String(),
+          }),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AccountAccessBoundary(
+          controller: controller,
+          uid: 'reader',
+          builder: (_) => const Text('Reader'),
+          onSettings: () {},
+          onSignOut: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Your account is suspended.'), findsOneWidget);
+    expect(find.text('Your subscription has expired.'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    controller.clear();
+  });
+
   Map<String, dynamic> payload({
     String role = 'guest',
     bool canRead = true,

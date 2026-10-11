@@ -6,7 +6,10 @@ from firebase_admin import auth, exceptions
 from flask import Blueprint, jsonify, request
 
 from services.admin_auth import AdminAuthorizationError, verify_admin_authorization, verify_identity
-from services.admin_user_service import get_admin_user, list_admin_users, update_admin_user
+from services.admin_user_service import (
+    AccountActionIncompleteError, get_admin_user, list_admin_users,
+    perform_admin_user_action, update_admin_user,
+)
 from services.membership_service import MembershipConflictError, get_account_access
 
 admin_users_api = Blueprint("admin_users_api", __name__)
@@ -30,6 +33,9 @@ def _authorization_error(exc):
 
 
 def _failure(exc):
+    if isinstance(exc, AccountActionIncompleteError):
+        _logger.exception("Account action remains incomplete")
+        return _error("user_action_incomplete", str(exc), 503)
     if isinstance(exc, MembershipConflictError):
         return _error("membership_conflict", str(exc), 409)
     if isinstance(exc, auth.UserNotFoundError):
@@ -76,6 +82,17 @@ def admin_user(uid):
         else:
             user = get_admin_user(uid, current_user_uid=admin["uid"])
         return _response({"user": user})
+    except AdminAuthorizationError:
+        raise
+    except Exception as exc:
+        return _failure(exc)
+
+
+@admin_users_api.route("/admin/users/<uid>/actions", methods=["POST"])
+def admin_user_action(uid):
+    admin = verify_admin_authorization(request.headers.get("Authorization"))
+    try:
+        return _response(perform_admin_user_action(uid, request.get_json(silent=True), actor=admin))
     except AdminAuthorizationError:
         raise
     except Exception as exc:

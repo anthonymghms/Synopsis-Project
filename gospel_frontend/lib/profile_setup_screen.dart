@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'user_activity.dart';
 
 import 'profile_editor.dart';
 import 'user_profile.dart';
@@ -30,6 +31,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
           actions: [
             TextButton.icon(
               onPressed: () async {
+                await finishUserActivity();
                 UserProfileController.instance.clear();
                 await FirebaseAuth.instance.signOut();
               },

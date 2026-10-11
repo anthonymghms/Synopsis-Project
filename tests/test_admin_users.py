@@ -7,14 +7,56 @@ from flask import Flask
 
 from admin_users_api import admin_users_api
 from services.admin_auth import AdminAuthorizationError
-from services.admin_user_service import get_admin_user, list_admin_users, update_admin_user
+from firebase_admin import auth
+
+from services.admin_user_service import (
+    AccountActionIncompleteError, get_admin_user, list_admin_users,
+    perform_admin_user_action, update_admin_user,
+)
 from services.membership_service import MembershipConflictError
-from tests.test_admin_content import Database as BaseDatabase, fake_transactional
+from tests.test_admin_content import (
+    Batch as BaseBatch, Collection as BaseCollection, Database as BaseDatabase,
+    Document as BaseDocument, fake_transactional,
+)
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 
 
+class Document(BaseDocument):
+    def delete(self):
+        self.db.values.pop(self.path, None)
+        self.db.times[self.path] = self.db.times.get(self.path, 0) + 1
+
+    def collection(self, name):
+        return Collection(self.db, f"{self.path}/{name}")
+
+
+class Collection(BaseCollection):
+    def document(self, name):
+        return Document(self.db, f"{self.path}/{name}")
+
+
+class Batch(BaseBatch):
+    def __init__(self, db):
+        super().__init__(db)
+        self.deletes = []
+
+    def delete(self, ref):
+        self.deletes.append(ref)
+
+    def commit(self):
+        super().commit()
+        for reference in self.deletes:
+            reference.delete()
+
+
 class Database(BaseDatabase):
+    def collection(self, path):
+        return Collection(self, path)
+
+    def batch(self):
+        return Batch(self)
+
     def get_all(self, references, field_paths=None):
         return iter([ref.get() for ref in references])
 
@@ -142,6 +184,133 @@ class AdminUserServiceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 update_admin_user("reader", {"revision": "a"*64, **payload}, actor=self.actor, db=self.db)
 
+    def test_saved_preferences_are_visible_without_other_profile_fields(self):
+        preferences = {"contentLanguage": "arabic", "showDiacritics": False, "zoomLevel": 1.5,
+                       "versions": {"arabic": "VD"}}
+        result, _, _ = self._list([_user("reader"), _user("new-reader")],
+                                  {"reader": {"preferences": preferences, "profileCompleted": True, "privateNote": "not exposed"}})
+        self.assertEqual(result["users"][0]["preferences"], preferences)
+        self.assertEqual(result["users"][0]["preferencesSource"], "saved_profile")
+        self.assertEqual(result["users"][1]["preferencesSource"], "not_saved")
+        self.assertTrue(result["users"][0]["profileCompleted"])
+        self.assertFalse(result["users"][1]["profileCompleted"])
+        detail = get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: _user("reader"), now=NOW)
+        self.assertTrue(detail["profileCompleted"])
+        self.assertNotIn("privateNote", str(result))
+
+    def test_subscription_can_be_timed_then_permanent_and_legacy_remains_permanent(self):
+        target = _user("reader")
+        before = get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: target, now=NOW)
+        self.assertTrue(before["subscriptionPermanent"])
+        timed = update_admin_user("reader", {"revision": before["revision"], "role": "subscribed",
+                                           "subscriptionPermanent": False, "subscriptionExpiresOn": "2026-10-10"},
+                                  actor=self.actor, db=self.db, get_user=lambda _: target, now=NOW)
+        self.assertEqual(timed["subscriptionExpiresAt"], "2026-10-10T21:00:00+00:00")
+        self.assertFalse(timed["subscriptionPermanent"])
+        preserved = update_admin_user("reader", {"revision": timed["revision"], "role": "subscribed"},
+                                      actor=self.actor, db=self.db, get_user=lambda _: target, now=NOW)
+        self.assertFalse(preserved["subscriptionPermanent"])
+        self.assertEqual(preserved["subscriptionExpiresAt"], timed["subscriptionExpiresAt"])
+        permanent = update_admin_user("reader", {"revision": preserved["revision"], "role": "subscribed", "subscriptionPermanent": True},
+                                      actor=self.actor, db=self.db, get_user=lambda _: target, now=NOW)
+        self.assertTrue(permanent["subscriptionPermanent"])
+        self.assertIsNone(permanent["subscriptionExpiresAt"])
+        for data in ({"subscriptionPermanent": "false"}, {"subscriptionPermanent": False},
+                     {"subscriptionPermanent": True, "subscriptionExpiresOn": "2026-10-10"}):
+            with self.assertRaises(ValueError):
+                update_admin_user("reader", {"revision": permanent["revision"], "role": "subscribed", **data},
+                                  actor=self.actor, db=self.db, get_user=lambda _: target, now=NOW)
+
+    def _action(self, action, *, uid="reader", target=None, revision=None, **kwargs):
+        target = target or _user(uid)
+        if revision is None:
+            revision = get_admin_user(uid, current_user_uid="owner", db=self.db, get_user=lambda _: target, now=NOW)["revision"]
+        return perform_admin_user_action(uid, {"action": action, "revision": revision, "confirmation": uid},
+                                         actor=self.actor, db=self.db, get_user=lambda _: target, now=NOW, **kwargs)
+
+    def test_suspension_and_termination_block_access_and_resume_restores_role_and_expiry(self):
+        expiration = NOW + timedelta(days=10)
+        self.db.write("memberships/reader", {"role": "subscribed", "subscriptionPermanent": False,
+                                            "subscriptionExpiresAt": expiration}, False)
+        suspended = self._action("suspend")["user"]
+        self.assertEqual(suspended["accountStatus"], "suspended")
+        self.assertFalse(suspended["canRead"])
+        self.assertEqual(suspended["subscriptionExpiresAt"], expiration.isoformat())
+        resumed = self._action("resume")["user"]
+        self.assertTrue(resumed["canRead"])
+        revoke = Mock()
+        terminated = self._action("terminate", revoke_tokens=revoke)["user"]
+        revoke.assert_called_once_with("reader")
+        self.assertEqual(terminated["accountStatus"], "terminated")
+        self.assertFalse(terminated["canRead"])
+        self.assertTrue(self._action("resume")["user"]["canRead"])
+        audits = [snapshot.to_dict() for snapshot in self.db.collection("admin_membership_edits").stream()]
+        self.assertEqual({audit["action"] for audit in audits}, {"suspend", "resume", "terminate"})
+        self.assertTrue(all(audit["outcome"] == "completed" for audit in audits))
+
+    def test_actions_require_confirmation_fresh_revision_and_protect_current_admin(self):
+        with self.assertRaises(ValueError):
+            perform_admin_user_action("reader", {"action": [], "revision": "a"*64, "confirmation": "reader"},
+                                      actor=self.actor, db=self.db)
+        for action in ("suspend", "resume", "terminate", "delete"):
+            with self.assertRaises(AdminAuthorizationError):
+                self._action(action, uid="owner", revision="a"*64)
+            with self.assertRaises(ValueError):
+                perform_admin_user_action("reader", {"action": action, "revision": "a"*64, "confirmation": "wrong"},
+                                          actor=self.actor, db=self.db)
+        target = _user("reader")
+        previous = get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: target, now=NOW)
+        self.db.write("memberships/reader", {"role": "admin"}, False)
+        with self.assertRaises(MembershipConflictError):
+            self._action("delete", target=target, revision=previous["revision"], revoke_tokens=Mock(), delete_user=Mock())
+        self.assertEqual(list(self.db.collection("admin_membership_edits").stream()), [])
+
+    def test_inactive_actor_cannot_mutate_users_even_with_cached_admin_claims(self):
+        target = _user("reader")
+        previous = get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: target, now=NOW)
+        self.db.before_transaction = lambda: self.db.write("memberships/owner", {"role": "admin", "accountStatus": "suspended"}, False)
+        with self.assertRaises(AdminAuthorizationError):
+            self._action("suspend", target=target, revision=previous["revision"])
+        self.assertNotIn("memberships/reader", self.db.values)
+
+    def test_delete_cleans_profile_and_activity_leaves_denial_tombstone_and_audit(self):
+        for path in ("users/reader", "user_activity/reader", "user_activity/reader/sessions/session-1",
+                     "user_activity/reader/logins/login-1"):
+            self.db.write(path, {"saved": True}, False)
+        revoke, delete = Mock(), Mock()
+        result = self._action("delete", revoke_tokens=revoke, delete_user=delete)
+        self.assertEqual(result, {"deleted": True, "uid": "reader"})
+        revoke.assert_called_once_with("reader")
+        delete.assert_called_once_with("reader")
+        self.assertEqual(self.db.values["memberships/reader"]["accountStatus"], "deleted")
+        self.assertFalse(any(path == "users/reader" or path.startswith("user_activity/reader") for path in self.db.values))
+        audits = list(self.db.collection("admin_membership_edits").stream())
+        self.assertEqual(audits[0].to_dict()["outcome"], "completed")
+        self.assertNotIn("saved", str(audits[0].to_dict()))
+
+    def test_failed_delete_stays_denied_and_can_be_retried_after_auth_already_removed(self):
+        self.db.write("users/reader", {"preferences": {"zoomLevel": 1.2}}, False)
+        deletion = Mock(side_effect=RuntimeError("upstream unavailable"))
+        with self.assertRaises(AccountActionIncompleteError):
+            self._action("delete", revoke_tokens=Mock(), delete_user=deletion)
+        self.assertEqual(self.db.values["memberships/reader"]["accountStatus"], "deleting")
+        self.assertFalse(get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: _user("reader"), now=NOW)["canRead"])
+        with self.assertRaises(MembershipConflictError):
+            self._action("resume")
+        gone = Mock(side_effect=auth.UserNotFoundError("No account"))
+        detail = get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=gone, now=NOW)
+        self.assertTrue(detail["canManageAccount"])
+        result = perform_admin_user_action("reader", {"action": "delete", "revision": detail["revision"], "confirmation": "reader"},
+                                           actor=self.actor, db=self.db, get_user=gone, delete_user=gone, revoke_tokens=Mock(), now=NOW)
+        self.assertTrue(result["deleted"])
+        self.assertEqual(self.db.values["memberships/reader"]["accountStatus"], "deleted")
+
+    def test_revocation_failure_does_not_restore_terminated_account(self):
+        with self.assertRaises(AccountActionIncompleteError):
+            self._action("terminate", revoke_tokens=Mock(side_effect=RuntimeError("Auth unavailable")))
+        self.assertEqual(self.db.values["memberships/reader"]["accountStatus"], "terminated")
+        self.assertFalse(get_admin_user("reader", current_user_uid="owner", db=self.db, get_user=lambda _: _user("reader"), now=NOW)["canRead"])
+
 
 class AdminUsersApiTests(unittest.TestCase):
     def setUp(self):
@@ -152,7 +321,7 @@ class AdminUsersApiTests(unittest.TestCase):
     def test_anonymous_and_non_admin_requests_cannot_enumerate_or_change_accounts(self):
         for status in (401, 403):
             with patch("admin_users_api.verify_admin_authorization", side_effect=AdminAuthorizationError("denied", "Denied", status)), patch("admin_users_api.list_admin_users") as listing:
-                for method, path in [("get", "/admin/users"), ("get", "/admin/users/reader"), ("post", "/admin/users/reader")]:
+                for method, path in [("get", "/admin/users"), ("get", "/admin/users/reader"), ("post", "/admin/users/reader"), ("post", "/admin/users/reader/actions")]:
                     self.assertEqual(getattr(self.client, method)(path).status_code, status)
                 listing.assert_not_called()
 
@@ -186,6 +355,24 @@ class AdminUsersApiTests(unittest.TestCase):
             response = self.client.get("/admin/users")
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private backend details", response.get_data(as_text=True))
+
+    def test_confirmed_action_route_forwards_verified_actor_and_sets_no_store(self):
+        payload = {"action": "delete", "revision": "a"*64, "confirmation": "reader"}
+        with patch("admin_users_api.verify_admin_authorization", return_value={"uid": "owner"}), patch("admin_users_api.perform_admin_user_action", return_value={"deleted": True, "uid": "reader"}) as action:
+            result = self.client.post("/admin/users/reader/actions", json=payload)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.headers["Cache-Control"], "no-store")
+        action.assert_called_once_with("reader", payload, actor={"uid": "owner"})
+
+    def test_unhashable_action_values_return_invalid_request_without_loading_accounts(self):
+        with patch("admin_users_api.verify_admin_authorization", return_value={"uid": "owner"}), \
+                patch("services.admin_user_service.auth.get_user") as loading:
+            for action in ([], {}):
+                response = self.client.post("/admin/users/reader/actions",
+                                            json={"action": action, "revision": "a"*64, "confirmation": "reader"})
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json["error"]["code"], "invalid_user_access")
+            loading.assert_not_called()
 
 
 if __name__ == "__main__":

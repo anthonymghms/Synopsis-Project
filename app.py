@@ -8,6 +8,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from admin_api import admin_api
 from admin_content_api import admin_content_api
 from admin_users_api import admin_users_api
+from user_activity_api import user_activity_api
 from services.admin_auth import AdminAuthorizationError, verify_identity
 from services.membership_service import verify_reader_authorization
 from services.admin_content_service import bible_verses_collection
@@ -25,6 +26,7 @@ app.config["MAX_CONTENT_LENGTH"] = int(
 app.register_blueprint(admin_api)
 app.register_blueprint(admin_content_api)
 app.register_blueprint(admin_users_api)
+app.register_blueprint(user_activity_api)
 
 
 def _cors_origins():

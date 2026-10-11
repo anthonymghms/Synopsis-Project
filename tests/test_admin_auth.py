@@ -1,4 +1,8 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from firebase_admin import auth
 
 from services.admin_auth import (
     AdminAuthorizationError,
@@ -45,6 +49,11 @@ class _Database:
 
 
 class AdminAuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        users = patch("services.admin_auth.auth.get_user", return_value=SimpleNamespace(disabled=False))
+        users.start()
+        self.addCleanup(users.stop)
+
     def test_unauthenticated_request_is_denied(self):
         with self.assertRaises(AdminAuthorizationError) as raised:
             verify_admin_authorization(None, db=_Database({}))
@@ -100,6 +109,32 @@ class AdminAuthorizationTests(unittest.TestCase):
         result = verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "new-admin"},
                                             db=_Database({}, {"new-admin": {"role": "admin"}}))
         self.assertEqual(result["source"], "membership")
+
+    def test_suspended_terminated_or_deleted_admin_cannot_use_stale_tokens(self):
+        for status in ("suspended", "terminated", "deleting", "deleted", "invalid"):
+            with self.assertRaises(AdminAuthorizationError):
+                verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "owner", "admin": True},
+                                            db=_Database({"owner": {"role": "admin"}}, {"owner": {"role": "admin", "accountStatus": status}}))
+
+    def test_disabled_auth_admin_denied_even_with_active_membership(self):
+        with self.assertRaises(AdminAuthorizationError) as raised:
+            verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "owner", "admin": True},
+                                        db=_Database({}, {"owner": {"role": "admin"}}),
+                                        get_user=lambda _: SimpleNamespace(disabled=True))
+        self.assertEqual(raised.exception.code, "account_access_denied")
+
+    def test_removed_custom_admin_claims_override_stale_token_before_initialization(self):
+        with self.assertRaises(AdminAuthorizationError):
+            verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "owner", "admin": True},
+                                        db=_Database({}), get_user=lambda _: SimpleNamespace(disabled=False, custom_claims={}))
+
+    def test_deleted_auth_account_cannot_use_membership_admin_role(self):
+        def gone(_uid):
+            raise auth.UserNotFoundError("Missing")
+        with self.assertRaises(AdminAuthorizationError) as raised:
+            verify_admin_authorization("Bearer token", verify_token=lambda token, check_revoked: {"uid": "owner", "admin": True},
+                                        db=_Database({}, {"owner": {"role": "admin"}}), get_user=gone)
+        self.assertEqual(raised.exception.status, 401)
 
 
 if __name__ == "__main__":

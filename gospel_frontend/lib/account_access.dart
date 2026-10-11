@@ -17,6 +17,8 @@ class AccountAccess {
     required this.canRead,
     required this.status,
     this.guestExpiresAt,
+    this.subscriptionExpiresAt,
+    this.subscriptionPermanent = true,
     this.serverTime,
   });
 
@@ -25,6 +27,8 @@ class AccountAccess {
   final bool canRead;
   final String status;
   final DateTime? guestExpiresAt;
+  final DateTime? subscriptionExpiresAt;
+  final bool subscriptionPermanent;
   final DateTime? serverTime;
 
   factory AccountAccess.fromJson(Map<String, dynamic> data) => AccountAccess(
@@ -35,16 +39,26 @@ class AccountAccess {
     guestExpiresAt: DateTime.tryParse(
       (data['guestExpiresAt'] ?? '').toString(),
     )?.toUtc(),
+    subscriptionExpiresAt: DateTime.tryParse(
+      (data['subscriptionExpiresAt'] ?? '').toString(),
+    )?.toUtc(),
+    subscriptionPermanent: data['subscriptionPermanent'] != false,
     serverTime: DateTime.tryParse(
       (data['serverTime'] ?? '').toString(),
     )?.toUtc(),
   );
 
+  DateTime? get expiresAt => role == 'guest'
+      ? guestExpiresAt
+      : role == 'subscribed' && !subscriptionPermanent
+      ? subscriptionExpiresAt
+      : null;
+
   bool permitsReading(DateTime now) =>
       canRead &&
       status == 'active' &&
-      (role != 'guest' ||
-          (guestExpiresAt != null && now.isBefore(guestExpiresAt!)));
+      ((role != 'guest' && (role != 'subscribed' || subscriptionPermanent)) ||
+          (expiresAt != null && now.isBefore(expiresAt!)));
 }
 
 class ReadingAccessException implements Exception {
@@ -53,6 +67,8 @@ class ReadingAccessException implements Exception {
   @override
   String toString() => code == 'guest_access_expired'
       ? 'Your guest reading access has expired.'
+      : code == 'subscription_access_expired'
+      ? 'Your subscription has expired.'
       : 'Reading access could not be verified. Please check your account.';
 }
 
@@ -100,9 +116,9 @@ class AccountAccessController extends ChangeNotifier {
       _error == null && (_access?.permitsReading(serverNow) ?? false);
   bool get expired =>
       _access?.status == 'expired' ||
-      (_access?.role == 'guest' &&
-          _access?.guestExpiresAt != null &&
-          !serverNow.isBefore(_access!.guestExpiresAt!));
+      (_access?.status == 'active' &&
+          _access?.expiresAt != null &&
+          !serverNow.isBefore(_access!.expiresAt!));
 
   void beginSession(String uid) {
     if (_uid == uid) return;
@@ -192,18 +208,18 @@ class AccountAccessController extends ChangeNotifier {
 
   void _apply(AccountAccess next) {
     final before =
-        '${_access?.uid}|${_access?.role}|${_access?.canRead}|${_access?.status}|${_access?.guestExpiresAt}|$_error';
+        '${_access?.uid}|${_access?.role}|${_access?.canRead}|${_access?.status}|${_access?.expiresAt}|${_access?.subscriptionPermanent}|$_error';
     _access = next;
     _error = null;
     if (next.serverTime != null) {
       _serverOffset = next.serverTime!.difference(_clock().toUtc());
     }
     final after =
-        '${next.uid}|${next.role}|${next.canRead}|${next.status}|${next.guestExpiresAt}|$_error';
+        '${next.uid}|${next.role}|${next.canRead}|${next.status}|${next.expiresAt}|${next.subscriptionPermanent}|$_error';
     if (before != after) _revision++;
     _expiryTimer?.cancel();
-    if (next.role == 'guest' && next.guestExpiresAt != null && canRead) {
-      _expiryTimer = Timer(next.guestExpiresAt!.difference(serverNow), () {
+    if (next.expiresAt != null && canRead) {
+      _expiryTimer = Timer(next.expiresAt!.difference(serverNow), () {
         _revision++;
         notifyListeners();
         unawaited(refresh(force: true));
@@ -224,7 +240,11 @@ class AccountAccessController extends ChangeNotifier {
     await refresh();
     if (!canRead) {
       throw ReadingAccessException(
-        expired ? 'guest_access_expired' : 'account_access_denied',
+        expired
+            ? _access?.role == 'subscribed'
+                  ? 'subscription_access_expired'
+                  : 'guest_access_expired'
+            : 'account_access_denied',
       );
     }
   }
@@ -239,14 +259,20 @@ class AccountAccessController extends ChangeNotifier {
           : decoded is Map
           ? decoded['code']
           : null;
-      if (code == 'guest_access_expired' && _uid != null) {
+      if ((code == 'guest_access_expired' ||
+              code == 'subscription_access_expired') &&
+          _uid != null) {
         _apply(
           AccountAccess(
             uid: _uid!,
-            role: 'guest',
+            role: code == 'subscription_access_expired'
+                ? 'subscribed'
+                : 'guest',
             canRead: false,
             status: 'expired',
             guestExpiresAt: _access?.guestExpiresAt,
+            subscriptionExpiresAt: _access?.subscriptionExpiresAt,
+            subscriptionPermanent: code != 'subscription_access_expired',
           ),
         );
         return;
@@ -380,10 +406,28 @@ class _AccountAccessBoundaryState extends State<AccountAccessBoundary>
                   const SizedBox(height: 16),
                   Text(
                     access.expired
+                        ? access.access?.role == 'subscribed'
+                              ? text(
+                                  'Your subscription has expired.',
+                                  'انتهت صلاحية اشتراكك.',
+                                  'Votre abonnement a expiré.',
+                                )
+                              : text(
+                                  'Your guest access has expired.',
+                                  'انتهت صلاحية الوصول كضيف.',
+                                  'Votre accès invité a expiré.',
+                                )
+                        : access.access?.status == 'suspended'
                         ? text(
-                            'Your guest access has expired.',
-                            'انتهت صلاحية الوصول كضيف.',
-                            'Votre accès invité a expiré.',
+                            'Your account is suspended.',
+                            'تم تعليق حسابك.',
+                            'Votre compte est suspendu.',
+                          )
+                        : access.access?.status == 'terminated'
+                        ? text(
+                            'Your account access has been terminated.',
+                            'تم إنهاء صلاحية الوصول لحسابك.',
+                            'Votre accès a été résilié.',
                           )
                         : text(
                             'Reading access is unavailable.',

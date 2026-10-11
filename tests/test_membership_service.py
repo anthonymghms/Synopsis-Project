@@ -5,7 +5,7 @@ from unittest.mock import patch
 from services.admin_auth import AdminAuthorizationError
 from services.membership_service import (
     access_payload, get_account_access, initialize_membership_policy,
-    parse_guest_expiry, verify_reader_authorization,
+    parse_guest_expiry, parse_subscription_expiry, verify_reader_authorization,
 )
 from tests.test_admin_content import fake_transactional
 from tests.test_admin_users import Database, NOW, _user
@@ -17,6 +17,9 @@ class MembershipServiceTests(unittest.TestCase):
         self.transactional = patch("services.membership_service.firestore.transactional", fake_transactional)
         self.transactional.start()
         self.addCleanup(self.transactional.stop)
+        auth_users = patch("services.membership_service.auth.get_user", side_effect=lambda uid: _user(uid))
+        auth_users.start()
+        self.addCleanup(auth_users.stop)
 
     def test_rollout_boundary_initializes_once_and_cannot_move_on_restart(self):
         self.db = Database({})
@@ -49,7 +52,7 @@ class MembershipServiceTests(unittest.TestCase):
         first = get_account_access({"uid": "new", "claims": {}}, db=self.db, get_user=lambda _: user, now=created + timedelta(days=3))
         self.assertEqual(first["role"], "guest")
         self.assertEqual(first["guestExpiresAt"], (created + timedelta(days=30)).isoformat())
-        later = get_account_access({"uid": "new", "claims": {}}, db=self.db, get_user=lambda _: self.fail("Must use assigned membership"), now=created + timedelta(days=29))
+        later = get_account_access({"uid": "new", "claims": {}}, db=self.db, get_user=lambda _: user, now=created + timedelta(days=29))
         self.assertEqual(first["guestExpiresAt"], later["guestExpiresAt"])
         expired = get_account_access({"uid": "new", "claims": {}}, db=self.db, now=created + timedelta(days=30))
         self.assertFalse(expired["canRead"])
@@ -99,6 +102,44 @@ class MembershipServiceTests(unittest.TestCase):
         access = get_account_access({"uid": "reader", "claims": {}}, db=self.db, get_user=lambda _: _user("reader"), now=NOW)
         self.assertEqual(access["role"], "admin")
         self.assertEqual(self.db.values["memberships/reader"], {"role": "admin"})
+
+    def test_subscription_inclusive_last_day_and_expiry_boundary(self):
+        expiry = parse_subscription_expiry({"subscriptionExpiresOn": "2026-10-10"})
+        resolved = {"role": "subscribed", "subscriptionPermanent": False, "subscriptionExpiresAt": expiry}
+        active = access_payload("reader", resolved, now=expiry - timedelta(microseconds=1))
+        expired = access_payload("reader", resolved, now=expiry)
+        self.assertEqual(active["subscriptionExpiresOn"], "2026-10-10")
+        self.assertTrue(active["canRead"])
+        self.assertFalse(expired["canRead"])
+        self.assertTrue(expired["subscriptionExpired"])
+        self.assertFalse(expired["guestExpired"])
+        self.assertEqual(expired["accessStatus"], "expired")
+        self.db.write("memberships/reader", resolved, False)
+        with self.assertRaises(AdminAuthorizationError) as raised:
+            verify_reader_authorization("Bearer test", verify_token=lambda token, check_revoked: {"uid": "reader"}, db=self.db, now=expiry)
+        self.assertEqual(raised.exception.code, "subscription_access_expired")
+
+    def test_existing_subscriptions_permanent_and_invalid_timed_subscription_fails_closed(self):
+        for fields in ({"role": "subscribed"}, {"role": "subscribed", "subscriptionPermanent": True}):
+            self.assertTrue(access_payload("reader", fields, now=NOW)["canRead"])
+            self.assertTrue(access_payload("reader", fields, now=NOW)["subscriptionPermanent"])
+        for fields in ({"role": "subscribed", "subscriptionPermanent": False},
+                       {"role": "subscribed", "subscriptionPermanent": "true"},
+                       {"role": "subscribed", "subscriptionPermanent": False, "subscriptionExpiresAt": "invalid"}):
+            self.assertFalse(access_payload("reader", fields, now=NOW)["canRead"])
+
+    def test_membership_status_and_current_auth_disabled_override_valid_access(self):
+        for status in ("suspended", "terminated", "deleting", "deleted", "invalid"):
+            self.db.write("memberships/admin", {"role": "admin", "accountStatus": status}, False)
+            access = get_account_access({"uid": "admin", "claims": {"admin": True}}, db=self.db, now=NOW)
+            self.assertFalse(access["canRead"])
+            self.assertNotIn("manage_users", access["permissions"])
+        self.db.write("memberships/admin", {"role": "admin"}, False)
+        access = get_account_access({"uid": "admin", "claims": {"admin": True}}, db=self.db,
+                                    get_user=lambda _: _user("admin", disabled=True), now=NOW)
+        self.assertFalse(access["canRead"])
+        self.assertEqual(access["accessStatus"], "disabled")
+        self.assertEqual(access["permissions"], [])
 
 
 if __name__ == "__main__":

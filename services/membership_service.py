@@ -15,7 +15,8 @@ from .firebase_service import firestore_client
 
 DEFAULT_GUEST_DAYS = 30
 ROLES = {"guest", "subscribed", "admin"}
-PROFILE_FIELDS = ["displayName", "firstName", "lastName", "fullName", "role"]
+PROFILE_FIELDS = ["displayName", "firstName", "lastName", "fullName", "role", "preferences", "profileCompleted"]
+ACCOUNT_STATUSES = {"active", "suspended", "terminated", "deleting", "deleted"}
 
 
 class MembershipConflictError(ValueError):
@@ -33,7 +34,7 @@ def as_datetime(value):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
-        except ValueError:
+        except (ValueError, OverflowError):
             return None
     return None
 
@@ -98,6 +99,11 @@ def auth_creation_time(user):
     return datetime.fromtimestamp(stamp / 1000, timezone.utc) if stamp is not None else None
 
 
+def account_status(membership):
+    status = (membership or {}).get("accountStatus", "active")
+    return status if isinstance(status, str) and status in ACCOUNT_STATUSES else "terminated"
+
+
 def resolved_membership(profile, claims, membership, *, created_at, policy, now):
     role, source = effective_assigned_role(profile, claims, membership)
     expiration = as_datetime((membership or {}).get("guestExpiresAt"))
@@ -110,7 +116,11 @@ def resolved_membership(profile, claims, membership, *, created_at, policy, now)
     if role == "guest" and membership is None:
         # Never start a fresh trial on each login. Auth creation is server-owned.
         expiration = as_datetime((profile or {}).get("guestExpiresAt")) or ((created_at or now) + timedelta(days=DEFAULT_GUEST_DAYS))
-    return {"role": role, "roleSource": source, "guestExpiresAt": expiration if role == "guest" else None}
+    permanent = (membership or {}).get("subscriptionPermanent", True) is True
+    return {"role": role, "roleSource": source, "guestExpiresAt": expiration if role == "guest" else None,
+            "subscriptionPermanent": permanent if role == "subscribed" else False,
+            "subscriptionExpiresAt": as_datetime((membership or {}).get("subscriptionExpiresAt")) if role == "subscribed" and not permanent else None,
+            "accountStatus": account_status(membership)}
 
 
 def access_payload(uid, resolved, *, now=None, disabled=False):
@@ -118,34 +128,46 @@ def access_payload(uid, resolved, *, now=None, disabled=False):
     expiry = as_datetime(resolved.get("guestExpiresAt"))
     role = resolved["role"]
     expired = role == "guest" and (expiry is None or expiry <= moment)
-    can_read = not disabled and not expired and role in ROLES
-    permissions = [] if disabled else ["manage_own_profile"]
+    permanent = resolved.get("subscriptionPermanent", True) is True
+    subscription_expiry = as_datetime(resolved.get("subscriptionExpiresAt")) if role == "subscribed" and not permanent else None
+    subscription_expired = role == "subscribed" and not permanent and (subscription_expiry is None or subscription_expiry <= moment)
+    status = account_status(resolved)
+    can_read = not disabled and status == "active" and not expired and not subscription_expired and role in ROLES
+    permissions = [] if disabled or status in {"deleting", "deleted"} else ["manage_own_profile"]
     if can_read:
         permissions.insert(0, "read_content")
     if can_read and role == "admin":
         permissions += ["manage_content", "view_import_history", "view_users", "manage_users"]
     zone = expiry_timezone()
     last_day = (expiry - timedelta(microseconds=1)).astimezone(zone).date().isoformat() if expiry else None
+    subscription_last_day = (subscription_expiry - timedelta(microseconds=1)).astimezone(zone).date().isoformat() if subscription_expiry else None
+    suggested = (moment.astimezone(zone).date() + timedelta(days=DEFAULT_GUEST_DAYS)).isoformat()
     return {"uid": uid, "role": role, "roleSource": resolved.get("roleSource", "membership"),
             "guestExpiresAt": expiry.isoformat() if expiry else None, "guestExpiresOn": last_day,
             "guestExpired": expired, "canRead": can_read,
-            "accessStatus": "disabled" if disabled else "expired" if expired else "active",
+            "subscriptionPermanent": permanent if role == "subscribed" else False,
+            "subscriptionExpiresAt": subscription_expiry.isoformat() if subscription_expiry else None,
+            "subscriptionExpiresOn": subscription_last_day, "subscriptionExpired": subscription_expired,
+            "accountStatus": status,
+            "accessStatus": status if status != "active" else "disabled" if disabled else "expired" if expired or subscription_expired else "active",
             "permissions": permissions, "serverTime": moment.isoformat(),
             "expiryTimezone": str(zone),
-            "suggestedGuestExpiresOn": (moment.astimezone(zone).date() + timedelta(days=DEFAULT_GUEST_DAYS)).isoformat()}
+            "suggestedGuestExpiresOn": suggested, "suggestedSubscriptionExpiresOn": suggested}
 
 
 def get_account_access(identity, *, db=None, get_user=None, now=None):
     database = db if db is not None else firestore_client()
     moment = now or utc_now()
     uid = identity["uid"]
+    # Check Auth on every access request, including initialized memberships.
+    # This prevents disabled/deleted accounts using an otherwise valid role.
+    user = (get_user or auth.get_user)(uid)
     member_ref = database.collection("memberships").document(uid)
     member_snapshot = member_ref.get()
     member = snapshot_data(member_snapshot)
     if member is not None:
         role, source = effective_assigned_role({}, {}, member)
-        return access_payload(uid, {**member, "role": role, "roleSource": source}, now=moment)
-    user = (get_user or auth.get_user)(uid)
+        return access_payload(uid, {**member, "role": role, "roleSource": source}, now=moment, disabled=bool(user.disabled))
     policy = initialize_membership_policy(db=database, now=moment)
     profile_ref = database.collection("users").document(uid)
 
@@ -160,6 +182,8 @@ def get_account_access(identity, *, db=None, get_user=None, now=None):
         resolved = resolved_membership(profile, user.custom_claims or {}, None,
                                        created_at=auth_creation_time(user), policy=policy, now=moment)
         fields = {"role": resolved["role"], "guestExpiresAt": resolved["guestExpiresAt"],
+                  "subscriptionPermanent": resolved["subscriptionPermanent"],
+                  "subscriptionExpiresAt": resolved["subscriptionExpiresAt"], "accountStatus": "active",
                   "assignedAt": moment, "updatedAt": moment, "updatedBy": "membership_initialization",
                   "origin": resolved["roleSource"]}
         transaction.set(member_ref, fields)
@@ -172,24 +196,38 @@ def verify_reader_authorization(authorization_header, *, verify_token=auth.verif
     identity = verify_identity(authorization_header, verify_token=verify_token)
     access = get_account_access(identity, db=db, get_user=get_user, now=now)
     if not access["canRead"]:
-        code = "guest_access_expired" if access["guestExpired"] else "account_access_denied"
-        raise AdminAuthorizationError(code, "Guest access has expired. Contact an administrator to extend access.", 403)
+        if access["accountStatus"] != "active" or access["accessStatus"] == "disabled":
+            code, message = "account_access_denied", "This account does not have access. Contact an administrator."
+        elif access["subscriptionExpired"]:
+            code, message = "subscription_access_expired", "Subscription access has expired. Contact an administrator to extend access."
+        else:
+            code, message = "guest_access_expired", "Guest access has expired. Contact an administrator to extend access."
+        raise AdminAuthorizationError(code, message, 403)
     return {**identity, "access": access}
 
 
-def parse_guest_expiry(payload):
-    if "guestExpiresOn" in payload and "guestExpiresAt" in payload:
+def _parse_expiry(payload, prefix, label):
+    date_field, timestamp_field = f"{prefix}ExpiresOn", f"{prefix}ExpiresAt"
+    if date_field in payload and timestamp_field in payload:
         raise ValueError("Provide either a last access date or an expiry timestamp, not both.")
-    if "guestExpiresOn" in payload:
-        value = payload["guestExpiresOn"]
+    if date_field in payload:
+        value = payload[date_field]
         if not isinstance(value, str):
-            raise ValueError("Guest access end date is required.")
+            raise ValueError(f"{label} access end date is required.")
         try:
             day = date.fromisoformat(value)
             return datetime.combine(day + timedelta(days=1), time.min, expiry_timezone()).astimezone(timezone.utc)
         except (ValueError, OverflowError) as exc:
-            raise ValueError("Guest access end date must be YYYY-MM-DD.") from exc
-    expiration = as_datetime(payload.get("guestExpiresAt"))
+            raise ValueError(f"{label} access end date must be YYYY-MM-DD.") from exc
+    expiration = as_datetime(payload.get(timestamp_field))
     if expiration is None:
-        raise ValueError("Provide a guest access end date or an ISO expiry timestamp with timezone.")
+        raise ValueError(f"Provide a {label.lower()} access end date or an ISO expiry timestamp with timezone.")
     return expiration
+
+
+def parse_guest_expiry(payload):
+    return _parse_expiry(payload, "guest", "Guest")
+
+
+def parse_subscription_expiry(payload):
+    return _parse_expiry(payload, "subscription", "Subscription")

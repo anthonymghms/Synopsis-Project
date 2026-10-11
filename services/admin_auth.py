@@ -65,16 +65,26 @@ def verify_identity(authorization_header, *, verify_token=auth.verify_id_token):
     return {"uid": uid, "claims": claims}
 
 
-def verify_admin_authorization(authorization_header, *, verify_token=auth.verify_id_token, db=None):
+def verify_admin_authorization(authorization_header, *, verify_token=auth.verify_id_token, db=None, get_user=None):
     identity = verify_identity(authorization_header, verify_token=verify_token)
     database = db if db is not None else firestore_client()
     uid = identity["uid"]
+    try:
+        account = (get_user or auth.get_user)(uid)
+    except auth.UserNotFoundError as exc:
+        raise AdminAuthorizationError("invalid_token", "This account no longer exists. Sign in again.", 401) from exc
+    if account.disabled:
+        raise AdminAuthorizationError("account_access_denied", "This account has been disabled.", 403)
     member = database.collection("memberships").document(uid).get()
     profile = database.collection("users").document(uid).get()
+    # Tokens can carry old administrator claims until their next refresh. Auth's
+    # current custom claims are authoritative when no membership exists yet.
+    current_claims = getattr(account, "custom_claims", identity["claims"]) or {}
     role, source = effective_assigned_role(
-        profile.to_dict() if profile.exists else {}, identity["claims"],
+        profile.to_dict() if profile.exists else {}, current_claims,
         member.to_dict() if member.exists else None,
     )
-    if role == "admin":
-        return {**identity, "source": source}
+    member_data = member.to_dict() if member.exists else {}
+    if role == "admin" and member_data.get("accountStatus", "active") == "active":
+        return {**identity, "claims": current_claims, "source": source}
     raise AdminAuthorizationError("admin_required", "This account does not have administrator access.", 403)

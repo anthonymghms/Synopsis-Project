@@ -13,6 +13,9 @@ class _UsersClient implements AdminClient {
   List<Map<String, dynamic>>? users;
   Map<String, dynamic>? reloadedUser;
   AdminApiException? mutationError;
+  AdminApiException? activityError;
+  AdminApiException? detailError;
+  List<Map<String, dynamic>> activityPages = [];
   bool failNextPage = false;
 
   @override
@@ -31,7 +34,15 @@ class _UsersClient implements AdminClient {
         'recentImports': <dynamic>[],
       };
     }
+    if (Uri.parse(path).path.endsWith('/activity')) {
+      if (activityError case final error?) throw error;
+      final token = Uri.parse(path).queryParameters['pageToken'];
+      return activityPages.isEmpty
+          ? {'summary': {}, 'logins': [], 'sessions': []}
+          : activityPages[token == null ? 0 : 1];
+    }
     if (path.startsWith('/admin/users/')) {
+      if (detailError case final error?) throw error;
       return {'user': reloadedUser ?? users!.first};
     }
     if (users != null) return {'users': users, 'nextPageToken': null};
@@ -76,6 +87,26 @@ class _UsersClient implements AdminClient {
     posts.add((path: path, body: Map<String, dynamic>.from(body)));
     if (mutationError case final error?) throw error;
     final current = reloadedUser ?? users!.first;
+    if (path.endsWith('/actions')) {
+      if (body['action'] == 'delete') {
+        users = [];
+        return {'deleted': true, 'uid': current['uid']};
+      }
+      final status = switch (body['action']) {
+        'suspend' => 'suspended',
+        'terminate' => 'terminated',
+        _ => 'active',
+      };
+      final updated = <String, dynamic>{
+        ...current,
+        'accountStatus': status,
+        'revision': 'saved-revision',
+        'disabled': current['disabled'] == true,
+      };
+      users = [updated];
+      reloadedUser = updated;
+      return {'user': updated};
+    }
     final role = body['role'];
     final updated = <String, dynamic>{
       ...current,
@@ -83,6 +114,13 @@ class _UsersClient implements AdminClient {
       'roleSource': 'membership',
       'revision': 'saved-revision',
       'guestExpiresOn': role == 'guest' ? body['guestExpiresOn'] : null,
+      'subscriptionPermanent': role == 'subscribed'
+          ? body['subscriptionPermanent']
+          : null,
+      'subscriptionExpiresOn': role == 'subscribed'
+          ? body['subscriptionExpiresOn']
+          : null,
+      'subscriptionExpired': false,
       'guestExpired': false,
       'canRead': true,
       'accessStatus': 'active',
@@ -148,6 +186,8 @@ Map<String, dynamic> _guest({
   'accessStatus': expired && role == 'guest' ? 'expired' : 'active',
   'canRead': !expired || role != 'guest',
   'canEditAccess': !self,
+  'canManageAccount': !self,
+  'accountStatus': 'active',
   'isCurrentUser': self,
   'emailVerified': true,
   'permissions': [
@@ -180,6 +220,453 @@ Future<void> _selectRole(
 
 void main() {
   testWidgets(
+    'a separately disabled sign-in account does not offer membership resume',
+    (tester) async {
+      final client = _UsersClient(
+        users: [
+          {..._guest(role: 'subscribed', expired: false), 'disabled': true},
+        ],
+      );
+      await _pump(tester, client);
+      expect(find.text('Subscribed · Disabled'), findsOneWidget);
+      await _tap(tester, find.text('Grace Guest'));
+      expect(find.byKey(const ValueKey('resume-user-guest-1')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('suspend-user-guest-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('This account is disabled and cannot sign in.'),
+        findsOneWidget,
+      );
+      expect(client.posts, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'failed account reload blocks saving until current access is loaded',
+    (tester) async {
+      final client = _UsersClient(users: [_guest()])
+        ..detailError = const AdminApiException('Current account unavailable');
+      await _pump(tester, client);
+      await _openAccess(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('guest-expiry-date')),
+        '2027-03-28',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Current account unavailable'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('save-user-access')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(client.posts, isEmpty);
+      client.detailError = null;
+      await _tap(tester, find.text('Reload current access (replaces draft)'));
+      await tester.enterText(
+        find.byKey(const ValueKey('guest-expiry-date')),
+        '2027-03-28',
+      );
+      await _tap(tester, find.byKey(const ValueKey('save-user-access')));
+      expect(client.posts.single.body['guestExpiresOn'], '2027-03-28');
+    },
+  );
+
+  testWidgets(
+    'Arabic subscription editing, details and delete confirmation fit phone width',
+    (tester) async {
+      final client = _UsersClient(
+        users: [_guest(role: 'subscribed', expired: false)],
+      );
+      await _pump(tester, client, arabic: true, size: const Size(390, 844));
+      await _openAccess(tester);
+      await _tap(tester, find.byKey(const ValueKey('subscription-term-true')));
+      await _tap(tester, find.text('محدّد المدة').last);
+      await tester.enterText(
+        find.byKey(const ValueKey('subscription-expiry-date')),
+        '2027-03-28',
+      );
+      await _tap(tester, find.byKey(const ValueKey('save-user-access')));
+      expect(client.posts.single.body['subscriptionExpiresOn'], '2027-03-28');
+      await _tap(
+        tester,
+        find.byKey(const ValueKey('view-user-details-guest-1')),
+      );
+      expect(find.text('إعدادات المستخدم والنشاط'), findsOneWidget);
+      await _tap(tester, find.text('إغلاق'));
+      await _tap(tester, find.byKey(const ValueKey('delete-user-guest-1')));
+      await tester.enterText(
+        find.byKey(const ValueKey('delete-user-confirmation')),
+        'guest-1',
+      );
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(client.posts.last.body['action'], 'delete');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'timed subscriptions save inclusive dates and can become permanent',
+    (tester) async {
+      final client = _UsersClient(
+        users: [_guest(role: 'subscribed', expired: false)],
+      );
+      await _pump(tester, client);
+      expect(find.text('Permanent subscription'), findsOneWidget);
+      await _openAccess(tester);
+      await _tap(tester, find.byKey(const ValueKey('subscription-term-true')));
+      await _tap(tester, find.text('Timed').last);
+      expect(
+        find.text('Access includes this entire date in Asia/Beirut.'),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('subscription-expiry-date')),
+        '2027-03-28',
+      );
+      await _tap(tester, find.byKey(const ValueKey('save-user-access')));
+      expect(client.posts.single.body, {
+        'revision': 'original-revision',
+        'role': 'subscribed',
+        'subscriptionPermanent': false,
+        'subscriptionExpiresOn': '2027-03-28',
+      });
+      expect(
+        find.text('Subscription expiry date: 2027-03-28 (Asia/Beirut)'),
+        findsOneWidget,
+      );
+      await _tap(
+        tester,
+        find.byKey(const ValueKey('edit-user-access-guest-1')),
+      );
+      await _tap(tester, find.byKey(const ValueKey('subscription-term-false')));
+      await _tap(tester, find.text('Permanent').last);
+      expect(
+        find.byKey(const ValueKey('subscription-expiry-date')),
+        findsNothing,
+      );
+      await _tap(tester, find.byKey(const ValueKey('save-user-access')));
+      expect(client.posts.last.body, {
+        'revision': 'saved-revision',
+        'role': 'subscribed',
+        'subscriptionPermanent': true,
+      });
+      expect(find.text('Permanent subscription'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'expired subscriptions show expiry and reject invalid timed dates',
+    (tester) async {
+      final client = _UsersClient(
+        users: [
+          {
+            ..._guest(role: 'subscribed', expired: false),
+            'subscriptionPermanent': false,
+            'subscriptionExpiresOn': '2026-09-01',
+            'subscriptionExpired': true,
+          },
+        ],
+      );
+      await _pump(tester, client);
+      expect(find.text('Subscribed · Subscription expired'), findsOneWidget);
+      await _openAccess(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('subscription-expiry-date')),
+        '2027-02-30',
+      );
+      await _tap(tester, find.byKey(const ValueKey('save-user-access')));
+      expect(find.text('Enter a valid date as YYYY-MM-DD.'), findsOneWidget);
+      expect(client.posts, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'suspend and resume require confirmation and show updated account status',
+    (tester) async {
+      final client = _UsersClient(users: [_guest(expired: false)]);
+      await _pump(tester, client);
+      await _tap(tester, find.text('Grace Guest'));
+      await _tap(tester, find.byKey(const ValueKey('suspend-user-guest-1')));
+      expect(find.text('Suspend user?'), findsOneWidget);
+      expect(find.text('grace@example.test'), findsWidgets);
+      expect(
+        find.textContaining('profile and preferences will be kept'),
+        findsOneWidget,
+      );
+      expect(client.posts, isEmpty);
+      await _tap(tester, find.text('Cancel'));
+      expect(client.posts, isEmpty);
+      await _tap(tester, find.byKey(const ValueKey('suspend-user-guest-1')));
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(client.posts.single.path, '/admin/users/guest-1/actions');
+      expect(client.posts.single.body, {
+        'revision': 'original-revision',
+        'action': 'suspend',
+        'confirmation': 'guest-1',
+      });
+      expect(find.text('Guest · Suspended'), findsOneWidget);
+      await _tap(tester, find.byKey(const ValueKey('resume-user-guest-1')));
+      expect(
+        find.textContaining('existing role and expiry date still apply'),
+        findsOneWidget,
+      );
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(client.posts.last.body['action'], 'resume');
+      expect(find.text('Guest · Active'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'termination conflicts require reload before confirmation with a fresh revision',
+    (tester) async {
+      final client = _UsersClient(users: [_guest(expired: false)])
+        ..mutationError = const AdminApiException(
+          'Stale account',
+          status: 409,
+          code: 'membership_conflict',
+        );
+      await _pump(tester, client);
+      await _tap(tester, find.text('Grace Guest'));
+      await _tap(tester, find.byKey(const ValueKey('terminate-user-guest-1')));
+      expect(find.textContaining('existing sessions revoked'), findsOneWidget);
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(
+        find.text(
+          'This account changed. Reload the account and confirm the action again.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('confirm-user-action')),
+            )
+            .onPressed,
+        isNull,
+      );
+      client.mutationError = null;
+      client.reloadedUser = {
+        ..._guest(expired: false),
+        'revision': 'fresh-revision',
+      };
+      await _tap(tester, find.byKey(const ValueKey('reload-user-action')));
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(client.posts.last.body, {
+        'revision': 'fresh-revision',
+        'action': 'terminate',
+        'confirmation': 'guest-1',
+      });
+      expect(find.text('Guest · Terminated'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'deletion requires matching typed identity and removes the confirmed account',
+    (tester) async {
+      final client = _UsersClient(users: [_guest(expired: false)]);
+      await _pump(tester, client);
+      await _tap(tester, find.text('Grace Guest'));
+      await _tap(tester, find.byKey(const ValueKey('delete-user-guest-1')));
+      expect(find.textContaining('This cannot be undone.'), findsOneWidget);
+      final button = find.byKey(const ValueKey('confirm-user-action'));
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      await tester.enterText(
+        find.byKey(const ValueKey('delete-user-confirmation')),
+        'wrong@example.test',
+      );
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      expect(client.posts, isEmpty);
+      await tester.enterText(
+        find.byKey(const ValueKey('delete-user-confirmation')),
+        'grace@example.test',
+      );
+      await _tap(tester, button);
+      expect(client.posts.single.body, {
+        'revision': 'original-revision',
+        'action': 'delete',
+        'confirmation': 'guest-1',
+      });
+      expect(find.text('Grace Guest'), findsNothing);
+      expect(find.text('User deleted.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'incomplete deletion can be retried while other changes are disabled',
+    (tester) async {
+      final client = _UsersClient(
+        users: [
+          {..._guest(), 'accountStatus': 'deleting'},
+        ],
+      );
+      await _pump(tester, client);
+      expect(find.text('Guest · Deletion in progress'), findsOneWidget);
+      await _tap(tester, find.text('Grace Guest'));
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('suspend-user-guest-1')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('terminate-user-guest-1')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('edit-user-access-guest-1')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(find.text('Retry deletion'), findsOneWidget);
+      await _tap(tester, find.byKey(const ValueKey('delete-user-guest-1')));
+      await tester.enterText(
+        find.byKey(const ValueKey('delete-user-confirmation')),
+        'guest-1',
+      );
+      await _tap(tester, find.byKey(const ValueKey('confirm-user-action')));
+      expect(client.posts.single.body['action'], 'delete');
+      expect(find.text('Grace Guest'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'details load saved preferences and paginated login and session activity',
+    (tester) async {
+      final client = _UsersClient(users: [_guest()])
+        ..reloadedUser = {
+          ..._guest(),
+          'profileCompleted': true,
+          'preferencesSource': 'saved_profile',
+          'preferences': {
+            'menuLanguage': 'arabic',
+            'topicLanguage': 'french',
+            'bibleLanguage': 'english',
+            'bibleVersion': 'kjv',
+            'zoomLevel': 1.2,
+            'showDiacritics': true,
+            'interlinearEnabled': false,
+            'showTranslationLabels': true,
+            'showTopicNamesInChapter': false,
+          },
+        }
+        ..activityPages = [
+          {
+            'summary': {
+              'lastActiveAt': '2026-10-11T09:05:00Z',
+              'totalActiveSeconds': 3660,
+              'loginCount': 2,
+              'sessionCount': 2,
+            },
+            'logins': [
+              {'id': 'login-new', 'signedInAt': '2026-10-11T09:00:00Z'},
+            ],
+            'sessions': [
+              {
+                'id': 'session-new',
+                'startedAt': '2026-10-11T09:00:00Z',
+                'lastActiveAt': '2026-10-11T09:05:00Z',
+                'activeSeconds': 300,
+              },
+            ],
+            'nextPageToken': 'activity+cursor=',
+          },
+          {
+            'summary': {
+              'lastActiveAt': '2026-10-11T09:05:00Z',
+              'totalActiveSeconds': 3660,
+              'loginCount': 2,
+              'sessionCount': 2,
+            },
+            'logins': [
+              {'id': 'login-old', 'signedInAt': '2026-10-10T08:00:00Z'},
+            ],
+            'sessions': [
+              {
+                'id': 'session-old',
+                'startedAt': '2026-10-10T08:00:00Z',
+                'lastActiveAt': '2026-10-10T08:56:00Z',
+                'endedAt': '2026-10-10T09:00:00Z',
+                'activeSeconds': 3360,
+              },
+            ],
+            'nextPageToken': null,
+          },
+        ];
+      await _pump(tester, client);
+      await _tap(tester, find.text('Grace Guest'));
+      await _tap(
+        tester,
+        find.byKey(const ValueKey('view-user-details-guest-1')),
+      );
+      expect(find.text('Interface language: arabic'), findsOneWidget);
+      expect(find.text('Topic language: french'), findsOneWidget);
+      expect(find.text('Bible translation: kjv'), findsOneWidget);
+      expect(find.text('Text size: 120%'), findsOneWidget);
+      expect(find.text('Arabic diacritics: On'), findsOneWidget);
+      expect(find.text('Profile completed: Yes'), findsOneWidget);
+      expect(
+        find.textContaining('excludes idle or background time'),
+        findsOneWidget,
+      );
+      expect(find.text('Estimated active time: 1 h 1 min'), findsOneWidget);
+      expect(find.text('Logins: 2'), findsOneWidget);
+      expect(find.textContaining('Signed in:'), findsOneWidget);
+      await _tap(tester, find.byKey(const ValueKey('load-more-user-activity')));
+      expect(
+        Uri.parse(client.paths.last).queryParameters['pageToken'],
+        'activity+cursor=',
+      );
+      expect(find.textContaining('Signed in:'), findsNWidgets(2));
+      expect(find.textContaining('Ended:'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('load-more-user-activity')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'details distinguish missing preferences and retry activity errors',
+    (tester) async {
+      final client = _UsersClient(users: [_guest()])
+        ..activityError = const AdminApiException(
+          'Activity temporarily unavailable',
+        );
+      await _pump(tester, client);
+      await _tap(tester, find.text('Grace Guest'));
+      await _tap(
+        tester,
+        find.byKey(const ValueKey('view-user-details-guest-1')),
+      );
+      expect(
+        find.text('No preferences have been saved by this user.'),
+        findsOneWidget,
+      );
+      expect(find.text('Activity temporarily unavailable'), findsOneWidget);
+      client.activityError = null;
+      await _tap(tester, find.text('Retry activity'));
+      expect(find.text('No logins recorded yet.'), findsOneWidget);
+      expect(find.text('No sessions recorded yet.'), findsOneWidget);
+      expect(client.posts, isEmpty);
+    },
+  );
+
+  testWidgets(
     'expired guests show their cutoff and blocked reading; subscribed save refreshes permissions',
     (tester) async {
       final client = _UsersClient(users: [_guest()]);
@@ -197,6 +684,7 @@ void main() {
       expect(client.posts.single.body, {
         'revision': 'original-revision',
         'role': 'subscribed',
+        'subscriptionPermanent': true,
       });
       expect(find.text('Subscribed · Active'), findsOneWidget);
       expect(find.text('Read Bible and topics'), findsOneWidget);
@@ -306,7 +794,10 @@ void main() {
         'revision': 'fresh-revision',
         'role': 'admin',
       });
-      expect(find.text('Manage user roles and guest access'), findsOneWidget);
+      expect(
+        find.text('Manage user roles, access and accounts'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -326,6 +817,16 @@ void main() {
       find.text('Your own access cannot be changed here.'),
       findsOneWidget,
     );
+    for (final action in ['suspend', 'terminate', 'delete']) {
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(ValueKey('$action-user-guest-1')),
+            )
+            .onPressed,
+        isNull,
+      );
+    }
     expect(client.posts, isEmpty);
   });
 

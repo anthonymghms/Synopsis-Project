@@ -410,6 +410,15 @@ npx firebase-tools emulators:exec --only firestore --project demo-synopsis-profi
   "../venv/bin/python -m unittest discover -s ../tests -p test_profile_rules.py -v"
 ```
 
+The membership-rule and real activity transaction/query checks use the same
+local emulator. From the repository root, run:
+
+```sh
+npx firebase-tools emulators:exec --only firestore --project demo-synopsis-profile \
+  --config gospel_frontend/firebase.json \
+  "./venv/bin/python -m unittest tests.test_profile_rules tests.test_membership_rules tests.test_user_activity_emulator -v"
+```
+
 ## Testing an Admin Portal import
 
 ### Import or replace Master Harmony
@@ -551,18 +560,51 @@ GET/POST /admin/content/bibles/{language}/{version}
 GET/POST /admin/content/bibles/{language}/{version}/{book}/{chapter}
 GET      /admin/users?pageSize=50&pageToken=...
 GET/POST /admin/users/{uid}
+POST     /admin/users/{uid}/actions
+GET      /admin/users/{uid}/activity?pageSize=20&pageToken=...
 GET      /account/access
+POST     /account/activity
 ```
 
 GET editor responses include a `revision`; POST must send that revision. Stale
 saves return HTTP 409 with `content_conflict` and preserve the active content.
 The Users section lists all Firebase Authentication accounts across pages,
 including accounts without completed profiles, with their effective permissions,
-role source, disabled/verified status, and sign-in dates. Choose **Edit access**
-to assign Guest, Subscribed, or Administrator and set a guest's expiry date.
-The endpoint uses revision checks and audit records; administrators cannot change
-their own access. Firebase Authentication list-user permission is required for
-the backend service account.
+role source, disabled/verified status, and sign-in dates. Choose **Edit role &
+access** to assign Guest, Subscribed, or Administrator. Subscriptions can be
+**Permanent** or **Timed**; timed subscriptions and guests have an inclusive last
+access date in `MEMBERSHIP_TIMEZONE` (Asia/Beirut by default). The server and client
+both block reading at the cutoff. Existing subscriptions stay permanent unless an
+administrator changes them to timed access.
+
+**View settings & activity** shows saved language/version choices, display and
+reading preferences, observed login timestamps, session history, last activity,
+and estimated total active time. The updated app reports cumulative interaction
+time once per minute. It excludes background time and stops counting after two
+minutes without pointer, scroll or keyboard interaction. This allows reading
+between interactions; it is an estimate, not a measure of reading completion.
+Sessions and logins are deduplicated, token refreshes do not create extra logins,
+and overlapping tabs do not double total time. Tracking starts with the updated
+app; it cannot reconstruct complete earlier activity. Activity failures never
+block reading. Activity collections are private and backend-only.
+
+**Suspend** temporarily blocks reading while retaining the account and settings.
+**Terminate access** revokes current sessions and blocks reading while retaining
+the account. **Resume access** restores either state, subject to the existing
+subscription/guest cutoff; it does not extend expired access or re-enable an
+account disabled separately in Firebase. All actions show a confirmation with
+the user's identity. **Delete user** additionally requires typing the user's
+email or ID and removes Firebase Authentication, profile/preferences and activity
+records. A minimal membership denial marker remains to prevent cached Firestore
+tokens recreating the profile; administration audit records remain. A failed
+deletion keeps the account blocked and offers a fresh confirmed retry.
+
+The endpoints use revision checks and audit records. Administrators cannot change
+their own access or suspend, terminate or delete their own account. The backend
+service account needs Firebase Authentication list/get/delete and token-revocation
+permissions, plus Firestore read/write access. Deploy the updated backend,
+Flutter web build and Firestore rules together; deploying only the frontend will
+not enable these features.
 
 ### Validated uploads and the Ancient Greek report
 

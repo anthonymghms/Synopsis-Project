@@ -1,4 +1,5 @@
 import 'account_access.dart';
+import 'user_activity.dart';
 // main_scaffold.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -60,6 +61,7 @@ class MainScaffold extends StatelessWidget {
               onSelected: (value) async {
                 endAccountMenu();
                 if (value == 'logout') {
+                  await finishUserActivity();
                   accountAccess.clear();
                   UserProfileController.instance.clear();
                   await FirebaseAuth.instance.signOut();

@@ -15,6 +15,7 @@ import 'interface_translations.dart';
 import 'native_language_names.dart';
 import 'reader_language_route.dart';
 import 'account_access.dart';
+import 'user_activity.dart';
 import 'settings_screen.dart';
 export 'interface_translations.dart';
 import 'dart:async';
@@ -4425,7 +4426,7 @@ class _GospelAppState extends State<GospelApp> {
           final menuLanguage = MenuLanguageScope.of(context);
           return Directionality(
             textDirection: menuLanguage.direction,
-            child: child ?? const SizedBox.shrink(),
+            child: UserActivityScope(child: child ?? const SizedBox.shrink()),
           );
         },
       ),
@@ -4764,6 +4765,21 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
                         icon: const Icon(Icons.refresh),
                         label: Text(arabic ? 'إعادة المحاولة' : 'Try again'),
                       ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          await finishUserActivity();
+                          accountAccess.clear();
+                          UserProfileController.instance.clear();
+                          await FirebaseAuth.instance.signOut();
+                          if (context.mounted) {
+                            Navigator.of(
+                              context,
+                            ).popUntil((route) => route.isFirst);
+                          }
+                        },
+                        icon: const Icon(Icons.logout),
+                        label: Text(arabic ? 'تسجيل الخروج' : 'Sign out'),
+                      ),
                     ],
                   ),
                 ),
@@ -4789,6 +4805,7 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
             MaterialPageRoute(builder: (_) => const SettingsScreen()),
           ),
           onSignOut: () async {
+            await finishUserActivity();
             accountAccess.clear();
             UserProfileController.instance.clear();
             await FirebaseAuth.instance.signOut();
