@@ -1,0 +1,4 @@
+-r ../requirements.txt
+# Official Gunicorn 26.2.2 release, pinned to its commit and verified archive hash.
+# PyPI still lists 26.2.0; 26.2.1 contains HTTP framing/resource-exhaustion fixes.
+gunicorn @ https://codeload.github.com/benoitc/gunicorn/tar.gz/8d98faa9a13d3399a7bea81b5169e5cd72225395#sha256=b42561d72978f30c97b65ea1ba54b0171dfe7f1ef8603b13085647cacec2077d
