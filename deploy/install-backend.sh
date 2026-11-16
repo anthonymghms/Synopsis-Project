@@ -30,6 +30,7 @@ sudo -u paragospels test -r /etc/paragospels/firebase-service-account.json ||
 # Export only committed backend files; keep the SSH checkout and web files apart.
 paths=(
     app.py admin_api.py admin_content_api.py admin_users_api.py user_activity_api.py
+    dataset_api.py
     services localization/interface_translations.json requirements.txt
     deploy/requirements.txt deploy/gunicorn.conf.py
     deploy/paragospels.service deploy/app.env.example

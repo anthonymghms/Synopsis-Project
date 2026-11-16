@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -28,6 +29,7 @@ void main() {
   late AccountAccessController originalAccess;
   late MockClient client;
   late List<Uri> requests;
+  Completer<void>? canonicalRelease;
 
   setUpAll(() async {
     setupFirebaseCoreMocks();
@@ -53,6 +55,7 @@ void main() {
     );
     accountAccess.beginSession('reader');
     requests = [];
+    canonicalRelease = null;
     client = MockClient((request) async {
       requests.add(request.url);
       expect(request.headers['Authorization'], 'Bearer reader-test-token');
@@ -73,6 +76,7 @@ void main() {
           ],
         };
       } else if (path == '/harmony/topics') {
+        await canonicalRelease?.future;
         response = {
           'topics': [
             {
@@ -125,6 +129,9 @@ void main() {
   });
 
   tearDown(() async {
+    if (canonicalRelease != null && !canonicalRelease!.isCompleted) {
+      canonicalRelease!.complete();
+    }
     accountAccess.dispose();
     accountAccess = originalAccess;
     client.close();
@@ -313,6 +320,37 @@ void main() {
       findsWidgets,
     );
   }
+
+  testWidgets('topic localization starts while canonical topics are pending', (
+    tester,
+  ) async {
+    canonicalRelease = Completer<void>();
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await http.runWithClient(() async {
+      try {
+        await accountAccess.refresh(force: true);
+        await tester.pumpWidget(app(route('/topic', menu: 'arabic')));
+        await tester.pump();
+        expect(
+          requests.map((uri) => uri.path),
+          containsAll(['/harmony/topics', '/topic-localizations/arabic']),
+        );
+        expect(canonicalRelease!.isCompleted, isFalse);
+        canonicalRelease!.complete();
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('قصة ولادة يوحنا المعمدان', findRichText: true),
+          findsWidgets,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        if (!canonicalRelease!.isCompleted) canonicalRelease!.complete();
+        await tester.pumpWidget(const SizedBox());
+        accountAccess.clear();
+      }
+    }, () => client);
+  });
 
   for (final path in ['/reference', '/topic']) {
     testWidgets(

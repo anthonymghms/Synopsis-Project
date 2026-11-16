@@ -40,6 +40,84 @@ void main() {
     expect('<tr>'.allMatches(html), hasLength(290));
   });
 
+  test(
+    'grouped print includes complete groups while CSV retains only rows',
+    () {
+      const rows = [
+        ['1 Same name', 'Parable', '1:1'],
+        ['2 Same name', 'Parable', '1:2'],
+        ['3 Other', 'Figure of Speech', '2:1'],
+        ['4 Missing', 'Unclassified', '2:2'],
+      ];
+      final document = TopicsTableDocument(
+        title: 'Synthetic Parables fixture',
+        headers: ['Subjects', 'Type', 'Luke'],
+        rows: rows,
+        groups: [
+          TopicsTableDocumentGroup(label: 'Figure of Speech', rows: [rows[2]]),
+          TopicsTableDocumentGroup(
+            label: 'Parable <&>',
+            rows: [rows[0], rows[1]],
+          ),
+          TopicsTableDocumentGroup(label: 'Unclassified', rows: [rows[3]]),
+        ],
+      );
+      final html = document.toPrintHtml();
+      expect(html, contains('scope="rowgroup">Parable &lt;&amp;&gt; — 2'));
+      expect(html, contains('scope="rowgroup">Unclassified — 1'));
+      expect(html, contains('colspan="3"'));
+      expect('class="topic-type-group"'.allMatches(html), hasLength(3));
+      expect(html.indexOf('3 Other'), lessThan(html.indexOf('1 Same name')));
+      expect(
+        html.indexOf('1 Same name'),
+        lessThan(html.indexOf('2 Same name')),
+      );
+      expect(document.toCsv().split('\r\n'), hasLength(6));
+      expect(document.toCsv(), isNot(contains('Parable <&>')));
+      expect(document.toCsv(), contains('"2 Same name","Parable","1:2"'));
+    },
+  );
+
+  test('partial or duplicated print groups cannot silently remove rows', () {
+    const document = TopicsTableDocument(
+      title: 'Complete export',
+      headers: ['Subjects'],
+      rows: [
+        ['1 One'],
+        ['2 Two'],
+      ],
+      groups: [
+        TopicsTableDocumentGroup(
+          label: 'Partial',
+          rows: [
+            ['1 One'],
+          ],
+        ),
+      ],
+    );
+    expect(document.toPrintHtml(), contains('2 Two'));
+    expect(document.toPrintHtml(), isNot(contains('topic-type-group')));
+    const duplicates = TopicsTableDocument(
+      title: 'Same labels are still different rows',
+      headers: ['Subjects'],
+      rows: [
+        ['Same'],
+        ['Same'],
+      ],
+      groups: [
+        TopicsTableDocumentGroup(
+          label: 'All',
+          rows: [
+            ['Same'],
+            ['Same'],
+          ],
+        ),
+      ],
+    );
+    expect('<td>Same</td>'.allMatches(duplicates.toPrintHtml()), hasLength(2));
+    expect(duplicates.toPrintHtml(), contains('All — 2'));
+  });
+
   test('outputs follow filtering, chronology and column visibility', () {
     final topics = [
       Topic(

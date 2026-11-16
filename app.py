@@ -2,6 +2,7 @@ from flask import Flask, request, Response
 import json
 import os
 import re
+from itertools import islice
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -9,6 +10,7 @@ from admin_api import admin_api
 from admin_content_api import admin_content_api
 from admin_users_api import admin_users_api
 from user_activity_api import user_activity_api
+from dataset_api import dataset_api, legacy_dataset_topics
 from services.admin_auth import AdminAuthorizationError, verify_identity
 from services.membership_service import verify_reader_authorization
 from services.admin_content_service import bible_verses_collection
@@ -27,6 +29,7 @@ app.register_blueprint(admin_api)
 app.register_blueprint(admin_content_api)
 app.register_blueprint(admin_users_api)
 app.register_blueprint(user_activity_api)
+app.register_blueprint(dataset_api)
 
 
 def _cors_origins():
@@ -124,6 +127,9 @@ def get_topics(language, version):
 
 @app.route("/<language>/<version>/topic/<topic_id>", methods=["GET"])
 def get_topic(language, version, topic_id):
+    selected_dataset = request.args.get("dataset", "harmony")
+    if selected_dataset != "harmony":
+        return legacy_dataset_topics(selected_dataset, _requested_topic_language(language), topic_id, db=db)
     selected_language = _select_bible_language(language)
     selected_version = _select_bible_version(selected_language, version)
     topic_language = _requested_topic_language(selected_language)
@@ -525,14 +531,28 @@ def _build_verse_payload(verse_identifier, data):
     }
 
 
-def _load_single_verse(language, version, book_doc_id, chapter, verse_identifier):
-    verse_ref = (
-        bible_verses_collection(db, language, version, book_doc_id, str(chapter))
-        .document(str(verse_identifier))
+def _load_verses(language, version, book_doc_id, chapter, verse_identifiers):
+    # Resolve the active import/editor revision once for this request, then
+    # batch reads instead of fetching metadata and text separately per verse.
+    # Nothing is cached across requests: the next preview sees new edits.
+    collection = bible_verses_collection(
+        db, language, version, book_doc_id, str(chapter)
     )
-    verse_doc = verse_ref.get()
-    data = verse_doc.to_dict() if verse_doc.exists else {}
-    return _build_verse_payload(verse_identifier, data)
+    identifiers = iter(verse_identifiers)
+    results = []
+    while batch := list(islice(identifiers, 100)):
+        snapshots = db.get_all([collection.document(str(value)) for value in batch])
+        # Firestore batch reads may arrive out of order and include missing docs.
+        values = {
+            snapshot.id: snapshot.to_dict()
+            for snapshot in snapshots
+            if snapshot is not None and snapshot.exists
+        }
+        results.extend(
+            _build_verse_payload(value, values.get(str(value), {}))
+            for value in batch
+        )
+    return results
 
 
 @app.route("/get_verse", methods=["GET"])
@@ -556,16 +576,16 @@ def get_verse():
             status=404,
         )
 
-    results = []
     if "-" in verse:
         try:
             start, end = map(int, verse.split("-"))
         except ValueError:
             return _json_response({"error": "Invalid verse range"}, status=400)
-        for i in range(start, end + 1):
-            results.append(_load_single_verse(language, version, book, chapter, i))
+        verse_identifiers = range(start, end + 1)
     else:
-        results.append(_load_single_verse(language, version, book, chapter, verse))
+        verse_identifiers = [verse]
+
+    results = _load_verses(language, version, book, chapter, verse_identifiers)
 
     return _json_response(results, cache_seconds=0)
 
@@ -869,6 +889,7 @@ def _legacy_localization_payload(language: str) -> tuple[dict | None, list[dict]
 
 
 @app.route("/harmony/topics", methods=["GET"])
+@app.route("/datasets/harmony/topics", methods=["GET"])
 def get_canonical_harmony_topics():
     topics_ref = _canonical_topics_collection()
     source = "harmony/canonical"
@@ -906,6 +927,7 @@ def get_topic_languages():
 
 
 @app.route("/topic-localizations/<language>", methods=["GET"])
+@app.route("/datasets/harmony/localizations/<language>", methods=["GET"])
 def get_topic_localization(language):
     normalized = _normalize_topic_language(language)
     metadata = _topic_language_metadata(normalized)
@@ -945,6 +967,9 @@ def get_topic_localization(language):
 
 @app.route("/topics", methods=["GET"])
 def get_topics():
+    selected_dataset = request.args.get("dataset", "harmony")
+    if selected_dataset != "harmony":
+        return legacy_dataset_topics(selected_dataset, _requested_topic_language(request.args.get("language", "english")), db=db)
     language = request.args.get("language", "english")
     version = request.args.get("version", "kjv")
 

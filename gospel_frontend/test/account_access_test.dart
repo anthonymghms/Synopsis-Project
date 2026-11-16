@@ -8,6 +8,94 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  testWidgets('reader boundary reuses fresh access verified during login', (
+    tester,
+  ) async {
+    var requests = 0;
+    final controller = AccountAccessController(
+      tokenProvider: () async => 'token',
+      client: MockClient((_) async {
+        requests++;
+        return http.Response(
+          jsonEncode({
+            'uid': 'reader',
+            'role': 'subscribed',
+            'canRead': true,
+            'accessStatus': 'active',
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+    controller.beginSession('reader');
+    await controller.refresh();
+    expect(requests, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AccountAccessBoundary(
+          controller: controller,
+          uid: 'reader',
+          builder: (_) => const Text('Reader content'),
+          onSettings: () {},
+          onSignOut: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Reader content'), findsOneWidget);
+    expect(requests, 1);
+    await tester.pumpWidget(const SizedBox());
+    controller.clear();
+  });
+
+  testWidgets(
+    'reader boundary rechecks stale access and hides revoked content',
+    (tester) async {
+      var now = DateTime.utc(2026, 10, 17);
+      var requests = 0;
+      final controller = AccountAccessController(
+        clock: () => now,
+        tokenProvider: () async => 'token',
+        client: MockClient((_) async {
+          requests++;
+          return http.Response(
+            jsonEncode({
+              'uid': 'reader',
+              'role': 'subscribed',
+              'canRead': requests == 1,
+              'accessStatus': requests == 1 ? 'active' : 'suspended',
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(controller.dispose);
+      controller.beginSession('reader');
+      await controller.refresh();
+      now = now.add(const Duration(minutes: 2));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AccountAccessBoundary(
+            controller: controller,
+            uid: 'reader',
+            builder: (_) => const Text('Reader content'),
+            onSettings: () {},
+            onSignOut: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(requests, 2);
+      expect(find.text('Reader content'), findsNothing);
+      expect(find.text('Your account is suspended.'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      controller.clear();
+    },
+  );
+
   test(
     'timed subscriptions stop at their cutoff and malformed expiry denies access',
     () {

@@ -68,6 +68,19 @@ String _importStatus(Map<String, dynamic> item, _AdminLabels labels) {
   return item['stage']?.toString() ?? status?.toString() ?? '';
 }
 
+String _importTitle(Map<String, dynamic> item, _AdminLabels labels) {
+  if (item['type'] == 'dataset') {
+    return switch (item['datasetId']) {
+      'miracles' => labels.t('Miracles', 'المعجزات'),
+      'parables' => labels.t('Parables', 'الأمثال'),
+      _ => item['datasetId']?.toString() ?? '',
+    };
+  }
+  return item['type'] == 'bible'
+      ? '${item['language']} · ${item['version'] ?? ''}'
+      : item['language']?.toString() ?? '';
+}
+
 class _HistoryCards extends StatelessWidget {
   const _HistoryCards({
     required this.data,
@@ -89,15 +102,12 @@ class _HistoryCards extends StatelessWidget {
               leading: Icon(
                 item['type'] == 'bible' ? Icons.menu_book : Icons.table_chart,
               ),
-              title: Text(
-                item['type'] == 'bible'
-                    ? '${item['language']} · ${item['version'] ?? ''}'
-                    : item['language']?.toString() ?? '',
-              ),
+              title: Text(_importTitle(item, labels)),
               subtitle: Text(_importStatus(item, labels)),
               trailing: IconButton(
                 key: ValueKey('open-import-${item['id']}'),
-                tooltip: item['status'] == 'validated'
+                tooltip:
+                    item['status'] == 'validated' && item['type'] != 'dataset'
                     ? labels.t(
                         'Review & finish import',
                         'مراجعة وإكمال الاستيراد',
@@ -241,7 +251,7 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
             if (_error != null) _InlineError(_error!),
             if (record != null) ...[
               Text(
-                '${record['language']} ${record['version'] ?? ''}',
+                _importTitle(record, labels),
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 12),
@@ -249,13 +259,29 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                 _importStatus(record, labels),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              if (record['status'] == 'validated')
+              if (record['status'] == 'validated' &&
+                  record['type'] != 'dataset')
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
                     labels.t(
                       'Your files passed validation. No records have been published yet. Finish the import below to make this content available.',
                       'اجتازت ملفاتك التحقق. لم يتم نشر أي سجلات بعد. أكمل الاستيراد أدناه لإتاحة هذا المحتوى.',
+                    ),
+                  ),
+                ),
+              if (record['type'] == 'dataset' &&
+                  const {
+                    'validated',
+                    'failed',
+                    'validation_failed',
+                  }.contains(record['status']))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    labels.t(
+                      'To review and publish this table, open Import Miracles / Parables, choose its Storage file or upload an updated CSV, and validate the source again.',
+                      'لمراجعة هذا الجدول ونشره، افتح استيراد المعجزات / الأمثال، واختر ملف التخزين أو ارفع CSV محدثًا، ثم أعد التحقق من المصدر.',
                     ),
                   ),
                 ),
@@ -328,7 +354,8 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                     ),
                   ),
                 ),
-              if (record['status'] == 'validation_failed')
+              if (record['status'] == 'validation_failed' &&
+                  record['type'] != 'dataset')
                 Text(
                   labels.t(
                     'Correct the reported errors and upload the files again.',

@@ -6,16 +6,22 @@ import 'package:gospel_frontend/admin_portal.dart';
 const _importId = '0123456789abcdef0123456789abcdef';
 
 class _ImportClient implements AdminClient {
-  _ImportClient({this.collision = false, this.status = 'validated'});
+  _ImportClient({
+    this.collision = false,
+    this.status = 'validated',
+    this.type = 'bible',
+  });
   final bool collision;
   final String status;
+  final String type;
   final posts = <({String path, Map<String, dynamic> body})>[];
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async => {
     'import': {
       'id': _importId,
-      'type': 'bible',
+      'type': type,
+      if (type == 'dataset') 'datasetId': 'parables',
       'language': 'ancientgreek',
       'version': 'TR',
       'status': posts.isEmpty ? status : 'completed',
@@ -81,6 +87,21 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets(
+    'dataset history names its target and requires reviewed revalidation',
+    (tester) async {
+      final client = _ImportClient(type: 'dataset');
+      await _pump(tester, client, () {});
+      expect(find.text('Parables'), findsOneWidget);
+      expect(
+        find.textContaining('open Import Miracles / Parables'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('resume-import')), findsNothing);
+      expect(client.posts, isEmpty);
+    },
+  );
+
   testWidgets(
     'validated import shows validated counts and resumes only after confirmation',
     (tester) async {

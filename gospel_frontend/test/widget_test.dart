@@ -1535,15 +1535,15 @@ void main() {
     final reference = find.byType(ReferenceHoverText);
     final gesture = await hoverOver(tester, reference);
 
-    await tester.pump(const Duration(milliseconds: 1000));
+    await tester.pump(const Duration(milliseconds: 150));
     expect(find.text('Click to read in chapter'), findsNothing);
 
     await gesture.moveTo(const Offset(2000, 2000));
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Click to read in chapter'), findsNothing);
 
     await gesture.moveTo(tester.getCenter(reference));
-    await tester.pump(const Duration(milliseconds: 1499));
+    await tester.pump(const Duration(milliseconds: 249));
     expect(find.text('Click to read in chapter'), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 1));
@@ -1973,7 +1973,7 @@ void main() {
     final combinedCell = find.byType(ReferenceCellHoverPreview);
     final gesture = await hoverOver(tester, combinedCell);
 
-    await tester.pump(const Duration(milliseconds: 1499));
+    await tester.pump(const Duration(milliseconds: 249));
     expect(find.text('Click to read in chapter'), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 1));

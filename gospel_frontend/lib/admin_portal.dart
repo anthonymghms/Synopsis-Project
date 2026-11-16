@@ -16,6 +16,7 @@ part 'interface_import_wizard.dart';
 part 'admin_content_editors.dart';
 part 'admin_import_details.dart';
 part 'bible_import_wizard.dart';
+part 'dataset_import_wizard.dart';
 
 class AdminPortal extends StatefulWidget {
   const AdminPortal({
@@ -89,6 +90,20 @@ class _AdminPortalState extends State<AdminPortal> {
         filePicker: widget.filePicker,
         maxUploadBytes: _maxUploadBytes,
         canonicalReferences: true,
+      ),
+    );
+  }
+
+  Future<void> _openDatasetImport() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DatasetImportWizard(
+        client: _client,
+        arabic: _arabic,
+        onCompleted: _importCompleted,
+        filePicker: widget.filePicker,
+        maxUploadBytes: _maxUploadBytes,
       ),
     );
   }
@@ -317,6 +332,7 @@ class _AdminPortalState extends State<AdminPortal> {
           labels: labels,
           onAdd: _openTopics,
           onUpdateHarmony: _openHarmony,
+          onImportDataset: _openDatasetImport,
           onInterfaceTranslations: _openInterfaceTranslations,
           onEdit: (language) => _openEditor(language),
         );
@@ -336,6 +352,7 @@ class _AdminPortalState extends State<AdminPortal> {
           addBible: _openBible,
           addTopics: _openTopics,
           updateHarmony: _openHarmony,
+          importDataset: _openDatasetImport,
           onOpenImport: _openImport,
         );
     }
@@ -362,6 +379,7 @@ class _Dashboard extends StatelessWidget {
     required this.addBible,
     required this.addTopics,
     required this.updateHarmony,
+    required this.importDataset,
     required this.onOpenImport,
   });
 
@@ -370,6 +388,7 @@ class _Dashboard extends StatelessWidget {
   final VoidCallback addBible;
   final VoidCallback addTopics;
   final VoidCallback updateHarmony;
+  final VoidCallback importDataset;
   final ValueChanged<Map<String, dynamic>> onOpenImport;
 
   @override
@@ -417,6 +436,12 @@ class _Dashboard extends StatelessWidget {
               onPressed: updateHarmony,
               icon: const Icon(Icons.edit_note_outlined),
               label: Text(labels.updateHarmony),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey<String>('import-additional-dataset'),
+              onPressed: importDataset,
+              icon: const Icon(Icons.table_view_outlined),
+              label: Text(labels.importAdditionalDataset),
             ),
           ],
         ),
@@ -540,6 +565,7 @@ class _TopicList extends StatelessWidget {
     required this.labels,
     required this.onAdd,
     required this.onUpdateHarmony,
+    required this.onImportDataset,
     required this.onInterfaceTranslations,
     required this.onEdit,
   });
@@ -550,6 +576,7 @@ class _TopicList extends StatelessWidget {
   final VoidCallback onAdd;
   final ValueChanged<String> onEdit;
   final VoidCallback onUpdateHarmony;
+  final VoidCallback onImportDataset;
   final void Function(String language, String label) onInterfaceTranslations;
 
   @override
@@ -586,6 +613,18 @@ class _TopicList extends StatelessWidget {
             icon: const Icon(Icons.upload_file_outlined),
             label: Text(labels.updateMaster),
           ),
+        ),
+      ),
+      const SizedBox(height: 24),
+      _SectionHeader(
+        title: labels.t('Miracles and Parables', 'المعجزات والأمثال'),
+        action: labels.importAdditionalDataset,
+        onAction: onImportDataset,
+      ),
+      Text(
+        labels.t(
+          'Import each table with its own items, references, languages, and optional Type classifications.',
+          'استورد كل جدول بمواضيعه ومراجعه ولغاته وتصنيفاته الاختيارية حسب النوع.',
         ),
       ),
       const SizedBox(height: 24),
@@ -1702,6 +1741,8 @@ class _AdminLabels {
     'Import / Replace Master Harmony',
     'استيراد / استبدال جدول التناغم الرئيسي',
   );
+  String get importAdditionalDataset =>
+      t('Import Miracles / Parables', 'استيراد المعجزات / الأمثال');
   String get bibleLanguages => t('Bible languages', 'لغات الكتاب المقدس');
   String get bibleVersions => t('Bible versions', 'ترجمات الكتاب المقدس');
   String get topicLanguages => t('Topic languages', 'لغات المواضيع');

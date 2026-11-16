@@ -750,3 +750,11 @@ Both changes update the URL so browser back/forward restores the prior view.
   direct cross-chapter strings. Use the explicit `+` grammar for a verified
   continuous boundary. The portal reports other ambiguous values with
   row/topic/field context instead of silently importing broken references.
+
+## Miracles and Parables tables
+
+The existing reader also supports independent Miracles and Parables datasets,
+with bilingual names, optional Type filtering/grouping, shared reading controls,
+and a separate Admin import workflow. See [DATASET_TABLES.md](DATASET_TABLES.md)
+for the verified Storage schemas, data model, publication steps, and tests.
+No live dataset is imported automatically by deployment.

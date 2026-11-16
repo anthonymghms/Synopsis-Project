@@ -348,7 +348,9 @@ class _AccountAccessBoundaryState extends State<AccountAccessBoundary>
     WidgetsBinding.instance.addObserver(this);
     widget.controller.beginSession(widget.uid);
     widget.controller.addListener(_changed);
-    unawaited(widget.controller.refresh(force: true));
+    // The profile gate may have just verified this same account. Reuse that
+    // fresh result; refresh() still fetches for a new session or stale access.
+    unawaited(widget.controller.refresh());
   }
 
   @override
