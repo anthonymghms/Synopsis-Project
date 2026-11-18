@@ -4,9 +4,16 @@ const topicDatasetIds = <String>['harmony', 'miracles', 'parables'];
 /// A UI-only category for a missing classification, never a guessed Type.
 const unclassifiedTypeId = '__unclassified__';
 
+final _datasetIdPattern = RegExp(r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$');
+
+bool isValidDatasetId(String value) =>
+    value.length >= 2 &&
+    value.length <= 48 &&
+    _datasetIdPattern.hasMatch(value);
+
 String normalizeDatasetId(String? value) {
-  final id = value?.trim().toLowerCase();
-  return topicDatasetIds.contains(id) ? id! : 'harmony';
+  final id = value?.trim().toLowerCase() ?? '';
+  return isValidDatasetId(id) ? id : 'harmony';
 }
 
 String datasetItemKey(String datasetId, String itemId) =>
@@ -15,25 +22,129 @@ String datasetItemKey(String datasetId, String itemId) =>
 bool _isArabic(String language) =>
     language.toLowerCase() == 'arabic' || language.toLowerCase() == 'ar';
 
-String datasetDisplayName(String datasetId, String language) {
-  final arabic = _isArabic(language);
-  final french =
-      language.toLowerCase() == 'french' || language.toLowerCase() == 'fr';
-  return switch (normalizeDatasetId(datasetId)) {
-    'miracles' => arabic ? 'المعجزات' : 'Miracles',
-    'parables' =>
-      arabic
-          ? 'الأمثال'
-          : french
-          ? 'Paraboles'
-          : 'Parables',
-    _ =>
-      arabic
-          ? 'التوافق / جميع المواضيع'
-          : french
-          ? 'Harmonie / Tous les sujets'
-          : 'Harmony / All Topics',
+String _datasetLabelLanguage(String language) =>
+    switch (language.toLowerCase()) {
+      'en' => 'english',
+      'ar' => 'arabic',
+      'fr' => 'french',
+      final value => value,
+    };
+
+/// Public catalog metadata only; references and localizations stay in their
+/// dataset-specific snapshots. A missing label never changes dataset identity.
+class DatasetCatalogEntry {
+  const DatasetCatalogEntry({
+    required this.datasetId,
+    this.labels = const {},
+    this.published = false,
+    this.revision = '',
+  });
+
+  final String datasetId;
+  final Map<String, String> labels;
+  final bool published;
+  final String revision;
+
+  factory DatasetCatalogEntry.fromJson(Map<String, dynamic> json) =>
+      DatasetCatalogEntry(
+        datasetId: normalizeDatasetId(json['datasetId']?.toString()),
+        labels: Map<String, String>.unmodifiable(_stringMap(json['labels'])),
+        published: json['published'] == true,
+        revision: (json['revision'] ?? '').toString(),
+      );
+
+  String label(String language) {
+    final normalizedLabels = <String, String>{
+      for (final entry in labels.entries)
+        if (entry.value.trim().isNotEmpty)
+          _datasetLabelLanguage(entry.key): entry.value.trim(),
+    };
+    final localized = normalizedLabels[_datasetLabelLanguage(language)];
+    if (localized != null) return localized;
+    final english = normalizedLabels['english'];
+    if (english != null) return english;
+    final languages = normalizedLabels.keys.toList()..sort();
+    if (languages.isNotEmpty) return normalizedLabels[languages.first]!;
+    return datasetId;
+  }
+}
+
+const builtinDatasetCatalog = <DatasetCatalogEntry>[
+  DatasetCatalogEntry(
+    datasetId: 'harmony',
+    labels: {
+      'english': 'Harmony / All Topics',
+      'arabic': 'التوافق / جميع المواضيع',
+      'french': 'Harmonie / Tous les sujets',
+    },
+  ),
+  DatasetCatalogEntry(
+    datasetId: 'miracles',
+    labels: {'english': 'Miracles', 'arabic': 'المعجزات', 'french': 'Miracles'},
+  ),
+  DatasetCatalogEntry(
+    datasetId: 'parables',
+    labels: {'english': 'Parables', 'arabic': 'الأمثال', 'french': 'Paraboles'},
+  ),
+];
+
+/// Built-ins remain available for old servers and unpublished installations.
+/// Additional tables enter the reader catalog only after publication. Invalid
+/// identifiers are discarded rather than being confused with Harmony.
+List<DatasetCatalogEntry> parseDatasetCatalog(dynamic value) {
+  final entries = <String, DatasetCatalogEntry>{
+    for (final entry in builtinDatasetCatalog) entry.datasetId: entry,
   };
+  final rawEntries = value is Map ? value['datasets'] : value;
+  if (rawEntries is List) {
+    for (final raw in rawEntries) {
+      if (raw is! Map) continue;
+      final id = raw['datasetId']?.toString().trim().toLowerCase() ?? '';
+      if (!isValidDatasetId(id)) continue;
+      final entry = DatasetCatalogEntry.fromJson(
+        Map<String, dynamic>.from(raw),
+      );
+      final builtin = topicDatasetIds.contains(id);
+      if (!builtin && !entry.published) continue;
+      final previous = entries[id];
+      entries[id] = DatasetCatalogEntry(
+        datasetId: id,
+        labels: Map<String, String>.unmodifiable({
+          if (previous != null) ...previous.labels,
+          ...entry.labels,
+        }),
+        published: entry.published,
+        revision: entry.revision,
+      );
+    }
+  }
+  final customIds =
+      entries.keys.where((id) => !topicDatasetIds.contains(id)).toList()
+        ..sort();
+  return List<DatasetCatalogEntry>.unmodifiable([
+    for (final id in topicDatasetIds) entries[id]!,
+    for (final id in customIds) entries[id]!,
+  ]);
+}
+
+Map<String, DatasetCatalogEntry> _datasetCatalogLabels = {
+  for (final entry in builtinDatasetCatalog) entry.datasetId: entry,
+};
+
+/// Called when the catalog cache loads or refreshes. Existing readers, exports,
+/// and navigation labels resolve the same published table names.
+void replaceDatasetCatalog(Iterable<DatasetCatalogEntry> entries) {
+  _datasetCatalogLabels = {
+    for (final entry in builtinDatasetCatalog) entry.datasetId: entry,
+    for (final entry in entries)
+      if (isValidDatasetId(entry.datasetId)) entry.datasetId: entry,
+  };
+}
+
+String datasetDisplayName(String datasetId, String language) {
+  final id = normalizeDatasetId(datasetId);
+  return (_datasetCatalogLabels[id] ?? DatasetCatalogEntry(datasetId: id))
+      .label(language);
 }
 
 String datasetControlLabel(String key, String language) {

@@ -284,6 +284,37 @@ class TableLanguageApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertNotIn('french', self.repo.metadata('parables')['languages'])
 
+    def test_custom_published_table_accepts_language_overlay_without_reference_copies(self):
+        labels = {'english': 'Teachings', 'arabic': 'التعاليم'}
+        self.repo.activate_dataset(import_id='e'*32, selected_dataset='teachings', result=parse_dataset_csv(CSV_FIXTURE), source={'checksum': hashlib.sha256(CSV_FIXTURE).hexdigest(), 'filename': 'fixture.csv'}, expected_revision=None, replace=False, confirmed_by='admin', create_new=True, labels=labels)
+        before = self.repo.canonical_payload('teachings')
+        other = self.repo.metadata('parables')
+        template = self.client.get('/admin/table-languages/template?datasetId=teachings&language=french')
+        self.assertEqual(template.status_code, 200)
+        self.assertEqual(template.get_json()['itemCount'], 3)
+        self.assertIn('10,Example One,', template.get_json()['csv'])
+        preview = self.validate('teachings').get_json()
+        self.assertTrue(preview['valid'])
+        response = self.client.post('/admin/table-languages/publish', json={'importId': preview['importId'], 'datasetId': 'teachings', 'language': 'french', 'confirm': True})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        after = self.repo.canonical_payload('teachings')
+        self.assertEqual(after['topics'], before['topics'])
+        self.assertEqual(after['metadata']['labels'], labels)
+        self.assertEqual(after['metadata']['canonicalTopicsPath'], f"dataset_revisions/{before['revision']}/topics")
+        self.assertEqual(self.repo.metadata('parables'), other)
+        names = self.repo.localization_payload('teachings', 'french')
+        self.assertEqual(names['language']['gospels'], GOSPELS)
+        self.assertEqual([row['name'] for row in names['topics']], ['French 10', 'French 20', 'French 30'])
+        entry = next(item for item in self.repo.catalog() if item['datasetId'] == 'teachings')
+        self.assertIn('french', entry['languages'])
+        self.assertEqual(entry['labels'], labels)
+        self.assertEqual(entry['revision'], after['revision'])
+
+    def test_unpublished_custom_table_cannot_receive_language_overlay(self):
+        response = self.client.get('/admin/table-languages/template?datasetId=teachings&language=french')
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()['error']['code'], 'dataset_not_published')
+
 
 if __name__ == '__main__':
     unittest.main()

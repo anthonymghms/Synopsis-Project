@@ -1,8 +1,8 @@
 # Add or update a table language
 
-The **Add / update table language** workflow translates one table at a time: **Harmony / All Topics**, **Miracles**, or **Parables**. It updates subject names, optional Type display labels, and the selected language's column headings. It preserves canonical references, item IDs, source order, Type classifications, and every other language.
+The **Add / update table language** workflow translates one table at a time: **Harmony / All Topics**, **Miracles**, **Parables**, or any published custom table. It updates subject names, optional Type display labels, and the selected language's column headings. It preserves canonical references, item IDs, source order, Type classifications, and every other language.
 
-All three reader tables display a separate **#** column followed by **Subject**, optional **Type**, and the visible Gospel columns. The number identifies the original item; translating a subject does not create a new item.
+All reader tables display a separate **#** column followed by **Subject**, optional **Type**, and the visible Gospel columns. The number identifies the original item; translating a subject does not create a new item.
 
 ## Reader language selection
 
@@ -15,7 +15,7 @@ Table-language imports remain specific to one table. Publishing French for Mirac
 ## Administrative steps
 
 1. Deploy the updated backend and frontend together and sign in as an authorized administrator. The selected table must already have published canonical items.
-2. Open **Admin Portal → Add / update table language**.
+2. Open **Admin Portal → Add / update table language**. Published custom tables appear in the same table chooser. To create a table first, use **Import table**, as described in [DATASET_TABLES.md](DATASET_TABLES.md).
 3. In **Table and language**, choose the table, then English, العربية, Français, or **Other language**. Review **Language code**, **Native language name**, and **Text direction**. Use the existing language code when updating a language; for French use `french`.
 4. Review **Translated column headings**: the subject heading plus Matthew, Mark, Luke, and John. Enter the labels in the target language. For an existing translation, downloading its template restores the currently published metadata so that these labels can be retained or edited deliberately.
 5. In **Download and translate**, select **Download CSV template**. The template comes from the selected table's current published items. Keep the item IDs intact and fill every subject translation.
@@ -59,7 +59,7 @@ Renaming `Miracles` to `Translation` by itself is insufficient: the file still l
 
 Validation stages a source file and records a preview without changing active reader content. Publication rechecks the staged source generation/checksum and the table/language revisions, then activates an immutable translation revision transactionally. A failed or stale import leaves the previous published state usable. Repeating an identical overlay is a no-op rather than duplicating items.
 
-For Miracles and Parables, the new dataset metadata snapshot reuses the existing canonical topics path and all other localization paths; only the selected language's names are written. For Harmony, the workflow uses the existing Harmony localization revision and pointer mechanism. Neither path changes Bible storage, canonical references, source order, item IDs, or Type identities.
+For Miracles, Parables, and custom tables, the new dataset metadata snapshot reuses the existing canonical topics path and all other localization paths; only the selected language's names are written. For Harmony, the workflow uses the existing Harmony localization revision and pointer mechanism. Neither path changes Bible storage, canonical references, source order, item IDs, or Type identities.
 
 The administrative API is:
 

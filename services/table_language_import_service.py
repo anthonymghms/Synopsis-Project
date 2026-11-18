@@ -7,18 +7,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .dataset_import_service import GOSPEL_LABELS, _decode
+from .dataset_import_service import GOSPEL_LABELS, _decode, dataset_id
 from .import_validation import ValidationReport
 from .topic_import_service import GOSPELS
 
-TABLE_IDS = {"harmony", "miracles", "parables"}
-
-
 def table_id(value: Any) -> str:
-    identifier = str(value or "").strip().lower()
-    if identifier not in TABLE_IDS:
-        raise ValueError("Choose Harmony, Miracles, or Parables.")
-    return identifier
+    identifier = value.strip() if isinstance(value, str) else ""
+    return identifier if identifier == "harmony" else dataset_id(identifier)
 
 
 def language_id(value: Any) -> str:

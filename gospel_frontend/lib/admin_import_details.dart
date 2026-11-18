@@ -71,12 +71,9 @@ String _importStatus(Map<String, dynamic> item, _AdminLabels labels) {
 
 String _importTitle(Map<String, dynamic> item, _AdminLabels labels) {
   if (item['type'] == 'dataset' || item['type'] == 'table_language') {
-    final table = switch (item['datasetId']) {
-      'harmony' => labels.t('Harmony / All Topics', 'التناغم / جميع المواضيع'),
-      'miracles' => labels.t('Miracles', 'المعجزات'),
-      'parables' => labels.t('Parables', 'الأمثال'),
-      _ => item['datasetId']?.toString() ?? '',
-    };
+    final table = _adminDatasetName(item['datasetId']?.toString() ?? '', [
+      item,
+    ], labels);
     return item['type'] == 'table_language'
         ? '$table · ${item['language'] ?? ''}'
         : table;
@@ -289,8 +286,8 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
                     labels.t(
-                      'To review and publish this table, open Import Miracles / Parables, choose its Storage file or upload an updated CSV, and validate the source again.',
-                      'لمراجعة هذا الجدول ونشره، افتح استيراد المعجزات / الأمثال، واختر ملف التخزين أو ارفع CSV محدثًا، ثم أعد التحقق من المصدر.',
+                      'To review and publish this table, open Import table, choose its table or Create new table, select an available Storage file or upload an updated CSV, and validate the source again.',
+                      'لمراجعة هذا الجدول ونشره، افتح استيراد جدول، واختر الجدول أو إنشاء جدول جديد، ثم اختر ملف التخزين أو ارفع CSV محدثًا، ثم أعد التحقق من المصدر.',
                     ),
                   ),
                 ),

@@ -12,8 +12,10 @@ class _Client implements AdminClient {
     this.replaces = false,
     this.failure,
     this.metadata,
+    this.catalogFailures = 0,
   });
   final bool valid, replaces;
+  int catalogFailures;
   final String? failure;
   final Map<String, dynamic>? metadata;
   final gets = <String>[];
@@ -29,6 +31,24 @@ class _Client implements AdminClient {
       >[];
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
+    if (path == '/admin/datasets') {
+      if (catalogFailures > 0) {
+        catalogFailures--;
+        throw const AdminApiException('Catalog unavailable');
+      }
+      return {
+        'datasets': [
+          for (final id in ['harmony', 'miracles', 'parables'])
+            {'datasetId': id, 'published': true},
+          {
+            'datasetId': 'teachings',
+            'labels': {'english': 'Teachings', 'arabic': 'التعاليم'},
+            'published': true,
+          },
+        ],
+      };
+    }
+
     gets.add(path);
     if (path == '/admin/overview') return {'counts': {}, 'recentImports': []};
     final uri = Uri.parse(path);
@@ -191,10 +211,45 @@ Future<void> _validate(WidgetTester t) async {
 }
 
 void main() {
+  testWidgets(
+    'language catalog failure blocks template and validation until retry',
+    (t) async {
+      final c = _Client(catalogFailures: 1);
+      await _pump(t, c);
+      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(
+        t
+            .widget<DropdownButtonFormField<String>>(
+              _key('table-language-dataset'),
+            )
+            .onChanged,
+        isNull,
+      );
+      await _visible(t, _key('download-table-language-template'));
+      expect(
+        t
+            .widget<OutlinedButton>(_key('download-table-language-template'))
+            .onPressed,
+        isNull,
+      );
+      await _tap(t, 'select-table-language-file');
+      await _visible(t, _key('validate-table-language'));
+      expect(
+        t.widget<FilledButton>(_key('validate-table-language')).onPressed,
+        isNull,
+      );
+      await _tap(t, 'retry-table-language-catalog', up: true);
+      await _choose(t, 'table-language-dataset', 'Teachings');
+      await _validate(t);
+      expect(c.uploads.single.fields['datasetId'], 'teachings');
+    },
+  );
+
   for (final e in {
     'harmony': 'Harmony / All Topics',
     'miracles': 'Miracles',
     'parables': 'Parables',
+    'teachings': 'Teachings',
   }.entries) {
     testWidgets(
       '${e.key} imports independent French headings and stable-ID translations',

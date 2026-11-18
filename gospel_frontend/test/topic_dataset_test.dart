@@ -32,7 +32,7 @@ void main() {
   test('legacy dataset defaults and identity never collide across tables', () {
     expect(normalizeDatasetId(null), 'harmony');
     expect(normalizeDatasetId(''), 'harmony');
-    expect(normalizeDatasetId('unknown'), 'harmony');
+    expect(normalizeDatasetId('new-table'), 'new-table');
     expect(normalizeDatasetId(' Parables '), 'parables');
     expect(
       topicDatasetIds.map((id) => datasetItemKey(id, '1')).toSet(),
@@ -40,6 +40,116 @@ void main() {
     );
     expect(const DatasetViewState().toQueryParameters(), isEmpty);
   });
+
+  test(
+    'custom dataset IDs remain isolated and invalid path IDs are rejected',
+    () {
+      for (final invalid in [
+        '',
+        'a',
+        '../miracles',
+        'a/b',
+        'a_b',
+        '-abc',
+        'abc-',
+        'a--b',
+        'a' * 49,
+      ]) {
+        expect(normalizeDatasetId(invalid), 'harmony', reason: invalid);
+      }
+      expect(normalizeDatasetId(' FOURTH-Table '), 'fourth-table');
+      expect(datasetItemKey('fourth-table', '1'), 'fourth-table:1');
+      expect(
+        datasetItemKey('harmony', '1'),
+        isNot(datasetItemKey('fourth-table', '1')),
+      );
+      final state = DatasetViewState.fromQueryParameters({
+        'dataset': 'fourth-table',
+        'view': 'grouped',
+        'types': 'first-type,other-type',
+      });
+      expect(state.datasetId, 'fourth-table');
+      expect(state.toQueryParameters()['dataset'], 'fourth-table');
+      expect(
+        DatasetViewState.fromQueryParameters(state.toQueryParameters()),
+        state,
+      );
+      final metadata = DatasetMetadata.fromJson({
+        'datasetId': 'fourth-table',
+        'revision': 'fourth-v1',
+      });
+      expect(
+        metadata.cacheKeyForLanguage('french'),
+        'fourth-table:fourth-v1:french',
+      );
+    },
+  );
+
+  test(
+    'catalog adds only published custom tables and preserves builtin labels',
+    () {
+      final catalog = parseDatasetCatalog({
+        'datasets': [
+          {
+            'datasetId': 'harmony',
+            'labels': {'english': 'Harmony / All Topics'},
+            'published': true,
+          },
+          {
+            'datasetId': 'parables',
+            'labels': {'english': 'Parables'},
+            'published': true,
+          },
+          {
+            'datasetId': 'new-table',
+            'labels': {
+              'english': 'New table',
+              'arabic': 'جدول جديد',
+              'fr': 'Nouveau tableau',
+            },
+            'published': true,
+            'revision': 'new-v1',
+          },
+          {
+            'datasetId': 'draft-table',
+            'labels': {'english': 'Draft'},
+            'published': false,
+          },
+          {
+            'datasetId': '../unsafe',
+            'labels': {'english': 'Invalid'},
+            'published': true,
+          },
+        ],
+      });
+      expect(catalog.map((entry) => entry.datasetId), [
+        ...topicDatasetIds,
+        'new-table',
+      ]);
+      expect(catalog[2].label('french'), 'Paraboles');
+      expect(catalog.last.label('ar'), 'جدول جديد');
+      expect(catalog.last.label('french'), 'Nouveau tableau');
+      expect(catalog.last.label('german'), 'New table');
+      expect(catalog.last.revision, 'new-v1');
+      expect(parseDatasetCatalog(null), hasLength(3));
+      expect(parseDatasetCatalog({'datasets': 'malformed'}), hasLength(3));
+      expect(
+        const DatasetCatalogEntry(datasetId: 'new-table').label('english'),
+        'new-table',
+      );
+      expect(
+        const DatasetCatalogEntry(
+          datasetId: 'new-table',
+          labels: {'arabic': 'جدول جديد'},
+        ).label('french'),
+        'جدول جديد',
+      );
+      replaceDatasetCatalog(catalog);
+      addTearDown(() => replaceDatasetCatalog(builtinDatasetCatalog));
+      expect(datasetDisplayName('new-table', 'french'), 'Nouveau tableau');
+      expect(datasetDisplayName('unknown-table', 'english'), 'unknown-table');
+    },
+  );
 
   test(
     'metadata accepts public envelope and localizes labels independently',

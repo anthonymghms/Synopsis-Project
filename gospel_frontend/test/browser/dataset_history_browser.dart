@@ -93,4 +93,85 @@ void main() {
       });
     },
   );
+
+  testWidgets(
+    'custom fourth table survives native Back Forward and a refreshed URL',
+    (tester) async {
+      final original = html.window.location.href;
+      final tableState = DatasetViewState(
+        datasetId: 'journeys',
+        mode: DatasetViewMode.grouped,
+        selectedTypeIds: const {'teaching', 'journey'},
+      );
+      final table = Uri(
+        path: '/',
+        queryParameters: {
+          ...tableState.toQueryParameters(),
+          ...harmonyViewQueryParameters(
+            filter: GospelFilterState(
+              mode: GospelFilterMode.union,
+              includeMask: Gospel.mark.bit | Gospel.luke.bit,
+              excludeMask: Gospel.john.bit,
+            ),
+            sort: const GospelSortState(),
+            columns: const ColumnVisibilityState(),
+          ),
+          'bibleLanguage': 'french',
+          'language': 'french',
+          'version': 'fixture-french',
+        },
+      );
+      final topic = Uri(
+        path: '/topic',
+        queryParameters: {...table.queryParameters, 'topicId': '1'},
+      );
+      addTearDown(() => html.window.history.replaceState(null, '', original));
+      await tester.runAsync(() async {
+        BrowserRouteHistory.update(Uri(path: '/'), replace: true);
+        BrowserRouteHistory.update(table);
+        BrowserRouteHistory.update(topic);
+        final backward = BrowserRouteHistory.changes.first;
+        html.window.history.back();
+        final restored = await backward.timeout(const Duration(seconds: 10));
+        expect(restored.path, '/');
+        expect(
+          DatasetViewState.fromQueryParameters(restored.queryParameters),
+          tableState,
+        );
+        expect(restored.queryParameters['bibleLanguage'], 'french');
+        expect(restored.queryParameters['version'], 'fixture-french');
+        final filter = GospelFilterState.fromQueryParameters(
+          restored.queryParameters,
+        );
+        expect(filter.includeMask, Gospel.mark.bit | Gospel.luke.bit);
+        expect(filter.excludeMask, Gospel.john.bit);
+        final address = Uri.parse(html.window.location.href);
+        final refreshed = address.fragment.startsWith('/')
+            ? Uri.parse(address.fragment)
+            : address;
+        expect(
+          DatasetViewState.fromQueryParameters(refreshed.queryParameters),
+          tableState,
+        );
+        expect(refreshed.queryParameters['dataset'], 'journeys');
+        final forward = BrowserRouteHistory.changes.first;
+        html.window.history.forward();
+        final restoredTopic = await forward.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(restoredTopic.path, '/topic');
+        expect(restoredTopic.queryParameters['dataset'], 'journeys');
+        expect(restoredTopic.queryParameters['topicId'], '1');
+        expect(
+          datasetItemKey(restoredTopic.queryParameters['dataset']!, '1'),
+          'journeys:1',
+        );
+        expect(restoredTopic.queryParameters['version'], 'fixture-french');
+        expect(
+          DatasetViewState.fromQueryParameters(restoredTopic.queryParameters),
+          tableState,
+        );
+      });
+    },
+  );
 }

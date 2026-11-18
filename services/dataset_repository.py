@@ -7,7 +7,7 @@ from typing import Any
 
 from firebase_admin import firestore
 
-from .dataset_import_service import DATASET_FILES, DATASET_LABELS, GOSPEL_LABELS, dataset_id
+from .dataset_import_service import DATASET_FILES, DATASET_LABELS, HARMONY_LABELS, dataset_id, dataset_labels
 from .table_language_import_service import default_language_metadata
 from .firebase_service import FirebaseImportRepository, ImportCollisionError, ImportRecordError, firestore_client, storage_bucket, new_import_id
 
@@ -38,7 +38,43 @@ class DatasetRepository(FirebaseImportRepository):
         selected_dataset = dataset_id(selected_dataset)
         snapshot = self.db.collection("datasets").document(selected_dataset).get()
         data = snapshot.to_dict() or {} if snapshot.exists else {}
-        return {"datasetId": selected_dataset, "labels": DATASET_LABELS[selected_dataset], **data}
+        return {"datasetId": selected_dataset, "labels": DATASET_LABELS.get(selected_dataset, {}), **data}
+
+    def catalog(self) -> list[dict[str, Any]]:
+        """Public table metadata only; draft imports never enter this catalog."""
+        harmony_snapshot = self.db.collection("harmony").document("canonical").get()
+        harmony = harmony_snapshot.to_dict() or {} if harmony_snapshot.exists else {}
+        entries = {identifier: {"datasetId": identifier, "labels": labels} for identifier, labels in DATASET_LABELS.items()}
+        for snapshot in self.db.collection("datasets").stream():
+            try:
+                identifier = dataset_id(snapshot.id)
+            except ValueError:
+                continue
+            metadata = snapshot.to_dict() or {}
+            if metadata.get("activeRevision") and metadata.get("active", True):
+                entries[identifier] = {**entries.get(identifier, {}), **metadata, "datasetId": identifier}
+
+        def public_entry(metadata):
+            return {"datasetId": metadata["datasetId"], "labels": metadata.get("labels", {}),
+                    "published": bool(metadata.get("activeRevision") or metadata.get("activeTopicsPath")),
+                    "revision": metadata.get("activeRevision"),
+                    "itemCount": metadata.get("itemCount", metadata.get("topicCount", 0)),
+                    "languages": metadata.get("languages", []), "hasTypes": bool(metadata.get("hasTypes"))}
+
+        ordered = ["miracles", "parables", *sorted(identifier for identifier in entries if identifier not in DATASET_LABELS)]
+        return [public_entry({**harmony, "datasetId": "harmony", "labels": HARMONY_LABELS}), *[public_entry(entries[identifier]) for identifier in ordered]]
+
+    def import_target(self, selected_dataset: str, *, create_new: bool = False, labels=None) -> dict[str, Any]:
+        """Validate creation versus replacement before storing an uploaded file."""
+        selected_dataset = dataset_id(selected_dataset)
+        current = self.metadata(selected_dataset)
+        if create_new:
+            if selected_dataset in DATASET_LABELS or current.get("activeRevision"):
+                raise DatasetRevisionConflict("This table ID already exists. Choose the existing table to update it, or use a different ID.")
+            return {**current, "labels": dataset_labels(labels)}
+        if selected_dataset not in DATASET_LABELS and not current.get("activeRevision"):
+            raise ValueError("This table does not exist. Choose Create new table and supply its ID and display name.")
+        return current
 
     def storage_sources(self) -> list[dict[str, Any]]:
         sources = []
@@ -68,6 +104,8 @@ class DatasetRepository(FirebaseImportRepository):
 
     def read_storage_source(self, selected_dataset: str, filename: str):
         selected_dataset = dataset_id(selected_dataset)
+        if selected_dataset not in DATASET_FILES:
+            raise ValueError("Custom tables require an uploaded CSV. Existing Storage sources are limited to Miracles.csv and Parables.csv.")
         if filename != DATASET_FILES[selected_dataset]:
             raise ValueError("Choose the permitted source file for the selected dataset.")
         return self.read_source(filename)
@@ -77,7 +115,7 @@ class DatasetRepository(FirebaseImportRepository):
         selected_dataset = dataset_id(record.get("datasetId"))
         path = str(source.get("path") or "")
         if source.get("kind") == "storage":
-            if path != DATASET_FILES[selected_dataset]:
+            if selected_dataset not in DATASET_FILES or path != DATASET_FILES[selected_dataset]:
                 raise ImportRecordError("This import does not reference a permitted Storage file.")
         elif source.get("kind") == "upload":
             expected = f"imports/datasets/{selected_dataset}/{record['id']}/"
@@ -115,11 +153,18 @@ class DatasetRepository(FirebaseImportRepository):
                 transaction.set(ref, {**fields, "updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
         record(self.db.transaction())
 
-    def activate_dataset(self, *, import_id: str, selected_dataset: str, result, source: dict, expected_revision: str | None, replace: bool, confirmed_by: str, source_validator=None) -> dict[str, Any]:
+    def activate_dataset(self, *, import_id: str, selected_dataset: str, result, source: dict, expected_revision: str | None, replace: bool, confirmed_by: str, source_validator=None, create_new: bool = False, labels=None) -> dict[str, Any]:
         selected_dataset = dataset_id(selected_dataset)
         if not result.report.valid:
             raise ImportRecordError("Only a successfully validated dataset can be published.")
         current = self.metadata(selected_dataset)
+        if create_new:
+            if selected_dataset in DATASET_LABELS or (current.get("activeRevision") and current.get("creationImportId") != import_id):
+                raise DatasetRevisionConflict("This table ID was created after preview. Choose a different ID or validate an update to the existing table.")
+            labels = dataset_labels(labels)
+        else:
+            current = self.import_target(selected_dataset)
+            labels = current["labels"]
         checksum = source["checksum"]
         if current.get("activeRevision") and not replace and current.get("sourceChecksum") != checksum:
             raise ImportCollisionError("Confirm replacement of the existing dataset before publishing.")
@@ -131,7 +176,8 @@ class DatasetRepository(FirebaseImportRepository):
         revision_ref = self.db.collection("dataset_revisions").document(revision_id)
         summary = result.summary()
         metadata = {
-            "datasetId": selected_dataset, "labels": DATASET_LABELS[selected_dataset],
+            "datasetId": selected_dataset, "labels": labels,
+            "creationImportId": import_id if create_new else current.get("creationImportId"),
             "itemCount": len(result.records), "topicCount": len(result.records),
             "languages": result.languages, "types": result.types,
             "languageMetadata": {language: {**default_language_metadata(language, sum(language in item.names for item in result.records)), "canonicalTopicCount": len(result.records), "complete": all(language in item.names for item in result.records)} for language in result.languages},
@@ -159,6 +205,8 @@ class DatasetRepository(FirebaseImportRepository):
         def activate(transaction):
             snapshot = pointer.get(transaction=transaction)
             active = snapshot.to_dict() or {} if snapshot.exists else {}
+            if create_new and active.get("activeRevision") and active.get("creationImportId") != import_id:
+                raise DatasetRevisionConflict("This table ID was created while publication was staged. Revalidate with a different ID or update the existing table.")
             if active.get("sourceChecksum") == checksum:
                 # Identical sources never create duplicate rows or replace the
                 # published revision, even after a fresh validation attempt.
@@ -188,7 +236,7 @@ class DatasetRepository(FirebaseImportRepository):
         data = snapshot.to_dict() or {} if snapshot.exists else {}
         if data.get("datasetId") != selected_dataset or data.get("status") != "ready":
             raise ImportRecordError("The dataset revision is unavailable.")
-        return {**data, "activeRevision": revision, "labels": DATASET_LABELS[selected_dataset]}, ref
+        return {**data, "activeRevision": revision, "labels": data.get("labels") or metadata.get("labels", {})}, ref
 
     def canonical_payload(self, selected_dataset: str, revision: str | None = None):
         metadata, ref = self._revision(selected_dataset, revision)

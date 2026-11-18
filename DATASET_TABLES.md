@@ -1,8 +1,8 @@
-# Harmony, Miracles, and Parables
+# Topic tables and custom table imports
 
-The existing application now reads three independent topic datasets through Flask. Harmony remains the default, with its existing storage and URLs. Miracles and Parables use the same table, reference parser, reading pages, previews, Gospel filters, sorting, column visibility, and export facilities.
+The application reads independent topic tables through Flask. Harmony remains the default, with its existing storage and URLs. Miracles, Parables, and administrator-published custom tables use the same table, reference parser, reading pages, previews, Gospel filters, sorting, column visibility, and export facilities. Creating a fourth table uses the existing import workflow; it does not require another application or another copy of the reader. The selector discovers published tables from the catalog and uses a compact dropdown when more than three tables are available.
 
-All three tables now show a separate **#** column. To add or update a language without replacing canonical data, use the universal **Add / update table language** workflow documented in [TABLE_LANGUAGES.md](TABLE_LANGUAGES.md). It imports translations for one table and preserves other tables and languages. In the reader, the selected Bible language/translation also selects the table language when available; there is no separate table-language control. If that table lacks the selected language, it uses English or its first available language and shows a fallback notice. French table names are displayed by selecting an available French Bible translation; importing names alone does not create French Bible text.
+All tables show a separate **#** column. To add or update a language without replacing canonical data, use the universal **Add / update table language** workflow documented in [TABLE_LANGUAGES.md](TABLE_LANGUAGES.md). It imports translations for one table and preserves other tables and languages. In the reader, the selected Bible language/translation also selects the table language when available; there is no separate table-language control. If that table lacks the selected language, it uses English or its first available language and shows a fallback notice. French table names are displayed by selecting an available French Bible translation; importing names alone does not create French Bible text.
 
 ## Verified Storage sources
 
@@ -35,9 +35,9 @@ The existing live Harmony metadata was also read: 291 canonical items, with sepa
 
 ## Storage and compatibility
 
-- Logical item identity is `(datasetId, itemId)`; supported dataset IDs are `harmony`, `miracles`, and `parables`.
+- Logical item identity is `(datasetId, itemId)`. Built-in IDs remain `harmony`, `miracles`, and `parables`. Custom IDs are stable lowercase slugs of 2–48 characters: begin with a letter, then letters/digits and optional single hyphens between segments (for example `teachings`). A name or translation change never changes the ID. The same item number in different tables cannot overwrite another table.
 - Existing Harmony collections (`harmony`, `harmony_revisions`, `harmony_localizations`, and legacy compatibility paths) are unchanged. The Harmony-master Admin workflow remains separate.
-- New active pointers live at `datasets/miracles` and `datasets/parables`.
+- Non-Harmony active pointers live at `datasets/{datasetId}`, including Miracles, Parables, and custom tables. The pointer stores the table ID and localized display labels. Only a successful explicit publication makes a custom table visible in the reader catalog.
 - Each publication attempt writes an immutable `dataset_revisions/{datasetId}--{uuid}` revision. Canonical references, source number/order, and Type IDs live under `topics/{itemId}`. Names live separately under `localizations/{language}/topics/{itemId}` within the same revision.
 - Metadata records languages, Type IDs/display labels/order/counts, source encoding/headers/checksum/generation, and revision information. Import history uses the existing `admin_imports` collection.
 - Types use stable IDs derived from their explicit source label, or a supplied `TypeId`. Optional `TypeArabic` / `النوع`, `TypeOrder`, and `SourceOrder` headers are supported. Unknown Type values are preserved. Supply an explicit stable `TypeId` if a later edit changes a Type's source label while retaining its identity.
@@ -45,23 +45,42 @@ The existing live Harmony metadata was also read: 291 canonical items, with sepa
 - Missing Type rows remain available under Unclassified when other populated Types exist. A dataset with no populated Types has no empty Type column; it explains that Type controls require imported values.
 - No references are copied or inferred from Harmony by item number or translated subject name.
 
-New public endpoints are `GET /datasets/{dataset}/topics` and `GET /datasets/{dataset}/localizations/{language}?revision={revision}`. They use the existing server-verified reader authorization. Legacy `/topics` and individual topic endpoints accept `dataset`; omission continues to mean Harmony. Bible storage and Bible endpoints are unchanged.
+Public endpoints include `GET /datasets` for built-ins and published custom table labels/revisions, `GET /datasets/{dataset}/topics` and `GET /datasets/{dataset}/localizations/{language}?revision={revision}`. They use the existing server-verified reader authorization. Legacy `/topics` and individual topic endpoints accept `dataset`; omission continues to mean Harmony. Bible storage and Bible endpoints are unchanged.
 
 Browser URLs carry dataset, view mode, selected Type IDs, Gospel filters, sorting, visible columns, and the Bible language/version context. The reader resolves the table language from that Bible selection and the active table’s available translations, using the fallback described above. Dataset canonical snapshots are loaded once per cache lifetime; localization cache keys include dataset/revision/language. Filtering and grouping run locally. Successful Admin publication invalidates the existing catalog cache, including the affected dataset; a page refresh also loads a new snapshot. No Storage CSV is fetched by reader visits or hover events.
 
 ## Admin import steps
 
 1. Deploy the updated Flask backend and Flutter frontend together, then sign in with an existing server-authorized administrator account.
-2. Open **Admin Portal → Import Miracles / Parables** (also available in the Topics section).
-3. Choose **Miracles** or **Parables**. This is distinct from importing a Harmony master.
-4. Choose **Existing Firebase Storage file** and select the matching `Miracles.csv` / `Parables.csv`. The backend reads the existing file directly. Alternatively choose **Upload CSV** and use the existing file picker for a corrected source.
-5. Select **Validate and preview**. Review the target, filename, encoding, header mapping, source checksum, item/reference counts, languages, Type counts/missing classifications, localized sample names/references, warnings/errors, and create-versus-replace status.
-6. If replacing an existing dataset, acknowledge replacement. Select **Publish dataset**, then explicitly confirm in the publication dialog.
-7. Wait for verified completion. The new active revision becomes available to the table selector; repeat the workflow for the other dataset.
+2. Open **Admin Portal → Import table** (also available in the Topics section). The Harmony-master workflow remains distinct.
+3. In **Target dataset**, select an existing non-Harmony table to replace its canonical revision, or select **Create new table**. For a new table, fill **Stable table ID**, **Table name in English**, and optionally **Table name in Arabic**. Check the ID carefully: it is used in links and item identity. Use the same table on future updates instead of creating a second ID.
+4. Use **Download CSV template** to start with the supported headers, then choose **Upload CSV** and select the prepared file. For Miracles or Parables, **Existing Firebase Storage file** can read the matching allowed `Miracles.csv` / `Parables.csv` directly. Custom tables use CSV upload; source selection does not grant access to arbitrary Storage paths or URLs.
+5. Select **Validate and preview**. Review the target table ID/name, filename, encoding, header mapping, source checksum, item/reference counts, languages, Type counts/missing classifications, localized sample names/references, warnings/errors, and create-versus-replace status. A preview does not add a table to the reader.
+6. If replacing an existing dataset, acknowledge replacement. Select **Publish [table name]**, then explicitly confirm in the publication dialog.
+7. Wait for verified completion. The new active revision becomes available in the reader's table selector. Other sessions can refresh to load the updated catalog. Use **Add / update table language** to add more subject-name translations without replacing canonical references; the new table is available in that workflow too.
+
+### Preparing a new table in Excel
+
+Use a first row of column headers followed by one item per row. Do not put a title above the headers. Save as **CSV UTF-8 (.csv)**, preserving identifier cells as Text. Excel workbooks (`.xlsx`) are not accepted.
+
+| Header | Contents |
+| --- | --- |
+| `#` | Unique, stable item ID within this table. Retain it on later updates. |
+| `Subject` | English subject name. Supply this and/or `الموضوع`. |
+| `الموضوع` | Optional Arabic subject name for the same item ID. |
+| `Type` | Optional classification; use the actual editorial classification. Blank values remain unclassified. |
+| `Matthew` | Gospel references, or an empty cell. This header is required. |
+| `Mark` | Gospel references, or an empty cell. This header is required. |
+| `Luke` | Gospel references, or an empty cell. This header is required. |
+| `John` | Gospel references, or an empty cell. This header is required. |
+
+The general header line is `#,Subject,الموضوع,Type,Matthew,Mark,Luke,John`. The optional subject/Type columns may be omitted. Keep the canonical Gospel header names even if subjects are Arabic; table-language imports provide translated reader headings. Optional `TypeId`, `TypeArabic`, `TypeOrder`, and `SourceOrder` columns retain their existing meanings. No classifications or relationships to other tables are inferred from names.
+
+References use the established parser: `+` joins a continuous logical passage, `;` separates passages, and `,` selects additional verses/ranges in the same chapter. Quote cells containing commas in comma-delimited CSV. Header-based mapping keeps added language or Type columns from shifting the Gospel references.
 
 Validation only stages the uploaded source/import record; it never changes the active pointer. Publication verifies the previewed Storage generation and SHA-256, reparses through the same parser, writes the new revision, checks the source again, then transactionally activates the pointer. A changed source or changed active revision requires revalidation. Failures leave the previous active revision usable. Identical-file publication is idempotent, and concurrent attempts cannot rewrite an active revision. Old revisions are retained; no automatic live cleanup is performed.
 
-Every administrative endpoint verifies administrator authorization on the server. Storage selection is restricted to the exact two allowed root filenames in the configured bucket. Upload staging is restricted to the corresponding import prefix. No arbitrary URL download or client-side Admin credentials are introduced.
+Every administrative endpoint verifies administrator authorization on the server. Storage selection remains restricted to the exact two allowed root filenames in the configured bucket. Custom table creation does not expand that allowlist. Upload staging is restricted to the corresponding validated dataset/import prefix. No arbitrary URL download or client-side Admin credentials are introduced.
 
 ## Configuration and deployment
 
@@ -69,7 +88,7 @@ No credential, Firestore security-rule, Bible-storage, or composite-index change
 
 Dataset sources are limited to 16 MiB. The existing Flask 32 MiB upload limit and Nginx 34 MiB request limit already accommodate them; no limit increase is needed.
 
-Firestore is schemaless: the new collections are created by an **explicit administrator publication**, not by deployment or reader access. Deploy using the existing instructions in `deploy/README.md` and the existing frontend `API_BASE_URL` setting. Then manually publish each dataset using the steps above. No migration or replacement of Harmony is necessary.
+Firestore is schemaless: the new collections are created by an **explicit administrator publication**, not by deployment or reader access. Deploy using the existing instructions in `deploy/README.md` and the existing frontend `API_BASE_URL` setting. Then manually publish new tables or revisions using the steps above. Existing published Miracles and Parables do not need to be re-imported to appear in the catalog. No migration or replacement of Harmony is necessary.
 
 ## Implementation files
 
@@ -79,13 +98,13 @@ Firestore is schemaless: the new collections are created by an **explicit admini
 - Administration: `gospel_frontend/lib/admin_portal.dart`, `dataset_import_wizard.dart`, `admin_import_details.dart`.
 - Tests: `tests/test_dataset_imports.py`; Flutter `topic_dataset_test.dart`, `dataset_reader_test.dart`, `dataset_navigation_test.dart`, `dataset_import_wizard_test.dart`, `topics_table_document_test.dart`, `admin_import_details_test.dart`, and browser `dataset_history_browser.dart`.
 
-Existing uncommitted performance changes and their tests were preserved. Synthetic fixtures in the new tests are explicitly identified; they are not fabricated copies of the live datasets.
+Synthetic fixtures in the tests are explicitly identified; they are not copies of the live datasets.
 
 ## Verification
 
-The most recent backend suite ran 230 tests: **212 passed, 18 Firestore-emulator-dependent tests skipped**. The subsequent reader-language update did not change backend code. Dataset-specific tests cover header mapping/quoting, bilingual names, Types, malformed references, authorized Storage/upload imports, duplicate IDs, failed/repeated/concurrent publication, source changes, and coherent immutable revision reads.
+The universal-table update ran 242 backend tests: **224 passed, 18 Firestore-emulator-dependent tests skipped**. Dataset-specific tests cover custom table creation/catalog discovery, reserved and malformed IDs, competing creation attempts, custom language overlays, header mapping/quoting, bilingual names, Types, malformed references, authorized Storage/upload imports, duplicate IDs, failed/repeated publication, source changes, and coherent immutable revision reads.
 
-After the single Bible-language control update, the full Flutter suite passed **314 tests**, including automatic table localization, missing-language fallback, legacy mixed links, menu cleanup, mobile layout, returning from a reader, grouping, exports, and Admin imports. Three Chrome browser tests passed for real Back/Forward history, refreshable dataset URL state, existing link behavior, and full-table printing. Static analysis and the production JavaScript web build passed. Flutter's optional Wasm compatibility check reports the existing `desktop_drop` dependency's use of `dart:html`; the normal release build succeeds.
+The full Flutter suite passed **332 tests**, including new-table creation and replacement, catalog retries and publication refresh, independent fourth-table IDs/filters/readers, custom language-import targets, automatic table localization, mobile layout, grouping, exports, and existing Admin imports. **Four Chrome browser tests passed** for real Back/Forward history (including a fourth table), refreshable dataset URL state, existing link behavior, and full-table printing. Static analysis and the production JavaScript web build passed. Flutter's optional Wasm compatibility check reports the existing `desktop_drop` dependency's use of `dart:html`; the normal release build succeeds.
 
 Verification commands (Flutter commands run from `gospel_frontend`):
 

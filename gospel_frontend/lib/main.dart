@@ -5285,6 +5285,9 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   static final Map<String, Map<String, String>> _savedDatasetQueries = {};
   late DatasetViewState _datasetView;
   DatasetMetadata _datasetMetadata = const DatasetMetadata();
+  List<DatasetCatalogEntry> _datasetCatalog = builtinDatasetCatalog;
+  bool _datasetCatalogFailed = false;
+  int _datasetCatalogGeneration = 0;
   List<Topic> _topics = [];
   bool _loading = true;
   String? _error;
@@ -5364,6 +5367,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         : null;
     _initializePreferences();
     _refreshLanguagesFromFirestore();
+    unawaited(_refreshDatasetCatalog());
     catalogRevision.addListener(_catalogChanged);
   }
 
@@ -5403,7 +5407,25 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
 
   void _catalogChanged() {
     _invalidateChangedCatalogCaches();
+    unawaited(_refreshDatasetCatalog());
     unawaited(_refreshLanguagesFromFirestore());
+  }
+
+  Future<void> _refreshDatasetCatalog() async {
+    final generation = ++_datasetCatalogGeneration;
+    try {
+      final catalog = await _ApiCache.fetchDatasetCatalog();
+      if (!mounted || generation != _datasetCatalogGeneration) return;
+      setState(() {
+        _datasetCatalog = catalog;
+        _datasetCatalogFailed = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _datasetCatalogGeneration) return;
+      // Keep the current table usable while making missing catalog entries
+      // recoverable. In particular, a cold custom-table link keeps its ID.
+      setState(() => _datasetCatalogFailed = true);
+    }
   }
 
   void _restoreControlStateFromUri(Uri uri) {
@@ -5940,10 +5962,29 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
                   maxWidth: _maxHarmonyTableWidth,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: DatasetSelector(
-                      datasetId: _datasetView.datasetId,
-                      language: _selectedTopicLanguageCode,
-                      onChanged: _switchDataset,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DatasetSelector(
+                          catalog: _datasetCatalog,
+                          datasetId: _datasetView.datasetId,
+                          language: _selectedTopicLanguageCode,
+                          onChanged: _switchDataset,
+                        ),
+                        if (_datasetCatalogFailed)
+                          TextButton.icon(
+                            key: const ValueKey('retry-dataset-catalog'),
+                            onPressed: _refreshDatasetCatalog,
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: Text(
+                              _selectedTopicLanguageCode == 'arabic'
+                                  ? 'تعذر تحميل قائمة الجداول. إعادة المحاولة'
+                                  : _selectedTopicLanguageCode == 'french'
+                                  ? 'Impossible de charger les tableaux. Réessayer'
+                                  : 'Could not load all tables. Retry',
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -11529,6 +11570,7 @@ class GospelReference {
 
 class _ApiCache {
   static int _epoch = 0;
+  static final Map<String, Future<List<DatasetCatalogEntry>>> _catalogs = {};
   static final Map<String, Future<Map<String, dynamic>>> _datasets = {};
   static final Map<String, DatasetMetadata> datasetMetadata = {};
   static final Map<String, Map<String, TopicLanguageOption>> datasetLanguages =
@@ -11547,6 +11589,8 @@ class _ApiCache {
   static void clear() {
     _epoch++;
     _canonicalTopics = null;
+    _catalogs.clear();
+    replaceDatasetCatalog(builtinDatasetCatalog);
     _datasets.clear();
     datasetMetadata.clear();
     datasetLanguages.clear();
@@ -11578,6 +11622,28 @@ class _ApiCache {
       }
       rethrow;
     }
+  }
+
+  static Future<List<DatasetCatalogEntry>> fetchDatasetCatalog() async {
+    await accountAccess.ensureCanRead();
+    _invalidateChangedCatalogCaches();
+    final epoch = _epoch;
+    final catalog = await _cached(_catalogs, 'datasets', () async {
+      final response = await accountAccess.authenticatedGet(
+        Uri.parse('$apiBaseUrl/datasets'),
+      );
+      if (response.statusCode != 200) {
+        throw Exception('Error ${response.statusCode}');
+      }
+      final payload = json.decode(response.body);
+      if (payload is! Map || payload['datasets'] is! List) {
+        throw const FormatException('The table catalog is invalid.');
+      }
+      return parseDatasetCatalog(payload);
+    });
+    if (epoch != _epoch) return fetchDatasetCatalog();
+    replaceDatasetCatalog(catalog);
+    return catalog;
   }
 
   static Future<List<Topic>> fetchTopics({

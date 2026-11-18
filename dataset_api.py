@@ -42,6 +42,23 @@ def _admin():
     return verify_admin_authorization(request.headers.get("Authorization"))
 
 
+@dataset_api.get("/datasets")
+def dataset_catalog():
+    return _response({"datasets": DatasetRepository().catalog()})
+
+
+@dataset_api.get("/admin/datasets")
+def admin_dataset_catalog():
+    _admin()
+    return _response({"datasets": DatasetRepository().catalog()})
+
+
+@dataset_api.get("/admin/datasets/template")
+def admin_dataset_template():
+    _admin()
+    return _response({"filename": "table_template.csv", "csv": "#,Subject,الموضوع,Type,Matthew,Mark,Luke,John\r\n"})
+
+
 @dataset_api.get("/admin/datasets/sources")
 def admin_dataset_sources():
     _admin()
@@ -60,10 +77,24 @@ def admin_validate_dataset():
         return _error("invalid_request", "A JSON object is required.")
     try:
         selected_dataset = dataset_id(fields.get("datasetId"))
+        flag = fields.get("createNew", False)
+        if request.mimetype == "multipart/form-data":
+            if flag not in (False, "true", "false"):
+                raise ValueError("createNew must be true or false.")
+            create_new = flag == "true"
+        else:
+            if not isinstance(flag, bool):
+                raise ValueError("createNew must be a boolean.")
+            create_new = flag
+        labels = fields.get("labels")
+        if create_new and request.mimetype == "multipart/form-data":
+            labels = json.loads(labels or "{}")
         kind = fields.get("source")
         if not isinstance(kind, str) or kind not in {"storage", "upload"}:
             raise ValueError("Choose Storage or upload as the source.")
         if kind == "storage":
+            if selected_dataset not in DATASET_FILES:
+                raise ValueError("Custom tables require an uploaded CSV. Existing Storage sources are limited to Miracles.csv and Parables.csv.")
             filename = str(fields.get("filename") or "")
             if filename != DATASET_FILES[selected_dataset]:
                 raise ValueError("Choose the permitted source file for the selected dataset.")
@@ -80,6 +111,7 @@ def admin_validate_dataset():
     import_id = new_import_id()
     created = False
     try:
+        active = repository.import_target(selected_dataset, create_new=create_new, labels=labels)
         if kind == "storage":
             raw, source = repository.read_storage_source(selected_dataset, filename)
             source["kind"] = "storage"
@@ -87,13 +119,14 @@ def admin_validate_dataset():
             raw = upload.read()
             source = repository.stage_upload(selected_dataset, import_id, filename, raw)
         source["filename"] = filename
-        active = repository.metadata(selected_dataset)
         result = parse_dataset_csv(raw, verse_count_resolver=repository.chapter_verse_count)
         summary = result.summary()
-        repository.create_import(import_id=import_id, import_type="dataset", language="multilingual", uploaded_by=admin["uid"], filenames=[filename], metadata={"datasetId": selected_dataset})
+        repository.create_import(import_id=import_id, import_type="dataset", language="multilingual", uploaded_by=admin["uid"], filenames=[filename], metadata={"datasetId": selected_dataset, "labels": active["labels"], "createNew": create_new})
         created = True
-        repository.update_import(import_id, datasetId=selected_dataset, source=source, sourceChecksum=source["checksum"], expectedRevision=active.get("activeRevision"), status="validated" if result.report.valid else "validation_failed", stage="Ready to publish" if result.report.valid else "Validation failed", errors=summary["errors"], warnings=summary["warnings"], validation=summary["stats"], collision=bool(active.get("activeRevision")), destination=f"datasets/{selected_dataset}", storagePaths=[source["path"]])
-        return _response({"importId": import_id, "datasetId": selected_dataset, "filename": filename, "source": kind, "sourceChecksum": source["checksum"], "sourceGeneration": source["generation"], "replacesExisting": bool(active.get("activeRevision")), "currentRevision": active.get("activeRevision"), "collision": bool(active.get("activeRevision")), "destination": f"datasets/{selected_dataset}", **summary})
+        repository.update_import(import_id, datasetId=selected_dataset, labels=active["labels"], createNew=create_new, source=source, sourceChecksum=source["checksum"], expectedRevision=active.get("activeRevision"), status="validated" if result.report.valid else "validation_failed", stage="Ready to publish" if result.report.valid else "Validation failed", errors=summary["errors"], warnings=summary["warnings"], validation=summary["stats"], collision=bool(active.get("activeRevision")), destination=f"datasets/{selected_dataset}", storagePaths=[source["path"]])
+        return _response({"importId": import_id, "datasetId": selected_dataset, "labels": active["labels"], "createNew": create_new, "filename": filename, "source": kind, "sourceChecksum": source["checksum"], "sourceGeneration": source["generation"], "replacesExisting": bool(active.get("activeRevision")), "currentRevision": active.get("activeRevision"), "collision": bool(active.get("activeRevision")), "destination": f"datasets/{selected_dataset}", **summary})
+    except DatasetRevisionConflict as exc:
+        return _error("dataset_exists", str(exc), 409)
     except ValueError as exc:
         return _error("invalid_dataset_source", str(exc))
     except Exception:
@@ -134,7 +167,7 @@ def admin_publish_dataset():
         if not result.report.valid:
             repository.record_failed_attempt(import_id, status="validation_failed", errors=result.summary()["errors"])
             return _error("revalidation_failed", "The source no longer passes validation. Validate again before publishing.", 409)
-        outcome = repository.activate_dataset(import_id=import_id, selected_dataset=selected_dataset, result=result, source=record["source"], expected_revision=record.get("expectedRevision"), replace=fields.get("replace") is True, confirmed_by=admin["uid"], source_validator=lambda: repository.checked_source(record))
+        outcome = repository.activate_dataset(import_id=import_id, selected_dataset=selected_dataset, result=result, source=record["source"], expected_revision=record.get("expectedRevision"), replace=fields.get("replace") is True, confirmed_by=admin["uid"], source_validator=lambda: repository.checked_source(record), create_new=record.get("createNew") is True, labels=record.get("labels"))
         return _response({"importId": import_id, "status": "completed", **outcome, "import": {"id": import_id, "type": "dataset", "status": "completed", **outcome}})
     except (SourceChangedError, DatasetRevisionConflict) as exc:
         repository.record_failed_attempt(import_id, status="validation_failed", stage="Revalidation required", errors=[{"severity": "error", "code": "source_changed", "message": str(exc)}])

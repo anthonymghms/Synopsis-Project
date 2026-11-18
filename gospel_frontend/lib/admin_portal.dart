@@ -20,6 +20,51 @@ part 'bible_import_wizard.dart';
 part 'dataset_import_wizard.dart';
 part 'table_language_import_wizard.dart';
 
+// Only a successfully loaded catalog may populate import targets. A failed
+// request must not make existing custom tables disappear behind builtin defaults.
+Future<List<Map<String, dynamic>>> _loadAdminDatasetCatalog(
+  AdminClient client,
+) async {
+  final result = await client.getJson('/admin/datasets');
+  if (result['datasets'] is! List) {
+    throw const AdminApiException('The table catalog could not be loaded.');
+  }
+  final entries = _listOfMaps(result['datasets']);
+  if (entries.isEmpty ||
+      entries.length != (result['datasets'] as List).length) {
+    throw const AdminApiException('The table catalog is invalid.');
+  }
+  final seen = <String>{};
+  for (final entry in entries) {
+    final id = entry['datasetId'];
+    if (id is! String || id.isEmpty || !seen.add(id)) {
+      throw const AdminApiException('The table catalog is invalid.');
+    }
+  }
+  return entries;
+}
+
+String _adminDatasetName(
+  String id,
+  List<Map<String, dynamic>> entries,
+  _AdminLabels labels,
+) {
+  for (final entry in entries) {
+    if (entry['datasetId'] != id) continue;
+    if (entry['labels'] case final Map names) {
+      final name =
+          names[labels.arabic ? 'arabic' : 'english'] ?? names['english'];
+      if (name is String && name.trim().isNotEmpty) return name;
+    }
+  }
+  return switch (id) {
+    'harmony' => labels.t('Harmony / All Topics', 'التناغم / جميع المواضيع'),
+    'miracles' => labels.t('Miracles', 'المعجزات'),
+    'parables' => labels.t('Parables', 'الأمثال'),
+    _ => id,
+  };
+}
+
 class AdminPortal extends StatefulWidget {
   const AdminPortal({
     super.key,
@@ -619,7 +664,7 @@ class _TopicList extends StatelessWidget {
       ),
       const SizedBox(height: 24),
       _SectionHeader(
-        title: labels.t('Miracles and Parables', 'المعجزات والأمثال'),
+        title: labels.t('Additional tables', 'جداول إضافية'),
         action: labels.importAdditionalDataset,
         onAction: onImportDataset,
       ),
@@ -1744,8 +1789,7 @@ class _AdminLabels {
     'Import / Replace Master Harmony',
     'استيراد / استبدال جدول التناغم الرئيسي',
   );
-  String get importAdditionalDataset =>
-      t('Import Miracles / Parables', 'استيراد المعجزات / الأمثال');
+  String get importAdditionalDataset => t('Import table', 'استيراد جدول');
   String get bibleLanguages => t('Bible languages', 'لغات الكتاب المقدس');
   String get bibleVersions => t('Bible versions', 'ترجمات الكتاب المقدس');
   String get topicLanguages => t('Topic languages', 'لغات المواضيع');

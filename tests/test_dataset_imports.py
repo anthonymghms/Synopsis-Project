@@ -1,6 +1,7 @@
 """Synthetic fixtures for dataset isolation and publication; no Firebase writes."""
 import hashlib
 import io
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from flask import Flask
 
 from dataset_api import dataset_api
 from services.admin_auth import AdminAuthorizationError
-from services.dataset_import_service import parse_dataset_csv
+from services.dataset_import_service import dataset_id, parse_dataset_csv
 from services.dataset_repository import DatasetRepository, DatasetRevisionConflict, SourceChangedError
 
 
@@ -333,10 +334,10 @@ class DatasetApiTests(unittest.TestCase):
     def test_every_admin_action_and_read_require_verified_authorization(self):
         denied = AdminAuthorizationError('forbidden', 'Denied', 403)
         with patch('dataset_api.verify_admin_authorization', side_effect=denied):
-            for method, path in [('get', '/admin/datasets/sources'), ('post', '/admin/datasets/validate'), ('post', '/admin/datasets/publish')]:
+            for method, path in [('get', '/admin/datasets'), ('get', '/admin/datasets/template'), ('get', '/admin/datasets/sources'), ('post', '/admin/datasets/validate'), ('post', '/admin/datasets/publish')]:
                 self.assertEqual(getattr(self.client, method)(path).status_code, 403)
         with patch('dataset_api.verify_reader_authorization', side_effect=denied):
-            for path in ['/datasets/parables/topics', '/datasets/miracles/localizations/arabic']:
+            for path in ['/datasets', '/datasets/parables/topics', '/datasets/miracles/localizations/arabic']:
                 self.assertEqual(self.client.get(path).status_code, 403)
 
     def test_legacy_reader_routes_preserve_dataset_and_table_language(self):
@@ -362,6 +363,159 @@ class DatasetApiTests(unittest.TestCase):
         validation = self.validate()
         response = self.client.post('/admin/datasets/publish', json={'datasetId': 'miracles', 'importId': validation['importId'], 'confirm': True})
         self.assertEqual(response.status_code, 400)
+
+
+class UniversalDatasetTests(unittest.TestCase):
+    """New tables use the same parser/revisions without changing live Firebase."""
+    setUp = DatasetApiTests.setUp
+
+    def validate_table(self, identifier='teachings', *, create=True, raw=CSV_FIXTURE, labels=None):
+        fields = {'datasetId': identifier, 'source': 'upload',
+                  'file': (io.BytesIO(raw), 'fixture.csv')}
+        if create:
+            fields.update(createNew='true', labels=json.dumps(labels if labels is not None else {'english': 'Teachings', 'arabic': 'التعاليم'}))
+        elif labels is not None:
+            fields['labels'] = json.dumps(labels)
+        return self.client.post('/admin/datasets/validate', data=fields, content_type='multipart/form-data')
+
+    def publish_preview(self, preview, *, replace=False):
+        return self.client.post('/admin/datasets/publish', json={'datasetId': preview['datasetId'], 'importId': preview['importId'], 'confirm': True, 'replace': replace})
+
+    def create_table(self, identifier='teachings'):
+        validation = self.validate_table(identifier)
+        self.assertEqual(validation.status_code, 200, validation.get_json())
+        preview = validation.get_json()
+        response = self.publish_preview(preview)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return preview, response.get_json()
+
+    def test_fourth_table_is_only_discoverable_after_confirmed_publication(self):
+        builtin_ids = ['harmony', 'miracles', 'parables']
+        self.assertEqual([item['datasetId'] for item in self.client.get('/datasets').get_json()['datasets']], builtin_ids)
+        preview = self.validate_table().get_json()
+        self.assertTrue(preview['valid'])
+        self.assertTrue(preview['createNew'])
+        self.assertEqual(preview['labels']['english'], 'Teachings')
+        self.assertNotIn('datasets/teachings', self.db.values)
+        self.assertEqual([item['datasetId'] for item in self.client.get('/admin/datasets').get_json()['datasets']], builtin_ids)
+        self.assertEqual(self.publish_preview(preview).status_code, 200)
+        public_catalog = self.client.get('/datasets').get_json()['datasets']
+        self.assertEqual(public_catalog, self.client.get('/admin/datasets').get_json()['datasets'])
+        self.assertEqual([item['datasetId'] for item in public_catalog], [*builtin_ids, 'teachings'])
+        self.assertEqual(public_catalog[-1]['labels'], preview['labels'])
+        self.assertTrue(public_catalog[-1]['published'])
+        self.assertEqual(public_catalog[-1]['itemCount'], 3)
+        self.assertNotIn('sourceChecksum', public_catalog[-1])
+        payload = self.client.get('/datasets/teachings/topics').get_json()
+        self.assertEqual([item['id'] for item in payload['topics']], ['10', '20', '30'])
+        self.assertEqual(payload['metadata']['labels'], preview['labels'])
+        self.assertEqual(self.publish_preview(preview).status_code, 200)
+
+    def test_catalog_order_is_deterministic_and_excludes_drafts(self):
+        self.create_table('wonders')
+        self.create_table('acts')
+        self.db.values['datasets/unpublished'] = {'labels': {'english': 'Unpublished'}}
+        self.db.values['datasets/invalid_slug'] = {'activeRevision': 'invalid'}
+        self.assertEqual([item['datasetId'] for item in self.repo.catalog()], ['harmony', 'miracles', 'parables', 'acts', 'wonders'])
+
+    def test_table_ids_and_template_structure_are_safe(self):
+        for identifier in ('', 'a', 'a' * 49, 'Harmony', 'harmony', '../other', 'two/parts', 'two--parts', '-table', 'table-', 'two_parts', '2table', 'Église', 'Table'):
+            with self.subTest(identifier=identifier), self.assertRaises(ValueError):
+                dataset_id(identifier)
+        self.assertEqual(dataset_id('letters-2'), 'letters-2')
+        self.assertEqual(dataset_id('a' * 48), 'a' * 48)
+        template = self.client.get('/admin/datasets/template').get_json()
+        self.assertEqual(template['filename'], 'table_template.csv')
+        self.assertEqual(template['csv'].strip(), '#,Subject,الموضوع,Type,Matthew,Mark,Luke,John')
+
+    def test_unknown_targets_and_invalid_names_never_stage_uploads(self):
+        before = dict(self.bucket.values)
+        self.assertEqual(self.validate_table(create=False).status_code, 400)
+        for labels in ({}, {'arabic': 'اسم'}, {'english': ''}, {'english': 'x' * 81}, {'english': 'bad\nname'}, {'english': 1}, ['Name']):
+            with self.subTest(labels=labels):
+                self.assertEqual(self.validate_table(labels=labels).status_code, 400)
+        for identifier in ('harmony', 'miracles', 'parables'):
+            self.assertIn(self.validate_table(identifier).status_code, (400, 409))
+        self.assertEqual(self.bucket.values, before)
+        self.assertEqual(self.db.values, {})
+
+    def test_creation_flag_and_custom_storage_are_rejected_when_invalid(self):
+        for flag in ('true', 1, None):
+            response = self.client.post('/admin/datasets/validate', json={'datasetId': 'teachings', 'source': 'storage', 'filename': 'Miracles.csv', 'createNew': flag})
+            self.assertEqual(response.status_code, 400)
+        response = self.client.post('/admin/datasets/validate', json={'datasetId': 'teachings', 'source': 'storage', 'filename': 'Miracles.csv', 'createNew': True, 'labels': {'english': 'Teachings'}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('uploaded CSV', response.get_json()['error']['message'])
+        with self.assertRaises(ValueError):
+            self.repo.read_storage_source('teachings', 'Miracles.csv')
+        self.assertEqual(self.db.values, {})
+
+    def test_replacement_preserves_name_and_other_table_ids(self):
+        self.db.values['harmony/canonical'] = {'activeRevision': 'protected'}
+        builtin = DatasetApiTests.validate(self)
+        self.publish_preview(builtin)
+        before_builtin = self.repo.canonical_payload('parables')
+        original, first = self.create_table()
+        raw = CSV_FIXTURE.replace(b'Example One', b'Updated Example')
+        preview = self.validate_table(create=False, raw=raw, labels={'english': 'Ignore new name'}).get_json()
+        self.assertTrue(preview['replacesExisting'])
+        self.assertEqual(preview['labels'], original['labels'])
+        self.assertEqual(self.publish_preview(preview).status_code, 409)
+        self.assertEqual(self.publish_preview(preview, replace=True).status_code, 200)
+        self.assertNotEqual(self.repo.metadata('teachings')['activeRevision'], first['revision'])
+        self.assertEqual(self.repo.metadata('teachings')['labels'], original['labels'])
+        self.assertEqual(self.repo.localized_topics('teachings', 'english')['topics'][0]['name'], 'Updated Example')
+        self.assertEqual(self.repo.canonical_payload('parables'), before_builtin)
+        self.assertEqual(self.db.values['harmony/canonical'], {'activeRevision': 'protected'})
+
+    def test_separate_creation_previews_conflict_even_for_identical_file(self):
+        first = self.validate_table().get_json()
+        second = self.validate_table().get_json()
+        published = self.publish_preview(first).get_json()
+        response = self.publish_preview(second, replace=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.repo.metadata('teachings')['activeRevision'], published['revision'])
+        self.assertEqual(self.validate_table().status_code, 409)
+        self.assertEqual(self.repo.get_import(second['importId'])['status'], 'validation_failed')
+
+    def test_creation_race_between_staging_and_activation_checks_slug_ownership(self):
+        first = self.validate_table().get_json()
+        second = self.validate_table(labels={'english': 'Different administrator name'}).get_json()
+        record = self.repo.get_import(second['importId'])
+        winner = {}
+        def competing_publisher():
+            winner.update(self.publish_preview(first).get_json())
+        with self.assertRaises(DatasetRevisionConflict):
+            self.repo.activate_dataset(import_id=second['importId'], selected_dataset='teachings', result=parse_dataset_csv(CSV_FIXTURE), source=record['source'], expected_revision=None, replace=True, confirmed_by='admin', source_validator=competing_publisher, create_new=True, labels=second['labels'])
+        self.assertEqual(self.repo.metadata('teachings')['activeRevision'], winner['revision'])
+        self.assertEqual(self.repo.metadata('teachings')['labels'], first['labels'])
+
+    def test_failed_or_changed_custom_source_never_publishes(self):
+        preview = self.validate_table().get_json()
+        with patch.object(self.repo, '_write_documents', side_effect=RuntimeError('Synthetic write failure')), self.assertLogs(self.client.application.logger, level='ERROR'):
+            self.assertEqual(self.publish_preview(preview).status_code, 500)
+        self.assertNotIn('datasets/teachings', self.db.values)
+        self.assertEqual(self.repo.get_import(preview['importId'])['status'], 'failed')
+        self.assertEqual(self.publish_preview(preview).status_code, 200)
+        previous = self.repo.metadata('teachings')['activeRevision']
+        updated = self.validate_table(create=False).get_json()
+        path = self.repo.get_import(updated['importId'])['source']['path']
+        self.bucket.values[path] = (CSV_FIXTURE, 2)
+        self.assertEqual(self.publish_preview(updated, replace=True).status_code, 409)
+        self.assertEqual(self.repo.metadata('teachings')['activeRevision'], previous)
+
+    def test_custom_table_legacy_reader_routes_keep_identity(self):
+        import importlib
+        with patch('services.firebase_service.firestore_client', return_value=self.db):
+            module = importlib.import_module('app')
+        self.create_table()
+        with patch.object(module, 'db', self.db), patch.object(module, 'verify_reader_authorization', return_value={'uid': 'reader'}):
+            client = module.app.test_client()
+            item = client.get('/english/kjv/topic/10?dataset=teachings&topicLanguage=arabic').get_json()
+            self.assertEqual(item['datasetId'], 'teachings')
+            self.assertEqual(item['name'], 'مثال واحد')
+            listing = client.get('/topics?dataset=teachings&topicLanguage=english').get_json()
+            self.assertEqual([item['id'] for item in listing], ['10', '20', '30'])
 
 
 if __name__ == '__main__':

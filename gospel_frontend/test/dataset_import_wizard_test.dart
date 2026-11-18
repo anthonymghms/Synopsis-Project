@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -73,9 +74,14 @@ class _DatasetClient implements AdminClient {
     this.valid = true,
     this.sourceAvailable = true,
     this.publishError,
+    this.catalogFailures = 0,
+    this.concurrentCreation = false,
   });
   final bool replaces, hasTypes, valid, sourceAvailable;
   final AdminApiException? publishError;
+  int catalogFailures;
+  final bool concurrentCreation;
+  bool createdElsewhere = false;
   final calls = <({String path, Map<String, dynamic> body})>[];
   final uploads =
       <
@@ -89,6 +95,36 @@ class _DatasetClient implements AdminClient {
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
+    if (path == '/admin/datasets') {
+      if (catalogFailures > 0) {
+        catalogFailures--;
+        throw const AdminApiException('Catalog unavailable');
+      }
+      return {
+        'datasets': [
+          if (createdElsewhere)
+            {
+              'datasetId': 'sayings',
+              'labels': {'english': 'Sayings'},
+              'published': true,
+            },
+          for (final id in ['harmony', 'miracles', 'parables'])
+            {'datasetId': id, 'published': true},
+          {
+            'datasetId': 'teachings',
+            'labels': {'english': 'Teachings', 'arabic': 'التعاليم'},
+            'published': true,
+          },
+        ],
+      };
+    }
+
+    if (path == '/admin/datasets/template') {
+      return {
+        'filename': 'table-template.csv',
+        'csv': '#,Subject,الموضوع,Type,Matthew,Mark,Luke,John\r\n',
+      };
+    }
     if (path == '/admin/datasets/sources') {
       return {
         'sources': [
@@ -141,6 +177,10 @@ class _DatasetClient implements AdminClient {
       files: files,
       field: fileField,
     ));
+    if (concurrentCreation) {
+      createdElsewhere = true;
+      throw const AdminApiException('Table already exists');
+    }
     return _preview(
       dataset: fields['datasetId']!,
       replaces: replaces,
@@ -172,6 +212,7 @@ Future<void> _pump(
   _DatasetClient client, {
   bool arabic = false,
   VoidCallback? onCompleted,
+  Future<void> Function(String contents, String filename)? download,
   Size size = const Size(1200, 1100),
 }) async {
   tester.view.physicalSize = size;
@@ -186,6 +227,7 @@ Future<void> _pump(
           arabic: arabic,
           onCompleted: onCompleted ?? () {},
           filePicker: _Picker(),
+          csvDownloader: download ?? (_, _) async {},
         ),
       ),
     ),
@@ -221,6 +263,237 @@ Future<void> _choose(WidgetTester tester, String key, String label) async {
 }
 
 void main() {
+  testWidgets(
+    'concurrent creation refreshes existing targets and preserves new-table inputs',
+    (tester) async {
+      final client = _DatasetClient(concurrentCreation: true);
+      await _pump(tester, client);
+      await _choose(
+        tester,
+        'dataset-import-target-miracles',
+        'Create new table',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('new-table-id')),
+        'sayings',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('new-table-name-english')),
+        'Sayings',
+      );
+      await _tap(tester, find.byKey(const ValueKey('select-dataset-file')));
+      await _tap(tester, find.byKey(const ValueKey('validate-dataset-source')));
+      expect(find.text('Table already exists'), findsOneWidget);
+      await _reveal(tester, find.byKey(const ValueKey('new-table-id')));
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('new-table-id')))
+            .controller!
+            .text,
+        'sayings',
+      );
+      await _choose(tester, 'dataset-import-target-__new__', 'Sayings');
+      expect(
+        find.byKey(const ValueKey('dataset-import-target-sayings')),
+        findsOneWidget,
+      );
+      expect(client.calls, isEmpty);
+    },
+  );
+
+  testWidgets('new table validates labels then requires explicit publication', (
+    tester,
+  ) async {
+    final client = _DatasetClient();
+    var completions = 0;
+    await _pump(tester, client, onCompleted: () => completions++);
+    await _choose(tester, 'dataset-import-target-miracles', 'Create new table');
+    expect(
+      find.byKey(const ValueKey('dataset-import-source-upload')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-id')),
+      'sayings',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-name-english')),
+      'Sayings',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-name-arabic')),
+      'الأقوال',
+    );
+    await _tap(tester, find.byKey(const ValueKey('select-dataset-file')));
+    await _tap(tester, find.byKey(const ValueKey('validate-dataset-source')));
+    expect(client.uploads.single.fields['datasetId'], 'sayings');
+    expect(client.uploads.single.fields['createNew'], 'true');
+    expect(jsonDecode(client.uploads.single.fields['labels']!), {
+      'english': 'Sayings',
+      'arabic': 'الأقوال',
+    });
+    expect(client.calls, isEmpty);
+    await _tap(tester, find.byKey(const ValueKey('publish-dataset')));
+    expect(find.text('Publish Sayings?'), findsOneWidget);
+    expect(client.calls, isEmpty);
+    await _tap(tester, find.byKey(const ValueKey('confirm-publish-dataset')));
+    expect(client.calls.single.body, {
+      'datasetId': 'sayings',
+      'importId': 'staged-sayings',
+      'confirm': true,
+      'replace': false,
+    });
+    expect(completions, 1);
+  });
+
+  testWidgets('changing new table identity or labels invalidates its preview', (
+    tester,
+  ) async {
+    final client = _DatasetClient();
+    await _pump(tester, client);
+    await _choose(tester, 'dataset-import-target-miracles', 'Create new table');
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-id')),
+      'sayings',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-name-english')),
+      'Sayings',
+    );
+    await _tap(tester, find.byKey(const ValueKey('select-dataset-file')));
+    for (final field in [
+      'new-table-name-english',
+      'new-table-name-arabic',
+      'new-table-id',
+    ]) {
+      await _tap(tester, find.byKey(const ValueKey('validate-dataset-source')));
+      await _reveal(tester, find.byKey(const ValueKey('publish-dataset')));
+      expect(find.byKey(const ValueKey('publish-dataset')), findsOneWidget);
+      await _reveal(tester, find.byKey(ValueKey(field)));
+      await tester.enterText(
+        find.byKey(ValueKey(field)),
+        field == 'new-table-id' ? 'sayings-revised' : 'Revised name',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('publish-dataset')), findsNothing);
+    }
+    expect(client.calls, isEmpty);
+  });
+
+  testWidgets('reserved and malformed IDs cannot validate a new table', (
+    tester,
+  ) async {
+    final client = _DatasetClient();
+    await _pump(tester, client);
+    await _choose(tester, 'dataset-import-target-miracles', 'Create new table');
+    await tester.enterText(
+      find.byKey(const ValueKey('new-table-name-english')),
+      'Sayings',
+    );
+    await _tap(tester, find.byKey(const ValueKey('select-dataset-file')));
+    for (final id in [
+      'harmony',
+      'miracles',
+      'teachings',
+      'x',
+      'Sayings',
+      'bad--id',
+      'bad-',
+      'bad/id',
+    ]) {
+      await _reveal(tester, find.byKey(const ValueKey('new-table-id')));
+      await tester.enterText(find.byKey(const ValueKey('new-table-id')), id);
+      await tester.pumpAndSettle();
+      await _reveal(
+        tester,
+        find.byKey(const ValueKey('validate-dataset-source')),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('validate-dataset-source')),
+            )
+            .onPressed,
+        isNull,
+        reason: id,
+      );
+    }
+    expect(client.uploads, isEmpty);
+  });
+
+  testWidgets('existing custom table uploads without creation metadata', (
+    tester,
+  ) async {
+    final client = _DatasetClient(replaces: true);
+    await _pump(tester, client);
+    await _choose(tester, 'dataset-import-target-miracles', 'Teachings');
+    expect(find.byKey(const ValueKey('new-table-id')), findsNothing);
+    await _tap(tester, find.byKey(const ValueKey('select-dataset-file')));
+    await _tap(tester, find.byKey(const ValueKey('validate-dataset-source')));
+    expect(client.uploads.single.fields, {
+      'datasetId': 'teachings',
+      'source': 'upload',
+    });
+    await _reveal(tester, find.byKey(const ValueKey('publish-dataset')));
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('publish-dataset')))
+          .onPressed,
+      isNull,
+    );
+    expect(find.text('Replace the current Teachings revision'), findsOneWidget);
+  });
+
+  testWidgets('catalog failure blocks import until successful retry', (
+    tester,
+  ) async {
+    final client = _DatasetClient(catalogFailures: 1);
+    await _pump(tester, client);
+    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String>>(
+            find.byKey(const ValueKey('dataset-import-target-miracles')),
+          )
+          .onChanged,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('validate-dataset-source')),
+          )
+          .onPressed,
+      isNull,
+    );
+    await _tap(tester, find.byKey(const ValueKey('retry-dataset-catalog')));
+    await _choose(tester, 'dataset-import-target-miracles', 'Teachings');
+    expect(
+      find.byKey(const ValueKey('dataset-import-target-teachings')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('generic CSV template downloads without creating a dataset', (
+    tester,
+  ) async {
+    final client = _DatasetClient();
+    String? csv, filename;
+    await _pump(
+      tester,
+      client,
+      download: (contents, name) async {
+        csv = contents;
+        filename = name;
+      },
+    );
+    await _tap(tester, find.byKey(const ValueKey('download-dataset-template')));
+    expect(filename, 'table-template.csv');
+    expect(csv, '#,Subject,الموضوع,Type,Matthew,Mark,Luke,John\r\n');
+    expect(client.calls, isEmpty);
+    expect(client.uploads, isEmpty);
+  });
+
   testWidgets(
     'Storage preview is dataset scoped and requires explicit publication confirmation',
     (tester) async {

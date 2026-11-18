@@ -35,23 +35,44 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
       name: TextEditingController(text: name),
   };
   String _dataset = 'harmony', _preset = 'english', _direction = 'ltr';
+  List<Map<String, dynamic>> _datasets = [];
+  bool _loadingCatalog = true;
+  String? _catalogError;
+  bool get _catalogReady => !_loadingCatalog && _catalogError == null;
   AdminUploadFile? _file;
   Map<String, dynamic>? _validation;
   bool _busy = false, _replace = false, _completed = false;
   String? _error, _downloaded;
 
   _AdminLabels get labels => _AdminLabels(widget.arabic);
-  String _datasetName(String id) => switch (id) {
-    'miracles' => labels.t('Miracles', 'المعجزات'),
-    'parables' => labels.t('Parables', 'الأمثال'),
-    _ => labels.t('Harmony / All Topics', 'التناغم / جميع المواضيع'),
-  };
+  String _datasetName(String id) => _adminDatasetName(id, _datasets, labels);
   String get _languageId => _language.text.trim();
   bool get _canPublish =>
       !_busy &&
       !_completed &&
       _validation?['valid'] == true &&
       (_validation?['replacesExisting'] != true || _replace);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCatalog();
+  }
+
+  Future<void> _loadCatalog() async {
+    setState(() {
+      _loadingCatalog = true;
+      _catalogError = null;
+    });
+    try {
+      final entries = await _loadAdminDatasetCatalog(widget.client);
+      if (mounted) setState(() => _datasets = entries);
+    } catch (error) {
+      if (mounted) setState(() => _catalogError = error.toString());
+    } finally {
+      if (mounted) setState(() => _loadingCatalog = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -109,7 +130,7 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
   bool _validForm() => _form.currentState?.validate() == true;
 
   Future<void> _downloadTemplate() async {
-    if (_busy) return;
+    if (_busy || !_catalogReady) return;
     if (!RegExp(r'^[a-z][a-z0-9_-]*$').hasMatch(_languageId)) {
       setState(() => _error = labels.invalidLanguageCode);
       return;
@@ -196,7 +217,7 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
   }
 
   Future<void> _validate() async {
-    if (_busy || _file == null || !_validForm()) return;
+    if (_busy || !_catalogReady || _file == null || !_validForm()) return;
     setState(() {
       _clearPreview();
       _busy = true;
@@ -352,6 +373,16 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
               title: labels.t('Table and language', 'الجدول واللغة'),
             ),
             const SizedBox(height: 12),
+            if (_loadingCatalog) const LinearProgressIndicator(),
+            if (_catalogError != null) ...[
+              _InlineError(_catalogError!),
+              TextButton.icon(
+                key: const ValueKey('retry-table-language-catalog'),
+                onPressed: _busy ? null : _loadCatalog,
+                icon: const Icon(Icons.refresh),
+                label: Text(labels.retry),
+              ),
+            ],
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -368,13 +399,20 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
                       isDense: true,
                     ),
                     items: [
-                      for (final id in ['harmony', 'miracles', 'parables'])
+                      for (final id in <String>{
+                        'harmony',
+                        'miracles',
+                        'parables',
+                        ..._datasets
+                            .where((entry) => entry['published'] == true)
+                            .map((entry) => entry['datasetId'] as String),
+                      })
                         DropdownMenuItem(
                           value: id,
                           child: Text(_datasetName(id)),
                         ),
                     ],
-                    onChanged: _busy
+                    onChanged: _busy || !_catalogReady
                         ? null
                         : (value) {
                             if (value != null) {
@@ -509,7 +547,7 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
               alignment: AlignmentDirectional.centerStart,
               child: OutlinedButton.icon(
                 key: const ValueKey('download-table-language-template'),
-                onPressed: _busy ? null : _downloadTemplate,
+                onPressed: _busy || !_catalogReady ? null : _downloadTemplate,
                 icon: const Icon(Icons.download_outlined),
                 label: Text(
                   labels.t('Download CSV template', 'تنزيل قالب CSV'),
@@ -555,7 +593,8 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
               alignment: AlignmentDirectional.centerStart,
               child: FilledButton.icon(
                 key: const ValueKey('validate-table-language'),
-                onPressed: _busy || _file == null || _completed
+                onPressed:
+                    _busy || !_catalogReady || _file == null || _completed
                     ? null
                     : _validate,
                 icon: const Icon(Icons.fact_check_outlined),

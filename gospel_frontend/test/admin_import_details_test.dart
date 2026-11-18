@@ -10,10 +10,13 @@ class _ImportClient implements AdminClient {
     this.collision = false,
     this.status = 'validated',
     this.type = 'bible',
+    this.dataset = 'parables',
+    this.tableLabels,
   });
   final bool collision;
   final String status;
-  final String type;
+  final String type, dataset;
+  final Map<String, String>? tableLabels;
   final posts = <({String path, Map<String, dynamic> body})>[];
 
   @override
@@ -21,8 +24,8 @@ class _ImportClient implements AdminClient {
     'import': {
       'id': _importId,
       'type': type,
-      if (type == 'dataset' || type == 'table_language')
-        'datasetId': 'parables',
+      if (type == 'dataset' || type == 'table_language') 'datasetId': dataset,
+      if (tableLabels != null) 'labels': tableLabels,
       'language': 'ancientgreek',
       'version': 'TR',
       'status': posts.isEmpty ? status : 'completed',
@@ -88,6 +91,18 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets('custom table history displays published labels', (tester) async {
+    final client = _ImportClient(
+      type: 'dataset',
+      dataset: 'sayings',
+      tableLabels: {'english': 'Sayings of Jesus'},
+    );
+    await _pump(tester, client, () {});
+    expect(find.text('Sayings of Jesus'), findsOneWidget);
+    expect(find.textContaining('open Import table'), findsOneWidget);
+    expect(client.posts, isEmpty);
+  });
+
   testWidgets(
     'table language history identifies target and requires current preview',
     (tester) async {
@@ -110,10 +125,7 @@ void main() {
       final client = _ImportClient(type: 'dataset');
       await _pump(tester, client, () {});
       expect(find.text('Parables'), findsOneWidget);
-      expect(
-        find.textContaining('open Import Miracles / Parables'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('open Import table'), findsOneWidget);
       expect(find.byKey(const ValueKey('resume-import')), findsNothing);
       expect(client.posts, isEmpty);
     },

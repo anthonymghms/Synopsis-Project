@@ -55,37 +55,57 @@ class DatasetSelector extends StatelessWidget {
     required this.datasetId,
     required this.language,
     required this.onChanged,
+    this.catalog = builtinDatasetCatalog,
   });
+  final List<DatasetCatalogEntry> catalog;
   final String datasetId;
   final String language;
   final ValueChanged<String> onChanged;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      if (constraints.maxWidth < 560) {
-        return DropdownButtonFormField<String>(
-          key: const ValueKey('dataset-selector-dropdown'),
-          initialValue: datasetId,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: language == 'arabic' ? 'الجدول' : 'Table',
-            isDense: true,
-            border: const OutlineInputBorder(),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
+      final entries = <String, DatasetCatalogEntry>{
+        for (final entry in catalog) entry.datasetId: entry,
+      };
+      // A bookmarked table may load before its catalog request completes.
+      entries.putIfAbsent(
+        datasetId,
+        () => DatasetCatalogEntry(datasetId: datasetId),
+      );
+      if (constraints.maxWidth < 560 || entries.length > 3) {
+        return Align(
+          alignment: AlignmentDirectional.centerStart,
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: DropdownButtonFormField<String>(
+              key: const ValueKey('dataset-selector-dropdown'),
+              initialValue: datasetId,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: datasetControlLabel('dataset', language),
+                isDense: true,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+              ),
+              items: [
+                for (final entry in entries.values)
+                  DropdownMenuItem(
+                    value: entry.datasetId,
+                    child: Text(
+                      entry.label(language),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (id) {
+                if (id != null) onChanged(id);
+              },
             ),
           ),
-          items: [
-            for (final id in topicDatasetIds)
-              DropdownMenuItem(
-                value: id,
-                child: Text(datasetDisplayName(id, language)),
-              ),
-          ],
-          onChanged: (id) {
-            if (id != null) onChanged(id);
-          },
         );
       }
       return Align(
@@ -94,10 +114,10 @@ class DatasetSelector extends StatelessWidget {
           key: const ValueKey('dataset-selector-tabs'),
           showSelectedIcon: false,
           segments: [
-            for (final id in topicDatasetIds)
+            for (final entry in entries.values)
               ButtonSegment(
-                value: id,
-                label: Text(datasetDisplayName(id, language)),
+                value: entry.datasetId,
+                label: Text(entry.label(language)),
               ),
           ],
           selected: {datasetId},

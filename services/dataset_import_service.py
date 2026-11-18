@@ -19,6 +19,7 @@ DATASET_LABELS = {
     "miracles": {"english": "Miracles", "arabic": "المعجزات"},
     "parables": {"english": "Parables", "arabic": "الأمثال"},
 }
+HARMONY_LABELS = {"english": "Harmony / All Topics", "arabic": "التوافق / جميع المواضيع"}
 GOSPEL_LABELS = {
     "english": dict(zip(GOSPELS, GOSPELS)),
     "arabic": dict(zip(GOSPELS, ("متى", "مرقس", "لوقا", "يوحنا"))),
@@ -26,10 +27,29 @@ GOSPEL_LABELS = {
 
 
 def dataset_id(value: Any) -> str:
-    value = str(value or "").strip().lower()
-    if value not in DATASET_FILES:
-        raise ValueError("Choose the Miracles or Parables dataset. Harmony uses its separate master workflow.")
+    value = value.strip() if isinstance(value, str) else ""
+    if value == "harmony":
+        raise ValueError("Harmony is protected and uses its separate master workflow.")
+    if not 2 <= len(value) <= 48 or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", value):
+        raise ValueError("Table ID must contain 2–48 lowercase letters, numbers, or single hyphens, starting with a letter.")
     return value
+
+
+def dataset_labels(value: Any) -> dict[str, str]:
+    """Validate administrator-supplied display labels, never infer identity."""
+    if not isinstance(value, dict) or set(value) - {"english", "arabic"}:
+        raise ValueError("Supply an English table name and, optionally, an Arabic table name.")
+    labels = {}
+    for language in ("english", "arabic"):
+        label = value.get(language, "")
+        if not isinstance(label, str):
+            raise ValueError("Table names must be text.")
+        label = label.strip()
+        if (language == "english" and not label) or len(label) > 80 or any(ord(c) < 32 for c in label):
+            raise ValueError("Table names must contain 1–80 characters without control characters; the English name is required.")
+        if label:
+            labels[language] = label
+    return labels
 
 
 def _key(value: str) -> str:

@@ -45,6 +45,8 @@ void main() {
   late MockClient client;
   late List<Uri> requests;
   late Map<String, List<Map<String, dynamic>>> datasetRows;
+  late bool customPublished;
+  late bool catalogUnavailable;
   List<Map<String, dynamic>> rowsFor(String dataset) =>
       datasetRows[dataset] ?? canonical(dataset);
 
@@ -70,9 +72,14 @@ void main() {
     accountAccess.beginSession('reader');
     requests = [];
     datasetRows = {};
+    customPublished = false;
+    catalogUnavailable = false;
     client = MockClient((request) async {
       requests.add(request.url);
-      expect(request.headers['Authorization'], 'Bearer dataset-reader-token');
+      expectSync(
+        request.headers['Authorization'],
+        'Bearer dataset-reader-token',
+      );
       final path = request.url.path;
       Object body;
       if (path == '/account/access') {
@@ -81,6 +88,24 @@ void main() {
           'role': 'subscribed',
           'canRead': true,
           'accessStatus': 'active',
+        };
+      } else if (path == '/datasets') {
+        if (catalogUnavailable) return http.Response('Unavailable', 503);
+        body = {
+          'datasets': [
+            for (final entry in builtinDatasetCatalog)
+              {
+                'datasetId': entry.datasetId,
+                'labels': entry.labels,
+                'published': true,
+              },
+            if (customPublished)
+              {
+                'datasetId': 'journeys',
+                'labels': {'english': 'Journeys', 'arabic': 'الرحلات'},
+                'published': true,
+              },
+          ],
         };
       } else if (path == '/topic-languages') {
         body = {
@@ -138,8 +163,8 @@ void main() {
             'topics': rowsFor(dataset),
           };
         } else {
-          expect(parts[3], 'localizations');
-          expect(request.url.queryParameters['revision'], revision);
+          expectSync(parts[3], 'localizations');
+          expectSync(request.url.queryParameters['revision'], revision);
           body = {
             'datasetId': dataset,
             'revision': revision,
@@ -154,7 +179,7 @@ void main() {
         }
       } else if (path == '/get_verse' || path == '/get_chapter') {
         final language = request.url.queryParameters['language'];
-        expect(language, isIn(['english', 'arabic']));
+        expectSync(language, isIn(['english', 'arabic']));
         body = [
           for (var id = 1; id <= 3; id++)
             {'verse': id, 'text': '$language fixture verse $id'},
@@ -310,6 +335,130 @@ void main() {
 
   int canonicalRequests() =>
       requests.where((uri) => uri.path.endsWith('/topics')).length;
+
+  testWidgets(
+    'published fourth table appears and keeps IDs, filters and readers separate',
+    (tester) async {
+      customPublished = true;
+      await inReader(tester, route(), () async {
+        Future<void> select(String label) async {
+          await tap(
+            tester,
+            find.byKey(const ValueKey('dataset-selector-dropdown')),
+          );
+          await tap(tester, find.text(label).last);
+        }
+
+        await select('Journeys');
+        expect(table(tester).topics.first.datasetId, 'journeys');
+        expect(table(tester).topics.first.id, '1');
+        expect(
+          table(tester).topics.first.name,
+          subject('journeys', 1, 'english'),
+        );
+        await tap(tester, find.text('Group by Type'));
+        await tap(tester, find.byType(HarmonyFilterButton));
+        await tap(tester, find.byKey(const ValueKey('type-filter-parable')));
+        await tap(tester, find.byKey(const ValueKey('apply-filter')));
+        expect(table(tester).topics.map((t) => t.id), ['1', '3']);
+        final links = tester
+            .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
+            .where(
+              (link) => const ['/topic', '/reference'].contains(link.uri?.path),
+            );
+        expect(links, isNotEmpty);
+        for (final link in links) {
+          expect(link.uri!.queryParameters['dataset'], 'journeys');
+          expect(link.uri!.queryParameters['view'], 'grouped');
+          expect(link.uri!.queryParameters['types'], 'parable');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'english');
+          if (link.uri!.path == '/reference') expect(link.openInNewTab, isTrue);
+        }
+        await tap(tester, find.text(subject('journeys', 1, 'english')));
+        expect(
+          tester
+              .widget<TopicDetailScreen>(find.byType(TopicDetailScreen))
+              .datasetId,
+          'journeys',
+        );
+        Navigator.of(tester.element(find.byType(TopicDetailScreen))).pop();
+        await tester.pumpAndSettle();
+        await select('Miracles');
+        expect(table(tester).topics.length, 3);
+        expect(
+          table(tester).topics.first.name,
+          subject('miracles', 1, 'english'),
+        );
+        await select('Journeys');
+        expect(table(tester).groupedByType, isTrue);
+        expect(table(tester).topics.map((t) => t.id), ['1', '3']);
+        assertBible(tester);
+        expect(canonicalRequests(), 3);
+        expect(requests.where((uri) => uri.path == '/datasets').length, 1);
+      });
+    },
+  );
+
+  testWidgets(
+    'a cold fourth-table link retains localization and identity while catalog retries',
+    (tester) async {
+      customPublished = true;
+      catalogUnavailable = true;
+      await inReader(
+        tester,
+        route(dataset: 'journeys', bibleLanguage: 'arabic'),
+        () async {
+          expect(table(tester).topics.first.datasetId, 'journeys');
+          expect(
+            table(tester).topics.first.name,
+            subject('journeys', 1, 'arabic'),
+          );
+          expect(
+            find.byKey(const ValueKey('retry-dataset-catalog')),
+            findsOneWidget,
+          );
+          catalogUnavailable = false;
+          await tap(
+            tester,
+            find.byKey(const ValueKey('retry-dataset-catalog')),
+          );
+          expect(
+            find.byKey(const ValueKey('retry-dataset-catalog')),
+            findsNothing,
+          );
+          expect(find.text('الرحلات'), findsWidgets);
+          expect(canonicalRequests(), 1);
+          assertBible(tester, 'arabic');
+        },
+      );
+    },
+  );
+
+  testWidgets(
+    'a newly published fourth table is discovered after catalog invalidation',
+    (tester) async {
+      await inReader(tester, route(), () async {
+        expect(
+          find.byKey(const ValueKey('dataset-selector-tabs')),
+          findsOneWidget,
+        );
+        customPublished = true;
+        notifyCatalogChanged();
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('dataset-selector-dropdown')),
+          findsOneWidget,
+        );
+        await tap(
+          tester,
+          find.byKey(const ValueKey('dataset-selector-dropdown')),
+        );
+        expect(find.text('Journeys'), findsWidgets);
+        await tap(tester, find.text('Journeys').last);
+        expect(table(tester).topics.first.datasetId, 'journeys');
+      });
+    },
+  );
 
   testWidgets(
     'all three tables isolate identical IDs and reuse loaded data when switching',

@@ -9,6 +9,7 @@ class DatasetImportWizard extends StatefulWidget {
     required this.onCompleted,
     this.filePicker = const PlatformAdminFilePicker(),
     this.maxUploadBytes = defaultMaxAdminUploadBytes,
+    this.csvDownloader = downloadCsv,
   });
 
   final AdminClient client;
@@ -16,12 +17,20 @@ class DatasetImportWizard extends StatefulWidget {
   final VoidCallback onCompleted;
   final AdminFilePicker filePicker;
   final int maxUploadBytes;
+  final Future<void> Function(String contents, String filename) csvDownloader;
 
   @override
   State<DatasetImportWizard> createState() => _DatasetImportWizardState();
 }
 
 class _DatasetImportWizardState extends State<DatasetImportWizard> {
+  static const _newTarget = '__new__';
+  final _newId = TextEditingController();
+  final _englishName = TextEditingController();
+  final _arabicName = TextEditingController();
+  List<Map<String, dynamic>> _datasets = [];
+  bool _loadingCatalog = true;
+  String? _catalogError;
   String _dataset = 'miracles';
   String _source = 'storage';
   List<Map<String, dynamic>> _sources = [];
@@ -35,12 +44,45 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
   String? _error;
 
   _AdminLabels get labels => _AdminLabels(widget.arabic);
-  String get _datasetName => _name(_dataset);
-  String _name(String id) => id == 'miracles'
-      ? labels.t('Miracles', 'المعجزات')
-      : labels.t('Parables', 'الأمثال');
-  String get _filename =>
-      _dataset == 'miracles' ? 'Miracles.csv' : 'Parables.csv';
+  bool get _creating => _dataset == _newTarget;
+  bool get _catalogReady => !_loadingCatalog && _catalogError == null;
+  String get _datasetId => _creating ? _newId.text.trim() : _dataset;
+  String get _datasetName => _creating
+      ? ((widget.arabic && _arabicName.text.trim().isNotEmpty)
+            ? _arabicName.text.trim()
+            : _englishName.text.trim().isNotEmpty
+            ? _englishName.text.trim()
+            : labels.t('New table', 'جدول جديد'))
+      : _name(_dataset);
+  String _name(String id) => _adminDatasetName(id, _datasets, labels);
+  bool get _supportsStorage =>
+      const {'miracles', 'parables'}.contains(_dataset);
+  String get _filename => switch (_dataset) {
+    'miracles' => 'Miracles.csv',
+    'parables' => 'Parables.csv',
+    _ => _file?.name ?? 'table.csv',
+  };
+  String? get _idError {
+    final id = _newId.text.trim();
+    if (id.isEmpty) return null;
+    if (id.length < 2 ||
+        id.length > 48 ||
+        !RegExp(r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$').hasMatch(id)) {
+      return labels.t(
+        'Use 2–48 lowercase letters, digits, and single hyphens; start with a letter.',
+        'استخدم 2–48 حرفًا لاتينيًا صغيرًا أو رقمًا أو شرطة مفردة؛ ابدأ بحرف.',
+      );
+    }
+    if (const {'harmony', 'miracles', 'parables'}.contains(id) ||
+        _datasets.any((entry) => entry['datasetId'] == id)) {
+      return labels.t(
+        'This ID already belongs to a table. Choose that table to update it.',
+        'هذا المعرّف مستخدم لجدول. اختر الجدول الموجود لتحديثه.',
+      );
+    }
+    return null;
+  }
+
   Map<String, dynamic>? get _storageSource {
     for (final source in _sources) {
       // The UI never accepts free-form Storage paths or arbitrary URLs.
@@ -55,6 +97,11 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
   bool get _canValidate =>
       !_busy &&
       !_completed &&
+      _catalogReady &&
+      (!_creating ||
+          (_newId.text.trim().isNotEmpty &&
+              _idError == null &&
+              _englishName.text.trim().isNotEmpty)) &&
       (_source == 'upload'
           ? _file != null
           : _storageSource?['available'] == true);
@@ -68,6 +115,54 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
   void initState() {
     super.initState();
     _loadSources();
+    _loadCatalog();
+  }
+
+  @override
+  void dispose() {
+    _newId.dispose();
+    _englishName.dispose();
+    _arabicName.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCatalog() async {
+    setState(() {
+      _loadingCatalog = true;
+      _catalogError = null;
+    });
+    try {
+      final entries = await _loadAdminDatasetCatalog(widget.client);
+      if (mounted) setState(() => _datasets = entries);
+    } catch (error) {
+      if (mounted) setState(() => _catalogError = error.toString());
+    } finally {
+      if (mounted) setState(() => _loadingCatalog = false);
+    }
+  }
+
+  Future<void> _downloadTemplate() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.client.getJson('/admin/datasets/template');
+      if (result['csv'] is! String) {
+        throw const AdminApiException(
+          'The template response contained no CSV.',
+        );
+      }
+      await widget.csvDownloader(
+        result['csv'] as String,
+        result['filename']?.toString() ?? 'table-template.csv',
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _loadSources() async {
@@ -127,19 +222,32 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
     try {
       final result = _source == 'storage'
           ? await widget.client.postJson('/admin/datasets/validate', {
-              'datasetId': _dataset,
+              'datasetId': _datasetId,
               'source': 'storage',
               'filename': _filename,
             })
           : await widget.client.upload(
               '/admin/datasets/validate',
-              fields: {'datasetId': _dataset, 'source': 'upload'},
+              fields: {
+                'datasetId': _datasetId,
+                'source': 'upload',
+                if (_creating) 'createNew': 'true',
+                if (_creating)
+                  'labels': jsonEncode({
+                    'english': _englishName.text.trim(),
+                    if (_arabicName.text.trim().isNotEmpty)
+                      'arabic': _arabicName.text.trim(),
+                  }),
+              },
               files: [_file!],
               fileField: 'file',
             );
       if (mounted) setState(() => _validation = result);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) {
+        setState(() => _error = error.toString());
+        if (_creating) await _loadCatalog();
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -184,7 +292,7 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
     });
     try {
       var result = await widget.client.postJson('/admin/datasets/publish', {
-        'datasetId': _dataset,
+        'datasetId': _datasetId,
         'importId': validation['importId'],
         'confirm': true,
         'replace': replacing && _replace,
@@ -231,6 +339,7 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
           _error =
               '${error.toString()} ${labels.t('Validate again before publishing.', 'أعد التحقق قبل النشر.')}';
         });
+        if (_creating) await _loadCatalog();
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -247,32 +356,102 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
       child: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          _StepTitle(
-            number: 1,
-            title: labels.t('Choose dataset', 'اختر الجدول'),
-          ),
+          _StepTitle(number: 1, title: labels.t('Choose table', 'اختر الجدول')),
+          if (_loadingCatalog) const LinearProgressIndicator(),
+          if (_catalogError != null) ...[
+            _InlineError(_catalogError!),
+            TextButton.icon(
+              key: const ValueKey('retry-dataset-catalog'),
+              onPressed: _busy ? null : _loadCatalog,
+              icon: const Icon(Icons.refresh),
+              label: Text(labels.retry),
+            ),
+          ],
           DropdownButtonFormField<String>(
             key: ValueKey('dataset-import-target-$_dataset'),
             initialValue: _dataset,
             decoration: InputDecoration(
-              labelText: labels.t('Target dataset', 'الجدول المستهدف'),
+              labelText: labels.t('Target table', 'الجدول المستهدف'),
               border: const OutlineInputBorder(),
             ),
+            isExpanded: true,
             items: [
-              for (final id in ['miracles', 'parables'])
+              for (final id in <String>{
+                'miracles',
+                'parables',
+                ..._datasets
+                    .where((entry) => entry['datasetId'] != 'harmony')
+                    .map((entry) => entry['datasetId'] as String),
+              })
                 DropdownMenuItem(value: id, child: Text(_name(id))),
+              DropdownMenuItem(
+                value: _newTarget,
+                child: Text(labels.t('Create new table', 'إنشاء جدول جديد')),
+              ),
             ],
-            onChanged: _busy
+            onChanged: _busy || !_catalogReady
                 ? null
                 : (value) {
                     if (value == null || value == _dataset) return;
                     setState(() {
                       _dataset = value;
+                      if (!_supportsStorage) _source = 'upload';
                       _file = null;
                       _clearPreview();
                     });
                   },
           ),
+          if (_creating) ...[
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('new-table-id'),
+              controller: _newId,
+              enabled: !_busy,
+              decoration: InputDecoration(
+                labelText: labels.t('Stable table ID', 'معرّف الجدول الثابت'),
+                helperMaxLines: 2,
+                errorMaxLines: 3,
+                helperText: labels.t(
+                  'For example: teachings. Used in links; choose it once.',
+                  'مثال: teachings. يُستخدم في الروابط؛ اختره مرة واحدة.',
+                ),
+                errorText: _idError,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(_clearPreview),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('new-table-name-english'),
+              controller: _englishName,
+              enabled: !_busy,
+              maxLength: 80,
+              decoration: InputDecoration(
+                labelText: labels.t(
+                  'Table name in English (required)',
+                  'اسم الجدول بالإنجليزية (مطلوب)',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(_clearPreview),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('new-table-name-arabic'),
+              controller: _arabicName,
+              enabled: !_busy,
+              maxLength: 80,
+              textDirection: TextDirection.rtl,
+              decoration: InputDecoration(
+                labelText: labels.t(
+                  'Table name in Arabic (optional)',
+                  'اسم الجدول بالعربية (اختياري)',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(_clearPreview),
+            ),
+          ],
           const SizedBox(height: 20),
           _StepTitle(
             number: 2,
@@ -286,15 +465,16 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
               border: const OutlineInputBorder(),
             ),
             items: [
-              DropdownMenuItem(
-                value: 'storage',
-                child: Text(
-                  labels.t(
-                    'Existing Firebase Storage file',
-                    'ملف موجود في Firebase Storage',
+              if (_supportsStorage)
+                DropdownMenuItem(
+                  value: 'storage',
+                  child: Text(
+                    labels.t(
+                      'Existing Firebase Storage file',
+                      'ملف موجود في Firebase Storage',
+                    ),
                   ),
                 ),
-              ),
               DropdownMenuItem(value: 'upload', child: Text(labels.uploadCsv)),
             ],
             isExpanded: true,
@@ -336,6 +516,15 @@ class _DatasetImportWizardState extends State<DatasetImportWizard> {
                     }),
             ),
           const SizedBox(height: 12),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: OutlinedButton.icon(
+              key: const ValueKey('download-dataset-template'),
+              onPressed: _busy || !_catalogReady ? null : _downloadTemplate,
+              icon: const Icon(Icons.download_outlined),
+              label: Text(labels.t('Download CSV template', 'تنزيل قالب CSV')),
+            ),
+          ),
           Text(
             labels.t(
               'Columns are matched by header. Include #, Subject and/or الموضوع, optional Type, and Matthew, Mark, Luke, John. Quote reference cells containing commas. Use + for a continuous passage, ; for separate passages, and , for selections in the same chapter.',
@@ -507,7 +696,7 @@ class _DatasetValidationPreview extends StatelessWidget {
                   'Replaces the existing published revision',
                   'يستبدل الإصدار المنشور الحالي',
                 )
-              : labels.t('Creates a new dataset', 'ينشئ جدولًا جديدًا'),
+              : labels.t('Creates a new table', 'ينشئ جدولًا جديدًا'),
         ),
         const SizedBox(height: 8),
         Text(
