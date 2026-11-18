@@ -153,11 +153,11 @@ void main() {
           };
         }
       } else if (path == '/get_verse' || path == '/get_chapter') {
-        expect(request.url.queryParameters['language'], 'english');
-        expect(request.url.queryParameters['version']?.toLowerCase(), 'kjv');
+        final language = request.url.queryParameters['language'];
+        expect(language, isIn(['english', 'arabic']));
         body = [
           for (var id = 1; id <= 3; id++)
-            {'verse': id, 'text': 'English KJV fixture verse $id'},
+            {'verse': id, 'text': '$language fixture verse $id'},
         ];
       } else {
         fail('Unexpected dataset reader request: ${request.url}');
@@ -192,18 +192,21 @@ void main() {
     final query = uri.queryParameters;
     return MaterialPageRoute<void>(
       settings: settings,
-      builder: (_) => ReaderLanguageRoute(
-        onActivated: () => activateReaderLanguages(languages),
-        child: uri.path == '/topic'
-            ? TopicDetailScreen(
+      builder: (_) => uri.path == '/topic'
+          ? DatasetReaderLanguageRoute(
+              uri: uri,
+              builder: (selection) => TopicDetailScreen(
                 datasetId: normalizeDatasetId(query['dataset']),
-                languageOption: languages.bible,
-                topicLanguage: languages.topic,
+                languageOption: selection.bible,
+                topicLanguage: selection.topic,
                 apiVersion: query['version'] ?? 'kjv',
                 topicId: query['topicId'] ?? '1',
                 topicNumber: query['topicNumber'] ?? '1',
-              )
-            : TopicListScreen(
+              ),
+            )
+          : ReaderLanguageRoute(
+              onActivated: () => activateReaderLanguages(languages),
+              child: TopicListScreen(
                 initialDataset: query['dataset'],
                 initialView: query['view'],
                 initialTypes: query['types'],
@@ -216,7 +219,7 @@ void main() {
                 initialSortGospel: query['sort'],
                 initialVisibleColumns: query['columns'],
               ),
-      ),
+            ),
     );
   }
 
@@ -234,18 +237,19 @@ void main() {
   String route({
     String path = '/',
     String dataset = 'harmony',
-    String tableLanguage = 'english',
+    String bibleLanguage = 'english',
+    String? tableLanguage,
     String? view,
     String? types,
     String? id,
   }) => Uri(
     path: path,
     queryParameters: {
-      'bibleLanguage': 'english',
-      'language': 'english',
-      'version': 'kjv',
-      'topicLanguage': tableLanguage,
-      'menuLanguage': tableLanguage,
+      'bibleLanguage': bibleLanguage,
+      'language': bibleLanguage,
+      'version': bibleLanguage == 'arabic' ? 'Van Dyke-' : 'kjv',
+      'topicLanguage': tableLanguage ?? bibleLanguage,
+      'menuLanguage': tableLanguage ?? bibleLanguage,
       if (dataset != 'harmony') 'dataset': dataset,
       if (view != null) 'view': view,
       if (types != null) 'types': types,
@@ -259,6 +263,21 @@ void main() {
     await tester.ensureVisible(finder);
     await tester.tap(finder);
     await tester.pumpAndSettle();
+  }
+
+  Future<void> chooseArabicBible(WidgetTester tester) async {
+    await tap(
+      tester,
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip && widget.message?.endsWith(': English') == true,
+      ),
+    );
+    await tap(tester, find.text('العربية').last);
+    if (find.text('البستاني فاندايك').evaluate().isNotEmpty) {
+      await tap(tester, find.text('البستاني فاندايك').last);
+    }
+    expect(BrowserRouteLinkNavigation.isBlocked, isFalse);
   }
 
   Future<void> inReader(
@@ -283,10 +302,10 @@ void main() {
     }, () => client);
   }
 
-  void assertBible(WidgetTester tester) {
+  void assertBible(WidgetTester tester, [String language = 'english']) {
     final toolbar = tester.widget<AppToolbar>(find.byType(AppToolbar));
-    expect(toolbar.language.code, 'english');
-    expect(toolbar.version.toLowerCase(), 'kjv');
+    expect(toolbar.language.code, language);
+    if (language == 'english') expect(toolbar.version.toLowerCase(), 'kjv');
   }
 
   int canonicalRequests() =>
@@ -330,14 +349,14 @@ void main() {
   );
 
   testWidgets(
-    'Arabic table language preserves English KJV and reference identity',
+    'Arabic Bible selection automatically localizes the table and preserves reference identity',
     (tester) async {
       await inReader(tester, route(dataset: 'parables'), () async {
-        await tap(
-          tester,
+        expect(
           find.byKey(const ValueKey('table-language-selector')),
+          findsNothing,
         );
-        await tap(tester, find.text('العربية').last);
+        await chooseArabicBible(tester);
         expect(table(tester).topicLanguage.code, 'arabic');
         expect(
           table(tester).topics.first.name,
@@ -346,7 +365,7 @@ void main() {
         expect(table(tester).topics.first.typeId, 'parable');
         expect(table(tester).topics.first.references.first.book, 'Mark');
         expect(canonicalRequests(), 1);
-        assertBible(tester);
+        assertBible(tester, 'arabic');
         expect(
           requests
               .where(
@@ -396,15 +415,12 @@ void main() {
   );
 
   testWidgets(
-    'Back restores the current table language after opening a topic',
+    'Back restores the selected Bible and matching table language after opening a topic',
     (tester) async {
       await inReader(tester, route(dataset: 'parables'), () async {
-        await tap(
-          tester,
-          find.byKey(const ValueKey('table-language-selector')),
-        );
-        await tap(tester, find.text('العربية').last);
+        await chooseArabicBible(tester);
         await tap(tester, find.text(subject('parables', 1, 'arabic')));
+        expect(BrowserRouteLinkNavigation.isBlocked, isFalse);
         expect(find.byType(TopicDetailScreen), findsOneWidget);
         Navigator.of(tester.element(find.byType(TopicDetailScreen))).pop();
         await tester.pumpAndSettle();
@@ -418,14 +434,14 @@ void main() {
           table(tester).topics.first.name,
           subject('parables', 1, 'arabic'),
         );
-        assertBible(tester);
+        assertBible(tester, 'arabic');
         expect(canonicalRequests(), 1);
       });
     },
   );
 
   testWidgets(
-    'a refreshed dataset route reconstructs grouped filters and independent languages',
+    'a refreshed dataset route reconstructs grouped filters and the Bible-matched table language',
     (tester) async {
       await inReader(
         tester,
@@ -433,7 +449,7 @@ void main() {
           dataset: 'parables',
           view: 'grouped',
           types: 'figure-of-speech',
-          tableLanguage: 'arabic',
+          bibleLanguage: 'arabic',
         ),
         () async {
           expect(table(tester).metadata.datasetId, 'parables');
@@ -443,7 +459,7 @@ void main() {
             table(tester).topics.single.name,
             subject('parables', 2, 'arabic'),
           );
-          assertBible(tester);
+          assertBible(tester, 'arabic');
           expect(canonicalRequests(), 1);
         },
       );
@@ -587,9 +603,9 @@ void main() {
         ],
       );
       final selection = resolveReaderLanguages(
-        Uri.parse(route(dataset: 'parables', tableLanguage: 'arabic')),
+        Uri.parse(route(dataset: 'parables', bibleLanguage: 'arabic')),
       );
-      expect(selection.bible.code, 'english');
+      expect(selection.bible.code, 'arabic');
       expect(selection.topic, 'arabic');
       expect(selection.menu, 'arabic');
       activateReaderLanguages(selection);
@@ -609,7 +625,7 @@ void main() {
       );
       expect(menuLanguage, 'arabic');
       final harmony = resolveReaderLanguages(
-        Uri.parse(route(tableLanguage: 'arabic')),
+        Uri.parse(route(bibleLanguage: 'arabic')),
       );
       expect(harmony.topic, 'arabic');
     },

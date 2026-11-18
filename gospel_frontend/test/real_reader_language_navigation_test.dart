@@ -151,13 +151,12 @@ void main() {
       initialRoute: initialRoute,
       onGenerateRoute: (settings) {
         final uri = Uri.parse(settings.name!);
-        final languages = resolveReaderLanguages(uri);
         final query = uri.queryParameters;
         return MaterialPageRoute<void>(
           settings: settings,
-          builder: (_) => ReaderLanguageRoute(
-            onActivated: () => activateReaderLanguages(languages),
-            child: uri.path == '/topic'
+          builder: (_) => DatasetReaderLanguageRoute(
+            uri: uri,
+            builder: (languages) => uri.path == '/topic'
                 ? TopicDetailScreen(
                     languageOption: languages.bible,
                     topicLanguage: languages.topic,
@@ -205,15 +204,16 @@ void main() {
   String route(
     String path, {
     String menu = 'english',
+    String bible = 'english',
     bool comparison = false,
   }) => Uri(
     path: path,
     queryParameters: {
       'menuLanguage': menu,
       'topicLanguage': menu,
-      'bibleLanguage': 'english',
-      'language': 'english',
-      'version': 'kjv',
+      'bibleLanguage': bible,
+      'language': bible,
+      'version': bible == 'arabic' ? arabicVersionWithoutDiacritics : 'kjv',
       'book': 'Luke',
       'bookDisplay': 'Luke',
       'chapter': '1',
@@ -330,7 +330,7 @@ void main() {
     await http.runWithClient(() async {
       try {
         await accountAccess.refresh(force: true);
-        await tester.pumpWidget(app(route('/topic', menu: 'arabic')));
+        await tester.pumpWidget(app(route('/topic', bible: 'arabic')));
         await tester.pump();
         expect(
           requests.map((uri) => uri.path),
@@ -354,7 +354,7 @@ void main() {
 
   for (final path in ['/reference', '/topic']) {
     testWidgets(
-      '$path version-only change preserves chosen interface, topics and comparison',
+      '$path old mixed link follows Bible language through version change and keeps comparison',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -365,11 +365,16 @@ void main() {
               app(route(path, menu: 'arabic', comparison: true)),
             );
             await tester.pumpAndSettle();
-            await tester.tap(find.byTooltip('الترجمة: Kjv'));
+            expect(MenuLanguageController.instance.languageCode, 'english');
+            expect(
+              TopicLanguageSelectionController.instance.languageCode,
+              'english',
+            );
+            await tester.tap(find.byTooltip('Translation: Kjv'));
             await tester.pumpAndSettle();
             await tester.tap(find.text('ASV').last);
             await tester.pumpAndSettle();
-            expectLanguages(tester, path, 'english', 'arabic');
+            expectLanguages(tester, path, 'english', 'english');
             expect(
               tester.widget<AppToolbar>(find.byType(AppToolbar)).version,
               'ASV',
@@ -384,7 +389,7 @@ void main() {
     );
 
     testWidgets(
-      '$path real toolbar switches Bible Arabic and English while retaining English table and menus',
+      '$path real toolbar switches Bible, subjects and menus together while keeping comparison',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -394,7 +399,7 @@ void main() {
             await tester.pumpWidget(app(route(path, comparison: true)));
             await tester.pumpAndSettle();
             await chooseLanguage(tester, 'العربية');
-            expectLanguages(tester, path, 'arabic', 'english');
+            expectLanguages(tester, path, 'arabic', 'arabic');
             expectComparison(tester, path);
             expect(
               find.textContaining('نص لوقا العربي', findRichText: true),
@@ -416,7 +421,7 @@ void main() {
     );
 
     testWidgets(
-      '$path selecting its current Bible language preserves independently selected Arabic table and menus',
+      '$path selecting its current Bible language normalizes old mixed table and menu parameters',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -426,7 +431,7 @@ void main() {
             await tester.pumpWidget(app(route(path, menu: 'arabic')));
             await tester.pumpAndSettle();
             await chooseLanguage(tester, 'English');
-            expectLanguages(tester, path, 'english', 'arabic');
+            expectLanguages(tester, path, 'english', 'english');
           } finally {
             await tester.pumpWidget(const SizedBox());
             accountAccess.clear();
@@ -436,17 +441,19 @@ void main() {
     );
 
     testWidgets(
-      '$path Bible-only Greek keeps Arabic interface and topic localization',
+      '$path Bible-only Greek falls back from Arabic to English subjects and menus',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
         await http.runWithClient(() async {
           try {
             await accountAccess.refresh(force: true);
-            await tester.pumpWidget(app(route(path, menu: 'arabic')));
+            await tester.pumpWidget(
+              app(route(path, menu: 'arabic', bible: 'arabic')),
+            );
             await tester.pumpAndSettle();
             await chooseLanguage(tester, 'Ἑλληνική');
-            expectLanguages(tester, path, 'ancientgreek', 'arabic');
+            expectLanguages(tester, path, 'ancientgreek', 'english');
             expect(
               find.textContaining('Λόγος δοκιμής', findRichText: true),
               findsWidgets,

@@ -1470,7 +1470,7 @@ void main() {
     expect(topicLink.openInNewTab, isFalse);
   });
 
-  testWidgets('reference links preserve the actual menu and topic context', (
+  testWidgets('reference links align menus and topic language with Bible', (
     tester,
   ) async {
     const reference = GospelReference(
@@ -1514,7 +1514,7 @@ void main() {
           matching: find.byType(BrowserRouteLink),
         ),
       );
-      expect(link.uri?.queryParameters['menuLanguage'], 'english');
+      expect(link.uri?.queryParameters['menuLanguage'], bibleLanguage.code);
       expect(link.uri?.queryParameters['topicLanguage'], bibleLanguage.code);
       expect(
         link.uri?.queryParameters['bibleLanguage'],

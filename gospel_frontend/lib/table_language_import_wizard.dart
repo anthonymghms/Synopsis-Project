@@ -342,8 +342,8 @@ class _TableLanguageImportWizardState extends State<TableLanguageImportWizard> {
           children: [
             Text(
               labels.t(
-                'Add translated subjects, Type labels, and table headings to any published table. This language does not need a Bible translation or a Harmony translation.',
-                'أضف ترجمة المواضيع وتسميات النوع وعناوين الأعمدة لأي جدول منشور. لا تتطلب هذه اللغة ترجمة للكتاب المقدس أو لجدول التناغم.',
+                'Translate this table’s subjects, Type labels, and headings. Readers see these translations when they choose an available Bible translation in the same language. This import does not add Bible text or change another table.',
+                'ترجم مواضيع هذا الجدول وتسميات النوع وعناوين الأعمدة. تظهر هذه الترجمات عند اختيار ترجمة متاحة للكتاب المقدس باللغة نفسها. لا يضيف هذا الاستيراد نصوص الكتاب المقدس ولا يغيّر جدولًا آخر.',
               ),
             ),
             const SizedBox(height: 16),

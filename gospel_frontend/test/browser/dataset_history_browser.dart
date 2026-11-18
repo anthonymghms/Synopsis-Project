@@ -36,9 +36,9 @@ void main() {
           ),
           'topicLanguage': 'arabic',
           'menuLanguage': 'arabic',
-          'bibleLanguage': 'english',
-          'language': 'english',
-          'version': 'kjv',
+          'bibleLanguage': 'arabic',
+          'language': 'arabic',
+          'version': 'Van Dyke-',
         },
       );
       final miracles = Uri(
@@ -64,8 +64,8 @@ void main() {
         expect(state.mode, DatasetViewMode.grouped);
         expect(state.selectedTypeIds, {'parable'});
         expect(restored.queryParameters['topicLanguage'], 'arabic');
-        expect(restored.queryParameters['bibleLanguage'], 'english');
-        expect(restored.queryParameters['version'], 'kjv');
+        expect(restored.queryParameters['bibleLanguage'], 'arabic');
+        expect(restored.queryParameters['version'], 'Van Dyke-');
         final gospel = GospelFilterState.fromQueryParameters(
           restored.queryParameters,
         );

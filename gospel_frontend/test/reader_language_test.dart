@@ -53,7 +53,7 @@ void main() {
     },
   );
 
-  test('passage and topic URLs preserve independent language choices', () {
+  test('Bible-only URLs use the active table default language', () {
     for (final path in ['/reference', '/topic']) {
       final uri = Uri(
         path: path,
@@ -65,23 +65,56 @@ void main() {
         },
       );
       expect(uri.queryParameters['bibleLanguage'], 'ancientgreek');
-      expect(uri.queryParameters['topicLanguage'], 'arabic');
-      expect(uri.queryParameters['menuLanguage'], 'arabic');
+      expect(uri.queryParameters['topicLanguage'], 'english');
+      expect(uri.queryParameters['menuLanguage'], 'english');
       final resolved = resolveReaderLanguages(uri);
       expect(resolved.bible.code, 'ancientgreek');
       expect(resolved.bible.apiVersion, 'TR');
-      expect(resolved.topic, 'arabic');
-      expect(resolved.menu, 'arabic');
+      expect(resolved.topic, 'english');
+      expect(resolved.menu, 'english');
     }
   });
 
-  test('Bible-only legacy deep links retain the current topic language', () {
+  test('Bible-only legacy deep links use the table default language', () {
     final resolved = resolveReaderLanguages(
       Uri.parse('/reference?language=ancientgreek&version=TR'),
     );
     expect(resolved.bible.code, 'ancientgreek');
-    expect(resolved.topic, 'arabic');
-    expect(resolved.menu, 'arabic');
+    expect(resolved.topic, 'english');
+    expect(resolved.menu, 'english');
+  });
+
+  test('legacy mixed-language links follow the selected Bible language', () {
+    for (final path in ['/', '/reference', '/topic']) {
+      for (final bible in ['english', 'arabic']) {
+        final oldTableLanguage = bible == 'english' ? 'arabic' : 'english';
+        final resolved = resolveReaderLanguages(
+          Uri(
+            path: path,
+            queryParameters: {
+              'bibleLanguage': bible,
+              'topicLanguage': oldTableLanguage,
+              'menuLanguage': oldTableLanguage,
+            },
+          ),
+        );
+        expect(resolved.bible.code, bible);
+        expect(resolved.topic, bible);
+        expect(resolved.menu, bible);
+      }
+    }
+  });
+
+  test('one Bible selection replaces legacy independent UI choices', () {
+    final selection = readerLanguagesForSelection(
+      english,
+      topicLanguage: 'arabic',
+      menuLanguage: 'arabic',
+    );
+    activateReaderLanguages(selection);
+    expect(LanguageSelectionController.instance.languageCode, 'english');
+    expect(TopicLanguageSelectionController.instance.languageCode, 'english');
+    expect(MenuLanguageController.instance.languageCode, 'english');
   });
 
   testWidgets('reader toolbar can select an imported Bible-only translation', (

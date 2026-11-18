@@ -4,13 +4,13 @@ The **Add / update table language** workflow translates one table at a time: **H
 
 All three reader tables display a separate **#** column followed by **Subject**, optional **Type**, and the visible Gospel columns. The number identifies the original item; translating a subject does not create a new item.
 
-## Table language and Bible language
+## Reader language selection
 
-**Table language** controls subject names, Gospel headers, Type labels, table direction, and displayed reference/number notation. **Bible language** and its version control the verse text in previews and reading pages. For example, a Miracles table can display French subjects and Gospel headings while previews use English KJV. Changing one selection does not replace the other.
+Readers choose a **Bible language and translation**. That selection also determines the active table's subject names, Gospel headers, Type labels, direction, and displayed reference/number notation when the table has that language. There is no separate reader control for table language.
 
-A language can be available for just one table. Publishing French for Miracles does not require a French Harmony translation or a French Bible, and does not add French names to either other table. Imported dataset language metadata is resolved independently of Harmony's language catalog. Links retain the originating dataset and both language choices.
+If the active table does not have the chosen Bible language, it displays English when available, otherwise its first available language, and shows a notice identifying the fallback. The selected Bible language/version still controls verse text in previews and reading pages. Switching tables applies the same rule to the new table while preserving the selected Bible translation; links retain the dataset and Bible selection.
 
-When switching to a table without the selected language, the reader uses English if available, otherwise that table's first available language. It remembers the previous table's language for switching back and preserves the Bible language/version throughout.
+Table-language imports remain specific to one table. Publishing French for Miracles does not add French names to Harmony or Parables, and does not create French Bible text. Administrators can prepare these translations before a French Bible is available, but readers must select an **available French Bible translation** to see French table names. A French Harmony translation is not required for French Miracles names. If no French Bible translation is available, an administrator must import one through the separate Bible workflow before readers can choose French.
 
 ## Administrative steps
 
@@ -21,7 +21,7 @@ When switching to a table without the selected language, the reader uses English
 5. In **Download and translate**, select **Download CSV template**. The template comes from the selected table's current published items. Keep the item IDs intact and fill every subject translation.
 6. In **Upload and validate**, select the completed CSV with **Select CSV file**, then choose **Validate and preview**.
 7. In **Preview and publish**, check the table, language, item/Type counts, source revision, checksum, samples, warnings, and blocking errors. If updating a language, select **Replace only this table's … translations** after checking the destination.
-8. Choose **Publish table language** and confirm **Publish**. Wait for successful completion before treating the language as available. The reader's Table language selector then includes the new language; other sessions can refresh to load it.
+8. Choose **Publish table language** and confirm **Publish**. Wait for successful completion. In the reader, choose an available Bible translation in that language to display the new table translations; other sessions can refresh to load the published update. For French, select a French Bible translation. Importing table names alone does not add that Bible translation.
 
 To edit the downloaded template in Excel, open the CSV and preserve `ItemId` and `TypeId` as **Text** so Excel does not change identifiers or remove leading zeros. Keep the first row as the original column headers; do not insert a title row. After entering the translations, use **Save As → CSV UTF-8 (.csv)**, then upload that CSV. Excel workbooks (`.xlsx`) are not accepted.
 

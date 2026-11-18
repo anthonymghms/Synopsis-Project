@@ -957,38 +957,82 @@ void _syncSelectedContentLanguage(LanguageOption option) {
   LanguageSelectionController.instance.update(option.code);
 }
 
-/// Bible readers accept every imported translation, independently of the
-/// language used for topic names and application menus.
+/// Bible translations remain selectable even when a table has no matching
+/// names. Its labels follow the Bible language or an available fallback.
 List<LanguageOption> readerLanguageOptions() => _supportedLanguages
     .where((language) => language.versions.isNotEmpty)
     .toList(growable: false);
 
 typedef ReaderLanguages = ({LanguageOption bible, String topic, String menu});
 
-/// A primary reader language changes the whole page when its topics and menus
-/// are available. Bible-only languages keep the current page localization.
+String _matchingTableLanguage(String requested, Iterable<String> available) {
+  if (available.isEmpty || available.contains(requested)) return requested;
+  return available.contains('english') ? 'english' : available.first;
+}
+
 ReaderLanguages readerLanguagesForSelection(
   LanguageOption bible, {
+  String datasetId = 'harmony',
   String? topicLanguage,
   String? menuLanguage,
 }) {
-  if (_primaryLanguageOptions().any(
-    (language) => language.code == bible.code,
-  )) {
-    return (bible: bible, topic: bible.code, menu: bible.code);
+  final id = normalizeDatasetId(datasetId);
+  final available = id == 'harmony'
+      ? _supportedTopicLanguages.map((option) => option.code)
+      : _ApiCache.datasetMetadata[id]?.languages ?? const <String>[];
+  final locale = _matchingTableLanguage(bible.code, available);
+  return (bible: bible, topic: locale, menu: locale);
+}
+
+Future<ReaderLanguages> _readerLanguagesForDataset(
+  LanguageOption bible,
+  String datasetId,
+) async {
+  final available = await _ApiCache.tableLanguageCodes(datasetId);
+  final locale = _matchingTableLanguage(bible.code, available);
+  return (bible: bible, topic: locale, menu: locale);
+}
+
+/// Resolve a cold reader link before requesting that table's localized names.
+class DatasetReaderLanguageRoute extends StatefulWidget {
+  const DatasetReaderLanguageRoute({
+    super.key,
+    required this.uri,
+    required this.builder,
+  });
+  final Uri uri;
+  final Widget Function(ReaderLanguages selection) builder;
+  @override
+  State<DatasetReaderLanguageRoute> createState() =>
+      _DatasetReaderLanguageRouteState();
+}
+
+class _DatasetReaderLanguageRouteState
+    extends State<DatasetReaderLanguageRoute> {
+  late Future<ReaderLanguages> _selection = _resolve();
+  Future<ReaderLanguages> _resolve() => _readerLanguagesForDataset(
+    resolveReaderLanguages(widget.uri).bible,
+    normalizeDatasetId(widget.uri.queryParameters['dataset']),
+  );
+  @override
+  void didUpdateWidget(DatasetReaderLanguageRoute oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri) _selection = _resolve();
   }
-  return (
-    bible: bible,
-    topic: _coercePrimaryLanguageOption(
-      _languageOptionForCode(
-        topicLanguage ?? TopicLanguageSelectionController.instance.languageCode,
-      ),
-    ).code,
-    menu: _coercePrimaryLanguageOption(
-      _languageOptionForCode(
-        menuLanguage ?? MenuLanguageController.instance.languageCode,
-      ),
-    ).code,
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<ReaderLanguages>(
+    future: _selection,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      final selection = snapshot.data ?? resolveReaderLanguages(widget.uri);
+      return ReaderLanguageRoute(
+        onActivated: () => activateReaderLanguages(selection),
+        child: widget.builder(selection),
+      );
+    },
   );
 }
 
@@ -1004,34 +1048,26 @@ ReaderLanguages resolveReaderLanguages(Uri uri) {
     languageParam: primaryLanguageQueryParameter(uri),
     versionParam: uri.queryParameters['version'],
   );
-  final compatiblePrimary =
-      _primaryLanguageOptions().any((language) => language.code == bible.code)
-      ? bible.code
-      : TopicLanguageSelectionController.instance.languageCode;
-  final requestedTopic = uri.queryParameters['topicLanguage']
-      ?.trim()
-      .toLowerCase();
-  final topic = requestedTopic?.isNotEmpty == true
-      ? requestedTopic!
-      : compatiblePrimary;
-  final menu = _menuLanguageQueryParameter(uri)?.toLowerCase() ?? topic;
-  return (bible: bible, topic: topic, menu: menu);
+  return readerLanguagesForSelection(
+    bible,
+    datasetId: normalizeDatasetId(uri.queryParameters['dataset']),
+  );
 }
 
 Map<String, String> readerLanguageQueryParameters({
   required LanguageOption bible,
+  String datasetId = 'harmony',
   String? topicLanguage,
   String? menuLanguage,
-}) => <String, String>{
-  'menuLanguage': menuLanguage?.trim().isNotEmpty == true
-      ? menuLanguage!.trim()
-      : MenuLanguageController.instance.languageCode,
-  'topicLanguage': topicLanguage?.trim().isNotEmpty == true
-      ? topicLanguage!.trim()
-      : TopicLanguageSelectionController.instance.languageCode,
-  'bibleLanguage': bible.apiLanguage,
-  'language': bible.apiLanguage,
-};
+}) {
+  final selection = readerLanguagesForSelection(bible, datasetId: datasetId);
+  return <String, String>{
+    'menuLanguage': selection.menu,
+    'topicLanguage': selection.topic,
+    'bibleLanguage': bible.apiLanguage,
+    'language': bible.apiLanguage,
+  };
+}
 
 Uri _mainTableUri({
   required LanguageOption language,
@@ -1073,6 +1109,7 @@ Uri _topicUri({
     ..._datasetRouteParameters(context, datasetId: topic.datasetId),
     ...readerLanguageQueryParameters(
       bible: language,
+      datasetId: topic.datasetId,
       topicLanguage: topicLanguage,
       menuLanguage: menuLanguage,
     ),
@@ -1964,50 +2001,91 @@ Widget _toolbarDropdownButton<T>({
   bool enabled = true,
   Key? popupKey,
   VoidCallback? onCanceled,
-}) {
-  var overlayOpen = false;
-  void beginOverlay() {
-    if (overlayOpen) return;
-    overlayOpen = true;
+}) => _ToolbarDropdownButton<T>(
+  icon: icon,
+  label: label,
+  items: items,
+  onSelected: onSelected,
+  enabled: enabled,
+  popupKey: popupKey,
+  onCanceled: onCanceled,
+);
+
+/// Owns the link blocker across rebuilds while a language/version menu is open.
+class _ToolbarDropdownButton<T> extends StatefulWidget {
+  const _ToolbarDropdownButton({
+    required this.icon,
+    required this.label,
+    required this.items,
+    required this.onSelected,
+    required this.enabled,
+    this.popupKey,
+    this.onCanceled,
+  });
+  final IconData icon;
+  final String label;
+  final List<PopupMenuEntry<T>> items;
+  final PopupMenuItemSelected<T> onSelected;
+  final bool enabled;
+  final Key? popupKey;
+  final VoidCallback? onCanceled;
+  @override
+  State<_ToolbarDropdownButton<T>> createState() =>
+      _ToolbarDropdownButtonState<T>();
+}
+
+class _ToolbarDropdownButtonState<T> extends State<_ToolbarDropdownButton<T>> {
+  bool _overlayOpen = false;
+  void _beginOverlay() {
+    if (_overlayOpen) return;
+    _overlayOpen = true;
     BrowserRouteLinkNavigation.pushBlock();
   }
 
-  void endOverlay() {
-    if (!overlayOpen) return;
-    overlayOpen = false;
+  void _endOverlay() {
+    if (!_overlayOpen) return;
+    _overlayOpen = false;
     BrowserRouteLinkNavigation.popBlockAfterEvent();
   }
 
-  final button = OutlinedButton.icon(
-    onPressed: enabled ? () {} : null,
-    style: _toolbarOutlinedStyle(context),
-    icon: Icon(icon, size: 18),
-    label: Text(label, overflow: TextOverflow.ellipsis),
-  );
-
-  if (!enabled) {
-    return button;
+  @override
+  void dispose() {
+    if (_overlayOpen) {
+      _overlayOpen = false;
+      BrowserRouteLinkNavigation.popBlock();
+    }
+    super.dispose();
   }
 
-  return Directionality(
-    textDirection: MenuLanguageScope.of(context).direction,
-    child: PopupMenuButton<T>(
-      key: popupKey,
-      tooltip: label,
-      position: PopupMenuPosition.under,
-      onOpened: beginOverlay,
-      onCanceled: () {
-        endOverlay();
-        onCanceled?.call();
-      },
-      onSelected: (value) {
-        endOverlay();
-        onSelected(value);
-      },
-      itemBuilder: (_) => items,
-      child: IgnorePointer(child: button),
-    ),
-  );
+  @override
+  Widget build(BuildContext context) {
+    final button = OutlinedButton.icon(
+      onPressed: widget.enabled ? () {} : null,
+      style: _toolbarOutlinedStyle(context),
+      icon: Icon(widget.icon, size: 18),
+      label: Text(widget.label, overflow: TextOverflow.ellipsis),
+    );
+    if (!widget.enabled) return button;
+    return Directionality(
+      textDirection: MenuLanguageScope.of(context).direction,
+      child: PopupMenuButton<T>(
+        key: widget.popupKey,
+        tooltip: widget.label,
+        position: PopupMenuPosition.under,
+        onOpened: _beginOverlay,
+        onCanceled: () {
+          _endOverlay();
+          widget.onCanceled?.call();
+        },
+        onSelected: (value) {
+          _endOverlay();
+          widget.onSelected(value);
+        },
+        itemBuilder: (_) => widget.items,
+        child: IgnorePointer(child: button),
+      ),
+    );
+  }
 }
 
 PopupMenuItem<T> _checkedMenuItem<T>({
@@ -4635,12 +4713,11 @@ class _GospelAppState extends State<GospelApp> {
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
-          builder: (context) {
-            final selection = resolveReaderLanguages(uri);
-            final languageOption = selection.bible;
-            return ReaderLanguageRoute(
-              onActivated: () => activateReaderLanguages(selection),
-              child: ReferenceViewerPage(
+          builder: (context) => DatasetReaderLanguageRoute(
+            uri: uri,
+            builder: (selection) {
+              final languageOption = selection.bible;
+              return ReferenceViewerPage(
                 datasetId: normalizeDatasetId(uri.queryParameters['dataset']),
                 displayBook: bookDisplay,
                 bookId: bookId,
@@ -4659,9 +4736,9 @@ class _GospelAppState extends State<GospelApp> {
                 topicNumber: topicNumber,
                 gospel: gospel,
                 comparisonState: comparisons,
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       );
     }
@@ -4675,12 +4752,11 @@ class _GospelAppState extends State<GospelApp> {
       return MaterialPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
-          builder: (context) {
-            final selection = resolveReaderLanguages(uri);
-            final languageOption = selection.bible;
-            return ReaderLanguageRoute(
-              onActivated: () => activateReaderLanguages(selection),
-              child: TopicDetailScreen(
+          builder: (context) => DatasetReaderLanguageRoute(
+            uri: uri,
+            builder: (selection) {
+              final languageOption = selection.bible;
+              return TopicDetailScreen(
                 datasetId: normalizeDatasetId(uri.queryParameters['dataset']),
                 languageOption: languageOption,
                 topicLanguage: selection.topic,
@@ -4691,9 +4767,9 @@ class _GospelAppState extends State<GospelApp> {
                 topicId: initialTopicId,
                 topicNumber: initialTopicNumber,
                 comparisonState: comparisons,
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       );
     }
@@ -4958,14 +5034,19 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
 
 @visibleForTesting
 void applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
-  // A table locale may exist only in Miracles/Parables and need not be in
-  // either Harmony's locale catalog or the Bible translation catalog.
-  TopicLanguageSelectionController.instance.update(preferences.topicLanguage);
-  MenuLanguageController.instance.update(preferences.menuLanguage);
-  _syncSelectedContentLanguage(
-    _languageOptionForCode(preferences.contentLanguage),
-  );
   ZoomController.instance.update(preferences.zoomLevel);
+  // A reader has already resolved these preferences for its own table. Profile
+  // write notifications must not reinterpret a Miracles-only locale as Harmony.
+  if (LanguageSelectionController.instance.languageCode ==
+          preferences.contentLanguage &&
+      TopicLanguageSelectionController.instance.languageCode ==
+          preferences.topicLanguage &&
+      MenuLanguageController.instance.languageCode ==
+          preferences.menuLanguage) {
+    return;
+  }
+  final bible = _languageOptionForCode(preferences.contentLanguage);
+  activateReaderLanguages(readerLanguagesForSelection(bible));
 }
 
 Future<void> _updateUserPreferencesBestEffort(
@@ -5361,17 +5442,13 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     ),
   };
 
-  final Map<String, String> _savedDatasetLanguages = {};
-
   void _switchDataset(String id) {
     if (id == _datasetView.datasetId) return;
     _savedDatasetQueries[_datasetView.datasetId] = _viewQuery;
-    _savedDatasetLanguages[_datasetView.datasetId] = _selectedTopicLanguageCode;
     final saved = _savedDatasetQueries[id] ?? {'dataset': id};
     setState(() {
       _datasetView = DatasetViewState.fromQueryParameters(saved);
-      _selectedTopicLanguageCode =
-          _savedDatasetLanguages[id] ?? _selectedTopicLanguageCode;
+      _selectedTopicLanguageCode = _selectedLanguageCode;
       _filterState = GospelFilterState.fromQueryParameters(saved);
       _sortState = GospelSortState.fromQueryValue(saved['sort']);
       _columnVisibility = ColumnVisibilityState.fromQueryValue(
@@ -5390,16 +5467,6 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         selectedTypeIds: Set.unmodifiable(values),
       ),
     );
-  }
-
-  Future<void> _setTableLanguage(String code) async {
-    if (code == _selectedTopicLanguageCode) return;
-    setState(() => _selectedTopicLanguageCode = code);
-    TopicLanguageSelectionController.instance.update(code);
-    MenuLanguageController.instance.update(code);
-    _committedControlSignature = '';
-    _commitControlState();
-    await fetchTopics();
   }
 
   Future<void> _reconcileSelectedVersions() async {
@@ -5517,7 +5584,9 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       }
       setState(() {
         _languagesLoading = false;
-        _supportedLanguages = kBaseLanguageOptions;
+        if (_supportedLanguages.isEmpty) {
+          _supportedLanguages = kBaseLanguageOptions;
+        }
       });
     } finally {
       if (mounted && !_topicsLoadRequested) {
@@ -5561,10 +5630,14 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     _commitControlState();
   }
 
+  int _translationChangeGeneration = 0;
+
   Future<void> _updateContentTranslation(
     LanguageOption option,
     String versionId,
   ) async {
+    final generation = ++_translationChangeGeneration;
+    final dataset = _datasetView.datasetId;
     final normalized = option.code == 'arabic'
         ? (_resolveArabicVersion(
                 option,
@@ -5573,33 +5646,61 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
               ) ??
               _sanitizeVersionForLanguage(option, versionId))
         : _sanitizeVersionForLanguage(option, versionId);
-    if (normalized.isEmpty) {
+    if (normalized.isEmpty) return;
+    final selection = await _readerLanguagesForDataset(option, dataset);
+    if (!mounted ||
+        generation != _translationChangeGeneration ||
+        dataset != _datasetView.datasetId) {
       return;
+    }
+    final reloadNames = selection.topic != _selectedTopicLanguageCode;
+    setState(() {
+      _selectedLanguageCode = option.code;
+      _selectedTopicLanguageCode = selection.topic;
+      _selectedVersions[option.code] = normalized;
+    });
+    activateReaderLanguages(selection);
+    _committedControlSignature = '';
+    _commitControlState();
+    // Changing only the Bible version keeps the loaded table and filters.
+    if (reloadNames) unawaited(fetchTopics());
+    if (!reloadNames && selection.topic != option.code) {
+      _showTableLanguageFallback(option.code, selection.topic);
     }
     await _persistLanguageVersion(
       option,
       normalized,
       withDiacritics: option.code == 'arabic' ? _arabicWithDiacritics : null,
-      updatePrimaryLanguage: false,
+      readerSelection: selection,
     );
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _selectedLanguageCode = option.code;
-      _selectedVersions[option.code] = normalized;
-    });
-    LanguageSelectionController.instance.update(option.code);
-    _committedControlSignature = '';
-    _commitControlState();
   }
 
   Future<void> _updateLanguage(LanguageOption option) async {
-    if (option.code == _selectedLanguageCode) {
-      return;
-    }
     final storedVersion = await _storedVersionForLanguage(option);
+    if (!mounted) return;
     await _updateContentTranslation(option, storedVersion);
+  }
+
+  void _showTableLanguageFallback(String requestedCode, String actualCode) {
+    if (ModalRoute.of(context)?.isCurrent == false) return;
+    final requested = resolveDatasetTopicLanguage(
+      _datasetView.datasetId,
+      requestedCode,
+    ).label;
+    final shown = resolveDatasetTopicLanguage(
+      _datasetView.datasetId,
+      actualCode,
+    ).label;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          datasetControlLabel(
+            'languageUnavailable',
+            actualCode,
+          ).replaceAll('{requested}', requested).replaceAll('{shown}', shown),
+        ),
+      ),
+    );
   }
 
   String _apiVersionFor(LanguageOption option) {
@@ -5635,7 +5736,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   Future<void> fetchTopics() async {
     final generation = ++_topicLoadGeneration;
     _topicsLoadRequested = true;
-    final expectedTopicLanguage = _selectedTopicLanguageCode;
+    final expectedTopicLanguage = _selectedLanguageCode;
     final expectedDataset = _datasetView.datasetId;
     setState(() {
       _loading = true;
@@ -5643,12 +5744,10 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     });
     try {
       final available = await _ApiCache.tableLanguageCodes(expectedDataset);
-      final actualLanguage =
-          available.isEmpty || available.contains(expectedTopicLanguage)
-          ? expectedTopicLanguage
-          : available.contains('english')
-          ? 'english'
-          : available.first;
+      final actualLanguage = _matchingTableLanguage(
+        expectedTopicLanguage,
+        available,
+      );
       final topics = await _ApiCache.fetchTopics(
         topicLanguage: actualLanguage,
         datasetId: expectedDataset,
@@ -5657,7 +5756,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         return;
       }
       if (generation != _topicLoadGeneration ||
-          _selectedTopicLanguageCode != expectedTopicLanguage ||
+          _selectedLanguageCode != expectedTopicLanguage ||
           _datasetView.datasetId != expectedDataset) {
         return;
       }
@@ -5678,27 +5777,11 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       if (ModalRoute.of(context)?.isCurrent != false) {
         TopicLanguageSelectionController.instance.update(actualLanguage);
         MenuLanguageController.instance.update(actualLanguage);
+        _commitControlState(replace: true);
       }
       if (actualLanguage != expectedTopicLanguage &&
           ModalRoute.of(context)?.isCurrent != false) {
-        _commitControlState(replace: true);
-        final requested = resolveDatasetTopicLanguage(
-          expectedDataset,
-          expectedTopicLanguage,
-        ).label;
-        final shown = resolveDatasetTopicLanguage(
-          expectedDataset,
-          actualLanguage,
-        ).label;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              datasetControlLabel('languageUnavailable', actualLanguage)
-                  .replaceAll('{requested}', requested)
-                  .replaceAll('{shown}', shown),
-            ),
-          ),
-        );
+        _showTableLanguageFallback(expectedTopicLanguage, actualLanguage);
       }
       _openPendingTopicIfNeeded();
     } catch (e) {
@@ -5706,7 +5789,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         return;
       }
       if (generation != _topicLoadGeneration ||
-          _selectedTopicLanguageCode != expectedTopicLanguage ||
+          _selectedLanguageCode != expectedTopicLanguage ||
           _datasetView.datasetId != expectedDataset) {
         return;
       }
@@ -5792,7 +5875,6 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     }
     _committedControlSignature = _controlSignature;
     _savedDatasetQueries[_datasetView.datasetId] = _viewQuery;
-    _savedDatasetLanguages[_datasetView.datasetId] = _selectedTopicLanguageCode;
     BrowserRouteHistory.update(
       _mainTableUri(
         language: _languageOption,
@@ -5870,8 +5952,11 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
                   language: languageOption,
                   version: _apiVersionFor(languageOption),
                   languages: readerLanguageOptions(),
-                  primaryActions: [_buildDatasetControls()],
-                  primaryActionsFirst: true,
+                  primaryActions: [
+                    if (_datasetMetadata.hasTypes ||
+                        _datasetView.datasetId != 'harmony')
+                      _buildDatasetControls(),
+                  ],
                   languageSelectorLabel: datasetControlLabel(
                     'bibleLanguage',
                     _selectedTopicLanguageCode,
@@ -6014,53 +6099,6 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Tooltip(
-          message: label('tableLanguage'),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.language, size: 18),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  '${label('tableLanguage')}: ',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Flexible(
-                child: DropdownButton<String>(
-                  key: const ValueKey('table-language-selector'),
-                  value: language,
-                  underline: const SizedBox.shrink(),
-                  items: [
-                    for (final code in {
-                      language,
-                      if (_datasetView.datasetId == 'harmony')
-                        ..._supportedTopicLanguages.map((option) => option.code)
-                      else
-                        ..._datasetMetadata.languages,
-                    })
-                      DropdownMenuItem(
-                        value: code,
-                        child: Text(
-                          resolveDatasetTopicLanguage(
-                            _datasetView.datasetId,
-                            code,
-                          ).label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
-                  onChanged: (code) {
-                    if (code != null) unawaited(_setTableLanguage(code));
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
         if (_datasetMetadata.hasTypes)
           SegmentedButton<DatasetViewMode>(
             key: const ValueKey('dataset-view-mode'),
@@ -7117,6 +7155,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
         bible: primaryLanguage,
+        datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
         menuLanguage: MenuLanguageScope.of(context).code,
       ),
@@ -7846,6 +7885,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
         bible: primaryLanguage,
+        datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
         menuLanguage: MenuLanguageScope.of(context).code,
       ),
@@ -9469,6 +9509,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
         bible: _languageOption,
+        datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
       ),
       'book': book,
@@ -9745,9 +9786,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     LanguageOption language,
     String versionId,
   ) async {
-    final currentTopic = widget.topicLanguage;
-    final currentMenu = MenuLanguageScope.of(context).code;
-    final selection = (bible: language, topic: currentTopic, menu: currentMenu);
+    final selection = await _readerLanguagesForDataset(
+      language,
+      widget.datasetId,
+    );
+    if (!mounted) return;
     final sanitized = language.code == 'arabic'
         ? (_resolveArabicVersion(
                 language,
@@ -9756,12 +9799,6 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
               ) ??
               _sanitizeVersionForLanguage(language, versionId))
         : _sanitizeVersionForLanguage(language, versionId);
-    if (language.code == _languageOption.code &&
-        sanitized == _activeVersion &&
-        selection.topic == currentTopic &&
-        selection.menu == currentMenu) {
-      return;
-    }
 
     try {
       await _persistLanguageVersion(
@@ -9831,6 +9868,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
         bible: language,
+        datasetId: widget.datasetId,
         topicLanguage: selection.topic,
         menuLanguage: selection.menu,
       ),
@@ -11574,9 +11612,13 @@ class _ApiCache {
           .map((option) => option.code)
           .toList();
     }
-    return DatasetMetadata.fromJson(
+    final metadata = DatasetMetadata.fromJson(
       await _fetchDatasetEnvelope(datasetId),
-    ).languages;
+    );
+    if (datasetMetadata[datasetId]?.revision != metadata.revision) {
+      datasetMetadata[datasetId] = metadata;
+    }
+    return metadata.languages;
   }
 
   static Future<Map<String, dynamic>> _fetchDatasetEnvelope(
@@ -12412,9 +12454,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     LanguageOption language,
     String version,
   ) async {
-    final currentTopic = _topicLanguage.code;
-    final currentMenu = MenuLanguageScope.of(context).code;
-    final selection = (bible: language, topic: currentTopic, menu: currentMenu);
+    final selection = await _readerLanguagesForDataset(
+      language,
+      _topic.datasetId,
+    );
+    if (!mounted) return;
     final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
     final nextVersion = language.code == 'arabic'
         ? (_resolveArabicVersion(

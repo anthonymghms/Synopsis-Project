@@ -87,6 +87,7 @@ List<BrowserRouteLink> _links(WidgetTester tester, String path) => tester
 Widget _tableHost(
   List<Topic> topics, {
   bool grouped = false,
+  LanguageOption? bibleLanguage,
   TopicLanguageOption? topicLanguage,
   DatasetMetadata metadata = _metadata,
   Map<String, String> query = const {},
@@ -98,9 +99,9 @@ Widget _tableHost(
         topics: topics,
         metadata: metadata,
         groupedByType: grouped,
-        languageOption: kBaseLanguageOptions.first,
+        languageOption: bibleLanguage ?? kBaseLanguageOptions.first,
         topicLanguage: topicLanguage ?? bundledTopicLanguages.first,
-        apiVersion: 'kjv',
+        apiVersion: bibleLanguage?.apiVersion ?? 'kjv',
       ),
     ),
   ),
@@ -440,7 +441,7 @@ void main() {
   );
 
   testWidgets(
-    'Arabic names and Type labels retain English Bible in topic/reference URLs',
+    'Arabic Bible and table labels stay aligned in dataset topic and reference URLs',
     (tester) async {
       final topics = [_topics().first.copyWithName('موضوع تجريبي')];
       const query = {
@@ -455,6 +456,7 @@ void main() {
       await tester.pumpWidget(
         _tableHost(
           topics,
+          bibleLanguage: kBaseLanguageOptions.last,
           topicLanguage: bundledTopicLanguages.last,
           query: query,
         ),
@@ -475,8 +477,9 @@ void main() {
         expect(parameters['dataset'], 'parables');
         expect(parameters['topicId'], '1');
         expect(parameters['topicLanguage'], 'arabic');
-        expect(parameters['bibleLanguage'], 'english');
-        expect(parameters['version'], 'kjv');
+        expect(parameters['menuLanguage'], 'arabic');
+        expect(parameters['bibleLanguage'], 'arabic');
+        expect(parameters['version'], arabicVersionWithoutDiacritics);
         expect(parameters['view'], 'grouped');
         expect(parameters['types'], 'parable');
         expect(parameters['include'], 'mark,luke');
@@ -489,7 +492,7 @@ void main() {
           ).datasetId,
           'parables',
         );
-        expect(resolveReaderLanguages(reopened).bible.code, 'english');
+        expect(resolveReaderLanguages(reopened).bible.code, 'arabic');
         expect(resolveReaderLanguages(reopened).topic, 'arabic');
       }
       expect(referenceLinks.every((link) => link.openInNewTab), isTrue);
@@ -497,7 +500,7 @@ void main() {
         find.byType(ReferenceCellHoverPreview),
       );
       expect(combined.datasetId, 'parables');
-      expect(combined.language, 'english');
+      expect(combined.language, 'arabic');
       expect(combined.topicLanguage, 'arabic');
       expect(
         combined.references.map((reference) => reference.separatorBefore),
@@ -580,7 +583,7 @@ void main() {
   );
 
   testWidgets(
-    'combined hover reads English verses while preserving dataset in preview links',
+    'combined hover uses its Bible translation and normalizes legacy table context in links',
     (tester) async {
       final previousAccess = accountAccess;
       final requests = <Uri>[];
@@ -667,7 +670,8 @@ void main() {
         for (final link in previewLinks) {
           expect(link.uri!.queryParameters['dataset'], 'parables');
           expect(link.uri!.queryParameters['types'], 'parable');
-          expect(link.uri!.queryParameters['topicLanguage'], 'arabic');
+          expect(link.uri!.queryParameters['topicLanguage'], 'english');
+          expect(link.uri!.queryParameters['menuLanguage'], 'english');
           expect(link.uri!.queryParameters['bibleLanguage'], 'english');
         }
         await gesture.moveTo(Offset.zero);

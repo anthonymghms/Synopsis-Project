@@ -36,14 +36,17 @@ void main() {
     PrimaryLanguageController.instance.select('english');
   });
 
-  Widget app({required GlobalKey<NavigatorState> navigatorKey}) {
+  Widget app({
+    required GlobalKey<NavigatorState> navigatorKey,
+    String initialRoute =
+        '/?menuLanguage=arabic&topicLanguage=arabic&bibleLanguage=arabic',
+  }) {
     return MenuLanguageScope(
       notifier: MenuLanguageController.instance.notifier,
       child: MaterialApp(
         navigatorKey: navigatorKey,
         navigatorObservers: [readerLanguageRouteObserver],
-        initialRoute:
-            '/?menuLanguage=arabic&topicLanguage=arabic&bibleLanguage=arabic',
+        initialRoute: initialRoute,
         onGenerateRoute: (settings) {
           final uri = Uri.parse(settings.name!);
           final selection = resolveReaderLanguages(uri);
@@ -166,17 +169,15 @@ void main() {
     },
   );
 
-  testWidgets('Greek Bible keeps English interface and chapter navigation', (
+  testWidgets('Greek Bible falls back from Arabic to the English interface', (
     tester,
   ) async {
     final navigatorKey = GlobalKey<NavigatorState>();
     await tester.pumpWidget(app(navigatorKey: navigatorKey));
     await tester.pumpAndSettle();
-    navigatorKey.currentState!.pushNamed(
-      '/reference?menuLanguage=english&topicLanguage=english&bibleLanguage=english&version=kjv',
-    );
+    await tester.tap(find.byKey(const Key('open-chapter')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Language: English'));
+    await tester.tap(find.byTooltip('اللغة: العربية'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Ἑλληνική').last);
     await tester.pumpAndSettle();
@@ -188,5 +189,30 @@ void main() {
     expect(find.text('Gospel of Matthew — Chapter 1'), findsOneWidget);
     expect(find.text('Download spreadsheet'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('refreshing an old mixed link derives the interface from Bible', (
+    tester,
+  ) async {
+    const mixedRoute =
+        '/reference?menuLanguage=arabic&topicLanguage=arabic&bibleLanguage=english&version=kjv';
+    for (var load = 0; load < 2; load++) {
+      PrimaryLanguageController.instance.select('arabic');
+      await tester.pumpWidget(
+        app(
+          navigatorKey: GlobalKey<NavigatorState>(),
+          initialRoute: mixedRoute,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Gospel of Matthew — Chapter 1'), findsOneWidget);
+      expect(find.byTooltip('Language: English'), findsOneWidget);
+      expect(LanguageSelectionController.instance.languageCode, 'english');
+      expect(TopicLanguageSelectionController.instance.languageCode, 'english');
+      expect(MenuLanguageController.instance.languageCode, 'english');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    }
   });
 }

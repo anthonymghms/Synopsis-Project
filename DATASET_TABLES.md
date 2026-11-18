@@ -2,7 +2,7 @@
 
 The existing application now reads three independent topic datasets through Flask. Harmony remains the default, with its existing storage and URLs. Miracles and Parables use the same table, reference parser, reading pages, previews, Gospel filters, sorting, column visibility, and export facilities.
 
-All three tables now show a separate **#** column. To add or update a language without replacing canonical data, use the universal **Add / update table language** workflow documented in [TABLE_LANGUAGES.md](TABLE_LANGUAGES.md). It supports table-specific languages independently of the selected Bible language/version and preserves other translations.
+All three tables now show a separate **#** column. To add or update a language without replacing canonical data, use the universal **Add / update table language** workflow documented in [TABLE_LANGUAGES.md](TABLE_LANGUAGES.md). It imports translations for one table and preserves other tables and languages. In the reader, the selected Bible language/translation also selects the table language when available; there is no separate table-language control. If that table lacks the selected language, it uses English or its first available language and shows a fallback notice. French table names are displayed by selecting an available French Bible translation; importing names alone does not create French Bible text.
 
 ## Verified Storage sources
 
@@ -47,7 +47,7 @@ The existing live Harmony metadata was also read: 291 canonical items, with sepa
 
 New public endpoints are `GET /datasets/{dataset}/topics` and `GET /datasets/{dataset}/localizations/{language}?revision={revision}`. They use the existing server-verified reader authorization. Legacy `/topics` and individual topic endpoints accept `dataset`; omission continues to mean Harmony. Bible storage and Bible endpoints are unchanged.
 
-Browser URLs carry dataset, view mode, selected Type IDs, Gospel filters, sorting, visible columns, and independent table/Bible language/version context. Dataset canonical snapshots are loaded once per cache lifetime; localization cache keys include dataset/revision/language. Filtering and grouping run locally. Successful Admin publication invalidates the existing catalog cache, including the affected dataset; a page refresh also loads a new snapshot. No Storage CSV is fetched by reader visits or hover events.
+Browser URLs carry dataset, view mode, selected Type IDs, Gospel filters, sorting, visible columns, and the Bible language/version context. The reader resolves the table language from that Bible selection and the active table’s available translations, using the fallback described above. Dataset canonical snapshots are loaded once per cache lifetime; localization cache keys include dataset/revision/language. Filtering and grouping run locally. Successful Admin publication invalidates the existing catalog cache, including the affected dataset; a page refresh also loads a new snapshot. No Storage CSV is fetched by reader visits or hover events.
 
 ## Admin import steps
 
@@ -83,9 +83,9 @@ Existing uncommitted performance changes and their tests were preserved. Synthet
 
 ## Verification
 
-The backend suite ran 211 tests: **193 passed, 18 Firestore-emulator-dependent tests skipped**. Dataset-specific tests cover header mapping/quoting, bilingual names, Types, malformed references, authorized Storage/upload imports, duplicate IDs, failed/repeated/concurrent publication, source changes, and coherent immutable revision reads.
+The most recent backend suite ran 230 tests: **212 passed, 18 Firestore-emulator-dependent tests skipped**. The subsequent reader-language update did not change backend code. Dataset-specific tests cover header mapping/quoting, bilingual names, Types, malformed references, authorized Storage/upload imports, duplicate IDs, failed/repeated/concurrent publication, source changes, and coherent immutable revision reads.
 
-The final full Flutter suite passed **288 tests**, including mobile layout, independent table/Bible languages, returning from a reader, grouping, exports, and Admin imports. Three Chrome browser tests passed for real Back/Forward history, refreshable dataset URL state, existing link behavior, and full-table printing. Static analysis and the production JavaScript web build passed. Flutter's optional Wasm compatibility check reports the existing `desktop_drop` dependency's use of `dart:html`; the normal release build succeeds.
+After the single Bible-language control update, the full Flutter suite passed **314 tests**, including automatic table localization, missing-language fallback, legacy mixed links, menu cleanup, mobile layout, returning from a reader, grouping, exports, and Admin imports. Three Chrome browser tests passed for real Back/Forward history, refreshable dataset URL state, existing link behavior, and full-table printing. Static analysis and the production JavaScript web build passed. Flutter's optional Wasm compatibility check reports the existing `desktop_drop` dependency's use of `dart:html`; the normal release build succeeds.
 
 Verification commands (Flutter commands run from `gospel_frontend`):
 

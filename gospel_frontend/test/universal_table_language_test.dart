@@ -19,9 +19,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Synthetic data: French exists only for Miracles, never in the Harmony or
-// Bible catalogs. IDs and references deliberately overlap across all tables.
+// Synthetic data: French names exist only for Miracles; a French Bible is
+// available independently. IDs/references deliberately overlap across tables.
 const _languages = ['english', 'arabic'];
+final _frenchBible = kBaseLanguageOptions.first.copyWith(
+  code: 'french',
+  label: 'Français',
+  apiLanguage: 'french',
+  apiVersion: 'LSG',
+  versions: const [BibleVersion(id: 'LSG', label: 'Louis Segond')],
+);
 Map<String, dynamic> _language(String code) => {
   'id': code,
   'label': code == 'french' ? 'Français' : code,
@@ -74,6 +81,7 @@ void main() {
   late AccountAccessController originalAccess;
   late MockClient client;
   late List<Uri> requests;
+  late Map<String, List<String>> availableLanguages;
 
   setUpAll(() async {
     setupFirebaseCoreMocks();
@@ -95,6 +103,10 @@ void main() {
       tokenProvider: () async => 'language-reader-token',
     )..beginSession('reader');
     requests = [];
+    availableLanguages = {
+      for (final dataset in topicDatasetIds)
+        dataset: [..._languages, if (dataset == 'miracles') 'french'],
+    };
     client = MockClient((request) async {
       requests.add(request.url);
       expect(request.headers['Authorization'], 'Bearer language-reader-token');
@@ -116,7 +128,7 @@ void main() {
         final dataset = path == '/harmony/topics'
             ? 'harmony'
             : path.split('/')[2];
-        final languages = [..._languages, if (dataset == 'miracles') 'french'];
+        final languages = availableLanguages[dataset]!;
         body = {
           'datasetId': dataset,
           'revision': '$dataset-fixture-1',
@@ -126,7 +138,8 @@ void main() {
             'hasTypes': dataset != 'harmony',
             'languageMetadata': {
               // French headers are supplied only by its localization payload.
-              for (final code in _languages) code: _language(code),
+              for (final code in languages.where((code) => code != 'french'))
+                code: _language(code),
             },
             'types': [
               if (dataset != 'harmony')
@@ -145,9 +158,9 @@ void main() {
             ? 'harmony'
             : path.split('/')[2];
         final language = path.split('/').last;
-        if (language == 'french' && dataset != 'miracles') {
+        if (!availableLanguages[dataset]!.contains(language)) {
           return http.Response(
-            jsonEncode({'error': 'French is available only for Miracles.'}),
+            jsonEncode({'error': '$language is unavailable for $dataset.'}),
             404,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -175,11 +188,14 @@ void main() {
           ],
         };
       } else if (path == '/get_verse' || path == '/get_chapter') {
-        expect(request.url.queryParameters['language'], 'english');
-        expect(request.url.queryParameters['version']?.toLowerCase(), 'kjv');
+        final language = request.url.queryParameters['language'];
+        expect(language, isIn(['english', 'arabic', 'french']));
+        if (language == 'french') {
+          expect(request.url.queryParameters['version']?.toUpperCase(), 'LSG');
+        }
         body = [
           for (var verse = 1; verse <= 6; verse++)
-            {'verse': verse, 'text': 'English KJV fixture $verse'},
+            {'verse': verse, 'text': '$language Bible fixture $verse'},
         ];
       } else {
         fail('Unexpected universal language request: ${request.url}');
@@ -192,7 +208,7 @@ void main() {
     });
     notifyCatalogChanged();
     await loadPrimaryLanguageCatalogs(
-      bibleLoader: () async => kBaseLanguageOptions,
+      bibleLoader: () async => [...kBaseLanguageOptions, _frenchBible],
       topicLoader: () async => [
         for (final code in _languages)
           TopicLanguageOption.fromJson(_language(code)),
@@ -217,18 +233,21 @@ void main() {
     final query = uri.queryParameters;
     return MaterialPageRoute<void>(
       settings: settings,
-      builder: (_) => ReaderLanguageRoute(
-        onActivated: () => activateReaderLanguages(languages),
-        child: uri.path == '/topic'
-            ? TopicDetailScreen(
+      builder: (_) => uri.path == '/topic'
+          ? DatasetReaderLanguageRoute(
+              uri: uri,
+              builder: (selection) => TopicDetailScreen(
                 datasetId: normalizeDatasetId(query['dataset']),
-                languageOption: languages.bible,
-                topicLanguage: languages.topic,
+                languageOption: selection.bible,
+                topicLanguage: selection.topic,
                 apiVersion: query['version'] ?? 'kjv',
                 topicId: query['topicId']!,
                 topicNumber: query['topicNumber'] ?? '',
-              )
-            : TopicListScreen(
+              ),
+            )
+          : ReaderLanguageRoute(
+              onActivated: () => activateReaderLanguages(languages),
+              child: TopicListScreen(
                 initialDataset: query['dataset'],
                 initialView: query['view'],
                 initialTypes: query['types'],
@@ -236,7 +255,7 @@ void main() {
                 initialTopicLanguage: languages.topic,
                 initialVersion: query['version'],
               ),
-      ),
+            ),
     );
   }
 
@@ -257,9 +276,13 @@ void main() {
       if (dataset != 'harmony') 'dataset': dataset,
       'topicLanguage': language,
       'menuLanguage': language,
-      'bibleLanguage': 'english',
-      'language': 'english',
-      'version': 'kjv',
+      'bibleLanguage': language,
+      'language': language,
+      'version': language == 'french'
+          ? 'LSG'
+          : language == 'arabic'
+          ? 'Van Dyke-'
+          : 'kjv',
       if (grouped) 'view': 'grouped',
       if (grouped) 'types': 'healing',
     },
@@ -270,16 +293,32 @@ void main() {
       .widgetList<BrowserRouteLink>(find.byType(BrowserRouteLink))
       .where((link) => ['/topic', '/reference'].contains(link.uri?.path))
       .toList();
-  void assertBible(WidgetTester tester) {
+  void assertBible(WidgetTester tester, [String language = 'english']) {
     final toolbar = tester.widget<AppToolbar>(find.byType(AppToolbar));
-    expect(toolbar.language.code, 'english');
-    expect(toolbar.version.toLowerCase(), 'kjv');
+    expect(toolbar.language.code, language);
+    if (language == 'english') expect(toolbar.version.toLowerCase(), 'kjv');
+    if (language == 'french') expect(toolbar.version.toUpperCase(), 'LSG');
   }
 
   Future<void> tap(WidgetTester tester, Finder finder) async {
     await tester.ensureVisible(finder);
     await tester.tap(finder);
     await tester.pumpAndSettle();
+  }
+
+  Future<void> chooseBible(WidgetTester tester, String nativeName) async {
+    await tap(
+      tester,
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip && widget.message?.endsWith(': English') == true,
+      ),
+    );
+    await tap(tester, find.text(nativeName).last);
+    if (find.text('البستاني فاندايك').evaluate().isNotEmpty) {
+      await tap(tester, find.text('البستاني فاندايك').last);
+    }
+    expect(BrowserRouteLinkNavigation.isBlocked, isFalse);
   }
 
   Future<void> inReader(
@@ -304,11 +343,11 @@ void main() {
   }
 
   test(
-    'applying stored preferences retains a table-only locale absent the Harmony and Bible catalogs',
+    'applying old mixed preferences follows the selected Bible language',
     () {
       expect(
         readerLanguageOptions().map((option) => option.code),
-        isNot(contains('french')),
+        contains('french'),
       );
       applyUserPreferencesToLegacyControllers(
         const UserPreferences(
@@ -317,11 +356,11 @@ void main() {
           contentLanguage: 'arabic',
         ),
       );
-      expect(TopicLanguageSelectionController.instance.languageCode, 'french');
-      expect(MenuLanguageController.instance.languageCode, 'french');
+      expect(TopicLanguageSelectionController.instance.languageCode, 'arabic');
+      expect(MenuLanguageController.instance.languageCode, 'arabic');
       expect(LanguageSelectionController.instance.languageCode, 'arabic');
 
-      // A later Bible preference update also leaves the independent locale.
+      // A later Bible preference update also determines the requested locale.
       applyUserPreferencesToLegacyControllers(
         const UserPreferences(
           topicLanguage: 'french',
@@ -329,19 +368,20 @@ void main() {
           contentLanguage: 'english',
         ),
       );
-      expect(TopicLanguageSelectionController.instance.languageCode, 'french');
-      expect(MenuLanguageController.instance.languageCode, 'french');
+      expect(TopicLanguageSelectionController.instance.languageCode, 'english');
+      expect(MenuLanguageController.instance.languageCode, 'english');
       expect(LanguageSelectionController.instance.languageCode, 'english');
     },
   );
 
   testWidgets(
-    'Miracles-only French uses localized metadata without a Harmony or Bible locale',
+    'French Bible selection uses Miracles French metadata without a Harmony locale',
     (tester) async {
-      await inReader(tester, route('miracles', 'french'), () async {
+      await inReader(tester, route('miracles', 'english'), () async {
+        await chooseBible(tester, 'Français');
         expect(
           readerLanguageOptions().map((option) => option.code),
-          isNot(contains('french')),
+          contains('french'),
         );
         final current = table(tester);
         expect(current.topicLanguage.code, 'french');
@@ -356,6 +396,19 @@ void main() {
         expect(find.text('Sujets traduits'), findsOneWidget);
         expect(find.text('Luc localisé'), findsOneWidget);
         expect(find.text('Guérison'), findsNWidgets(2));
+        applyUserPreferencesToLegacyControllers(
+          const UserPreferences(
+            contentLanguage: 'french',
+            topicLanguage: 'french',
+            menuLanguage: 'french',
+          ),
+        );
+        expect(
+          TopicLanguageSelectionController.instance.languageCode,
+          'french',
+        );
+        expect(MenuLanguageController.instance.languageCode, 'french');
+        expect(LanguageSelectionController.instance.languageCode, 'french');
         expect(
           resolveDatasetTopicLanguage('miracles', 'french').code,
           'french',
@@ -376,9 +429,13 @@ void main() {
         for (final link in links(tester)) {
           expect(link.uri!.queryParameters['dataset'], 'miracles');
           expect(link.uri!.queryParameters['topicLanguage'], 'french');
-          expect(link.uri!.queryParameters['bibleLanguage'], 'english');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'french');
         }
-        assertBible(tester);
+        assertBible(tester, 'french');
+        expect(
+          find.byKey(const ValueKey('table-language-selector')),
+          findsNothing,
+        );
         expect(
           requests.any((uri) => uri.path == '/topic-localizations/french'),
           isFalse,
@@ -388,7 +445,7 @@ void main() {
   );
 
   testWidgets(
-    'French-only Miracles switches to a supported Harmony table language while keeping English Bible',
+    'switching tables keeps French Bible and matches available table locales with a fallback notice',
     (tester) async {
       await inReader(tester, route('miracles', 'french'), () async {
         expect(table(tester).topicLanguage.code, 'french');
@@ -401,6 +458,10 @@ void main() {
           isTrue,
         );
         expect(current.topicLanguage.code, 'english');
+        expect(
+          find.textContaining('is not available for this table'),
+          findsOneWidget,
+        );
         expect(current.topics.map((topic) => topic.name), [
           _name('harmony', '10', 'english'),
           _name('harmony', '11', 'english'),
@@ -408,10 +469,17 @@ void main() {
         for (final link in links(tester)) {
           expect(link.uri!.queryParameters['dataset'], isNull);
           expect(link.uri!.queryParameters['topicLanguage'], 'english');
-          expect(link.uri!.queryParameters['bibleLanguage'], 'english');
-          expect(link.uri!.queryParameters['version']?.toLowerCase(), 'kjv');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'french');
+          expect(link.uri!.queryParameters['version']?.toUpperCase(), 'LSG');
         }
-        assertBible(tester);
+        assertBible(tester, 'french');
+        await tap(tester, find.text(datasetDisplayName('parables', 'english')));
+        expect(table(tester).topicLanguage.code, 'english');
+        expect(
+          table(tester).topics.first.name,
+          _name('parables', '10', 'english'),
+        );
+        assertBible(tester, 'french');
         await tap(tester, find.text(datasetDisplayName('miracles', 'english')));
         expect(table(tester).topicLanguage.code, 'french');
         expect(
@@ -426,27 +494,27 @@ void main() {
         for (final link in links(tester)) {
           expect(link.uri!.queryParameters['dataset'], 'miracles');
           expect(link.uri!.queryParameters['topicLanguage'], 'french');
-          expect(link.uri!.queryParameters['bibleLanguage'], 'english');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'french');
         }
-        assertBible(tester);
+        assertBible(tester, 'french');
       });
     },
   );
 
   for (final dataset in topicDatasetIds) {
     testWidgets(
-      '$dataset globe changes Arabic table names, Gospels and numbers independently of English Bible',
+      '$dataset Bible control changes Arabic subjects, Gospel headers, Types and reference notation together',
       (tester) async {
         await inReader(tester, route(dataset, 'english'), () async {
           expect(find.text('#'), findsOneWidget);
           expect(find.text('10'), findsOneWidget);
-          expect(find.text('Table language: '), findsOneWidget);
-          expect(find.textContaining('Bible language:'), findsOneWidget);
-          await tap(
-            tester,
+          expect(find.text('Table language: '), findsNothing);
+          expect(
             find.byKey(const ValueKey('table-language-selector')),
+            findsNothing,
           );
-          await tap(tester, find.text('العربية').last);
+          expect(find.textContaining('Bible language:'), findsOneWidget);
+          await chooseBible(tester, 'العربية');
           expect(table(tester).topicLanguage.code, 'arabic');
           expect(
             table(tester).topics.first.name,
@@ -469,13 +537,13 @@ void main() {
           final reference = tester
               .widgetList<ReferenceHoverText>(find.byType(ReferenceHoverText))
               .first;
-          expect(reference.language, 'english');
-          expect(reference.version.toLowerCase(), 'kjv');
+          expect(reference.language, 'arabic');
+          expect(reference.version, isNotEmpty);
           expect(reference.topicLanguage, 'arabic');
           expect(reference.reference.book, 'Luke');
           expect(reference.reference.chapter, 1);
           expect(reference.reference.verses, '5');
-          assertBible(tester);
+          assertBible(tester, 'arabic');
           expect(
             requests.where((uri) => uri.path.endsWith('/topics')),
             hasLength(1),
@@ -484,6 +552,114 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'a missing matching locale uses the first available locale when English is absent',
+    (tester) async {
+      availableLanguages['miracles'] = ['arabic'];
+      await inReader(tester, route('miracles', 'english'), () async {
+        expect(table(tester).topicLanguage.code, 'arabic');
+        expect(
+          table(tester).topics.first.name,
+          _name('miracles', '10', 'arabic'),
+        );
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('table-language-selector')),
+          findsNothing,
+        );
+        assertBible(tester);
+        final reference = tester
+            .widgetList<ReferenceHoverText>(find.byType(ReferenceHoverText))
+            .first;
+        expect(reference.language, 'english');
+        expect(reference.topicLanguage, 'arabic');
+      });
+    },
+  );
+
+  testWidgets(
+    'refresh repairs an old mixed route using the Bible language and retains grouped filters',
+    (tester) async {
+      final mixed = Uri.parse(route('parables', 'english', grouped: true))
+          .replace(
+            queryParameters: {
+              ...Uri.parse(
+                route('parables', 'english', grouped: true),
+              ).queryParameters,
+              'topicLanguage': 'arabic',
+              'menuLanguage': 'arabic',
+            },
+          );
+      await inReader(tester, mixed.toString(), () async {
+        void expectRepaired() {
+          expect(table(tester).topicLanguage.code, 'english');
+          expect(
+            table(tester).topics.first.name,
+            _name('parables', '10', 'english'),
+          );
+          expect(table(tester).groupedByType, isTrue);
+          assertBible(tester);
+          for (final link in links(tester)) {
+            expect(link.uri!.queryParameters['topicLanguage'], 'english');
+            expect(link.uri!.queryParameters['bibleLanguage'], 'english');
+            expect(link.uri!.queryParameters['view'], 'grouped');
+            expect(link.uri!.queryParameters['types'], 'healing');
+          }
+        }
+
+        expectRepaired();
+        await tester.pumpWidget(const SizedBox());
+        notifyCatalogChanged();
+        await tester.pumpWidget(app(mixed.toString()));
+        await tester.pumpAndSettle();
+        expectRepaired();
+        expect(
+          requests.any((uri) => uri.path.endsWith('/localizations/arabic')),
+          isFalse,
+        );
+      });
+    },
+  );
+
+  testWidgets(
+    'a cold French Parables reader link resolves English names before requesting the locale',
+    (tester) async {
+      final cold = Uri.parse(route('parables', 'french')).replace(
+        path: '/topic',
+        queryParameters: {
+          ...Uri.parse(route('parables', 'french')).queryParameters,
+          'topicId': '10',
+          'topicNumber': '10',
+        },
+      );
+      await inReader(tester, cold.toString(), () async {
+        final detail = tester.widget<AuthorComparisonScreen>(
+          find.byType(AuthorComparisonScreen),
+        );
+        expect(detail.topic.datasetId, 'parables');
+        expect(detail.topic.name, _name('parables', '10', 'english'));
+        expect(detail.topicLanguage, 'english');
+        expect(
+          find.textContaining('french Bible fixture', findRichText: true),
+          findsWidgets,
+        );
+        expect(
+          requests.any(
+            (uri) => uri.path == '/datasets/parables/localizations/french',
+          ),
+          isFalse,
+        );
+        expect(
+          requests.any(
+            (uri) => uri.path == '/datasets/parables/localizations/english',
+          ),
+          isTrue,
+        );
+        assertBible(tester, 'french');
+      });
+    },
+  );
 
   testWidgets(
     'French table survives topic reading, Back and a refreshed grouped URL',
@@ -509,7 +685,7 @@ void main() {
           expect(detail.topic.name, _name('miracles', '10', 'french'));
           expect(detail.topicLanguage, 'french');
           expect(
-            find.textContaining('English KJV fixture', findRichText: true),
+            find.textContaining('french Bible fixture', findRichText: true),
             findsWidgets,
           );
           Navigator.of(tester.element(find.byType(TopicDetailScreen))).pop();
@@ -520,7 +696,7 @@ void main() {
             table(tester).metadata.typeLabel('healing', 'french'),
             'Guérison',
           );
-          assertBible(tester);
+          assertBible(tester, 'french');
           await tester.pumpWidget(const SizedBox());
           notifyCatalogChanged();
           await tester.pumpWidget(app(saved.toString()));
@@ -529,7 +705,7 @@ void main() {
           expect(table(tester).topicLanguage.gospelNames[2], 'Luc localisé');
           expect(table(tester).topics.map((topic) => topic.id), ['10', '11']);
           expect(table(tester).groupedByType, isTrue);
-          assertBible(tester);
+          assertBible(tester, 'french');
         },
       );
     },
