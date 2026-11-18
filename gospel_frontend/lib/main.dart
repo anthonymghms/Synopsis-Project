@@ -547,8 +547,36 @@ Future<List<TopicLanguageOption>> _loadTopicLanguages() {
       });
 }
 
-TopicLanguageOption _topicLanguageOptionForCode(String code) =>
-    TopicLanguageCatalog.resolve(_supportedTopicLanguages, code);
+/// Table locales are independent of the Bible catalog and other tables.
+TopicLanguageOption resolveDatasetTopicLanguage(String datasetId, String code) {
+  final normalized = code.trim().toLowerCase();
+  final cached =
+      _ApiCache.datasetLanguages[normalizeDatasetId(datasetId)]?[normalized];
+  if (cached != null) return cached;
+  if (normalizeDatasetId(datasetId) == 'harmony') {
+    for (final option in _supportedTopicLanguages) {
+      if (option.code == normalized) return option;
+    }
+  }
+  return TopicLanguageOption.fromJson({
+    'id': normalized,
+    'direction': normalized == 'arabic' ? 'rtl' : 'ltr',
+  });
+}
+
+LanguageOption _interfaceLanguageForTopic(TopicLanguageOption topic) =>
+    _languageOptionForCode(topic.code).copyWith(
+      code: topic.code,
+      label: topic.label,
+      direction: topic.direction,
+      localizedGospelNames: topic.gospelNames,
+      ui: LocalizedUiLabels.forLanguage(topic.code, {
+        ...topic.interfaceTranslations,
+        'subjectsHeader': topic.subjectsLabel,
+        for (var i = 0; i < orderedGospels.length; i++)
+          'gospel${orderedGospels[i]}': topic.gospelNames[i],
+      }),
+    );
 
 Future<List<LanguageOption>>? _languageOptionsLoadFuture;
 bool _primaryLanguageCatalogsLoaded = false;
@@ -887,26 +915,11 @@ class MenuLanguageScope extends InheritedNotifier<ValueNotifier<String>> {
         .dependOnInheritedWidgetOfExactType<MenuLanguageScope>();
     final code =
         scope?.notifier?.value ?? MenuLanguageController.instance.languageCode;
-    // Interface labels do not depend on Harmony localization completeness.
-    final primary = _languageOptionForCode(code);
-    TopicLanguageOption? topicLanguage;
-    for (final candidate in _supportedTopicLanguages) {
-      if (candidate.code.toLowerCase() == primary.code.toLowerCase()) {
-        topicLanguage = candidate;
-        break;
-      }
-    }
-    if (topicLanguage == null) {
-      return primary.copyWith(ui: LocalizedUiLabels.forLanguage(primary.code));
-    }
-    return primary.copyWith(
-      ui: LocalizedUiLabels.forLanguage(
-        primary.code,
-        topicLanguage.interfaceTranslations,
+    return _interfaceLanguageForTopic(
+      resolveDatasetTopicLanguage(
+        normalizeDatasetId(_datasetRouteParameters(context)['dataset']),
+        code,
       ),
-      label: topicLanguage.label,
-      direction: topicLanguage.direction,
-      localizedGospelNames: topicLanguage.gospelNames,
     );
   }
 }
@@ -995,27 +1008,13 @@ ReaderLanguages resolveReaderLanguages(Uri uri) {
       _primaryLanguageOptions().any((language) => language.code == bible.code)
       ? bible.code
       : TopicLanguageSelectionController.instance.languageCode;
-  final separateDataset =
-      normalizeDatasetId(uri.queryParameters['dataset']) != 'harmony';
   final requestedTopic = uri.queryParameters['topicLanguage']
       ?.trim()
       .toLowerCase();
-  final topic = separateDataset
-      ? (requestedTopic?.isNotEmpty == true
-            ? requestedTopic!
-            : compatiblePrimary)
-      : _coercePrimaryLanguageOption(
-          _languageOptionForCode(
-            uri.queryParameters['topicLanguage']?.trim().isNotEmpty == true
-                ? uri.queryParameters['topicLanguage']!
-                : compatiblePrimary,
-          ),
-        ).code;
-  final menu = separateDataset
-      ? (_menuLanguageQueryParameter(uri)?.toLowerCase() ?? topic)
-      : _coercePrimaryLanguageOption(
-          _languageOptionForCode(_menuLanguageQueryParameter(uri) ?? topic),
-        ).code;
+  final topic = requestedTopic?.isNotEmpty == true
+      ? requestedTopic!
+      : compatiblePrimary;
+  final menu = _menuLanguageQueryParameter(uri)?.toLowerCase() ?? topic;
   return (bible: bible, topic: topic, menu: menu);
 }
 
@@ -2053,8 +2052,10 @@ Widget _buildToolbarLanguageButton({
   required List<LanguageOption> languages,
   required ValueChanged<LanguageOption> onSelected,
   bool loading = false,
+  String? labelPrefix,
 }) {
   final labels = menuLanguage.ui;
+  final languageLabel = labelPrefix ?? labels.bibleLanguage;
 
   if (loading) {
     return OutlinedButton.icon(
@@ -2065,7 +2066,7 @@ Widget _buildToolbarLanguageButton({
         height: 16,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      label: Text(labels.bibleLanguage),
+      label: Text(languageLabel),
     );
   }
 
@@ -2073,7 +2074,7 @@ Widget _buildToolbarLanguageButton({
     context: context,
     icon: Icons.language,
     label:
-        '${labels.bibleLanguage}: ${localizedLanguageNameForMenu(menuLanguage, language.code, language.label)}',
+        '$languageLabel: ${localizedLanguageNameForMenu(menuLanguage, language.code, language.label)}',
     enabled: languages.length > 1,
     items: languages
         .map(
@@ -2225,6 +2226,8 @@ class AppToolbar extends StatefulWidget {
     this.titleWidget,
     this.languagesLoading = false,
     this.primaryActions = const <Widget>[],
+    this.primaryActionsFirst = false,
+    this.languageSelectorLabel,
     this.trailingActions = const <Widget>[],
     this.showVersionSelector = true,
     this.showLanguageSelector = true,
@@ -2245,6 +2248,8 @@ class AppToolbar extends StatefulWidget {
   final ValueChanged<String> onVersionChanged;
   final bool languagesLoading;
   final List<Widget> primaryActions;
+  final bool primaryActionsFirst;
+  final String? languageSelectorLabel;
   final List<Widget> trailingActions;
   final bool showVersionSelector;
   final bool showLanguageSelector;
@@ -2363,6 +2368,7 @@ class _AppToolbarState extends State<AppToolbar> {
                 textAlign: TextAlign.center,
               ));
     final controls = <Widget>[
+      if (widget.primaryActionsFirst) ...widget.primaryActions,
       if (widget.showLanguageSelector)
         _buildToolbarLanguageButton(
           context: context,
@@ -2371,6 +2377,7 @@ class _AppToolbarState extends State<AppToolbar> {
           languages: widget.languages,
           loading: widget.languagesLoading,
           onSelected: _handleLanguageSelected,
+          labelPrefix: widget.languageSelectorLabel,
         ),
       if (widget.showVersionSelector)
         _buildToolbarVersionButton(
@@ -2392,7 +2399,7 @@ class _AppToolbarState extends State<AppToolbar> {
               widget.onDiacriticsToggled != null,
           onPressed: widget.onDiacriticsToggled,
         ),
-      ...widget.primaryActions,
+      if (!widget.primaryActionsFirst) ...widget.primaryActions,
       ...widget.trailingActions,
     ].where((widget) => widget is! SizedBox).toList();
 
@@ -4521,7 +4528,7 @@ class _GospelAppState extends State<GospelApp> {
     // unrelated preference edit must not later overwrite an explicit URL's
     // language just because the initial profile arrived before its catalogs.
     if (!_primaryLanguageCatalogsLoaded) return;
-    _applyUserPreferencesToLegacyControllers(preferences);
+    applyUserPreferencesToLegacyControllers(preferences);
   }
 
   @override
@@ -4814,7 +4821,7 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
     if (mounted &&
         ModalRoute.of(context)?.isCurrent != false &&
         MenuLanguageController.instance.revision == menuRevision) {
-      _applyUserPreferencesToLegacyControllers(currentProfile.preferences);
+      applyUserPreferencesToLegacyControllers(currentProfile.preferences);
     }
     return currentProfile;
   }
@@ -4949,17 +4956,12 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
   }
 }
 
-void _applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
-  TopicLanguageSelectionController.instance.update(
-    _coercePrimaryLanguageOption(
-      _languageOptionForCode(preferences.topicLanguage),
-    ).code,
-  );
-  MenuLanguageController.instance.update(
-    _coercePrimaryLanguageOption(
-      _languageOptionForCode(preferences.menuLanguage),
-    ).code,
-  );
+@visibleForTesting
+void applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
+  // A table locale may exist only in Miracles/Parables and need not be in
+  // either Harmony's locale catalog or the Bible translation catalog.
+  TopicLanguageSelectionController.instance.update(preferences.topicLanguage);
+  MenuLanguageController.instance.update(preferences.menuLanguage);
   _syncSelectedContentLanguage(
     _languageOptionForCode(preferences.contentLanguage),
   );
@@ -5102,7 +5104,8 @@ class _TopicDetailScreenState extends State<TopicDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final menuLanguage = MenuLanguageScope.of(context);
-    final textDirection = _topicLanguageOptionForCode(
+    final textDirection = resolveDatasetTopicLanguage(
+      widget.datasetId,
       widget.topicLanguage,
     ).direction;
 
@@ -5225,8 +5228,10 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
 
   LanguageOption get _languageOption =>
       _languageOptionForCode(_selectedLanguageCode);
-  TopicLanguageOption get _topicLanguageOption =>
-      _topicLanguageOptionForCode(_selectedTopicLanguageCode);
+  TopicLanguageOption get _topicLanguageOption => resolveDatasetTopicLanguage(
+    _datasetView.datasetId,
+    _selectedTopicLanguageCode,
+  );
 
   @override
   void initState() {
@@ -5356,12 +5361,17 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     ),
   };
 
+  final Map<String, String> _savedDatasetLanguages = {};
+
   void _switchDataset(String id) {
     if (id == _datasetView.datasetId) return;
     _savedDatasetQueries[_datasetView.datasetId] = _viewQuery;
+    _savedDatasetLanguages[_datasetView.datasetId] = _selectedTopicLanguageCode;
     final saved = _savedDatasetQueries[id] ?? {'dataset': id};
     setState(() {
       _datasetView = DatasetViewState.fromQueryParameters(saved);
+      _selectedTopicLanguageCode =
+          _savedDatasetLanguages[id] ?? _selectedTopicLanguageCode;
       _filterState = GospelFilterState.fromQueryParameters(saved);
       _sortState = GospelSortState.fromQueryValue(saved['sort']);
       _columnVisibility = ColumnVisibilityState.fromQueryValue(
@@ -5632,8 +5642,15 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       _error = null;
     });
     try {
+      final available = await _ApiCache.tableLanguageCodes(expectedDataset);
+      final actualLanguage =
+          available.isEmpty || available.contains(expectedTopicLanguage)
+          ? expectedTopicLanguage
+          : available.contains('english')
+          ? 'english'
+          : available.first;
       final topics = await _ApiCache.fetchTopics(
-        topicLanguage: expectedTopicLanguage,
+        topicLanguage: actualLanguage,
         datasetId: expectedDataset,
       );
       if (!mounted) {
@@ -5645,6 +5662,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         return;
       }
       setState(() {
+        _selectedTopicLanguageCode = actualLanguage;
         _topics = topics;
         _datasetMetadata =
             _ApiCache.datasetMetadata[expectedDataset] ??
@@ -5657,6 +5675,31 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         }
         _loading = false;
       });
+      if (ModalRoute.of(context)?.isCurrent != false) {
+        TopicLanguageSelectionController.instance.update(actualLanguage);
+        MenuLanguageController.instance.update(actualLanguage);
+      }
+      if (actualLanguage != expectedTopicLanguage &&
+          ModalRoute.of(context)?.isCurrent != false) {
+        _commitControlState(replace: true);
+        final requested = resolveDatasetTopicLanguage(
+          expectedDataset,
+          expectedTopicLanguage,
+        ).label;
+        final shown = resolveDatasetTopicLanguage(
+          expectedDataset,
+          actualLanguage,
+        ).label;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              datasetControlLabel('languageUnavailable', actualLanguage)
+                  .replaceAll('{requested}', requested)
+                  .replaceAll('{shown}', shown),
+            ),
+          ),
+        );
+      }
       _openPendingTopicIfNeeded();
     } catch (e) {
       if (!mounted) {
@@ -5743,12 +5786,13 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     });
   }
 
-  void _commitControlState() {
+  void _commitControlState({bool replace = false}) {
     if (!mounted || _committedControlSignature == _controlSignature) {
       return;
     }
     _committedControlSignature = _controlSignature;
     _savedDatasetQueries[_datasetView.datasetId] = _viewQuery;
+    _savedDatasetLanguages[_datasetView.datasetId] = _selectedTopicLanguageCode;
     BrowserRouteHistory.update(
       _mainTableUri(
         language: _languageOption,
@@ -5760,6 +5804,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         sortState: _sortState,
         columnVisibility: _columnVisibility,
       ),
+      replace: replace,
     );
   }
 
@@ -5771,7 +5816,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   @override
   Widget build(BuildContext context) {
     final languageOption = _languageOption;
-    final menuLanguage = MenuLanguageScope.of(context);
+    final menuLanguage = _interfaceLanguageForTopic(_topicLanguageOption);
     final processed = _processedTopics();
     final isAdmin = AdminContentScope.allowsSelection(context);
     final document = _loading || _error != null
@@ -5788,165 +5833,173 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
             metadata: _datasetMetadata,
             grouped: _datasetView.isGrouped,
           );
-    return TopicsTablePrintScope(
-      document: document,
-      child: Directionality(
-        textDirection: _topicLanguageOption.direction,
-        child: MainScaffold(
-          title: '',
-          topNavigation: _buildGlobalTopNavigation(
-            context: context,
-            contentLanguage: languageOption,
-            contentVersion: _apiVersionFor(languageOption),
-          ),
-          settingsLabel: menuLanguage.ui.settings,
-          logoutLabel: menuLanguage.ui.logout,
-          accountTooltip: menuLanguage.ui.account,
-          showAdmin: isAdmin,
-          adminLabel: menuLanguage.ui.text('admin'),
-          body: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ResponsiveContentShell(
-                maxWidth: _maxHarmonyTableWidth,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: DatasetSelector(
-                    datasetId: _datasetView.datasetId,
-                    language: _selectedTopicLanguageCode,
-                    onChanged: _switchDataset,
+    return DatasetNavigationScope(
+      query: _viewQuery,
+      child: TopicsTablePrintScope(
+        document: document,
+        child: Directionality(
+          textDirection: _topicLanguageOption.direction,
+          child: MainScaffold(
+            title: '',
+            topNavigation: _buildGlobalTopNavigation(
+              context: context,
+              contentLanguage: languageOption,
+              contentVersion: _apiVersionFor(languageOption),
+            ),
+            settingsLabel: menuLanguage.ui.settings,
+            logoutLabel: menuLanguage.ui.logout,
+            accountTooltip: menuLanguage.ui.account,
+            showAdmin: isAdmin,
+            adminLabel: menuLanguage.ui.text('admin'),
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ResponsiveContentShell(
+                  maxWidth: _maxHarmonyTableWidth,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: DatasetSelector(
+                      datasetId: _datasetView.datasetId,
+                      language: _selectedTopicLanguageCode,
+                      onChanged: _switchDataset,
+                    ),
                   ),
                 ),
-              ),
-              AppToolbar(
-                maxContentWidth: _maxHarmonyTableWidth,
-                language: languageOption,
-                version: _apiVersionFor(languageOption),
-                languages: readerLanguageOptions(),
-                primaryActions: [_buildDatasetControls()],
-                languagesLoading: _languagesLoading,
-                onLanguageChanged: _updateLanguage,
-                onVersionChanged: (version) =>
-                    _updateVersionForLanguage(languageOption, version),
-                onTranslationChanged: _updateContentTranslation,
-                trailingActions: [
-                  if (isAdmin && kIsWeb)
-                    FilledButton.icon(
-                      key: const ValueKey<String>('export-topics-csv'),
-                      onPressed: document == null
-                          ? null
-                          : () => downloadTopicsCsv(
-                              document,
-                              '${_datasetView.datasetId}-${_topicLanguageOption.code}.csv',
-                            ),
-                      style: _toolbarFilledStyle(context),
-                      icon: const Icon(Icons.download_outlined, size: 18),
-                      label: Text(menuLanguage.ui.text('exportCsv')),
-                    ),
-                  if (kIsWeb)
-                    OutlinedButton.icon(
-                      key: const ValueKey<String>('print-topics-table'),
-                      onPressed: document == null ? null : printTopicsTable,
-                      style: _toolbarOutlinedStyle(context),
-                      icon: const Icon(Icons.print_outlined, size: 18),
-                      label: Text(menuLanguage.ui.text('printPdf')),
-                    ),
-                  if (isAdmin)
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        _tableKey.currentState?.resetScroll();
-                      },
-                      style: _toolbarOutlinedStyle(context),
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: Text(menuLanguage.resetLabel),
-                    ),
-                  HarmonySortButton(
-                    state: _sortState,
-                    columns: _columnVisibility,
-                    uiLanguage: menuLanguage,
-                    onChanged: _setSortState,
-                    onColumnsChanged: _setColumnVisibility,
-                    onInteractionEnd: _commitControlState,
+                AppToolbar(
+                  maxContentWidth: _maxHarmonyTableWidth,
+                  language: languageOption,
+                  version: _apiVersionFor(languageOption),
+                  languages: readerLanguageOptions(),
+                  primaryActions: [_buildDatasetControls()],
+                  primaryActionsFirst: true,
+                  languageSelectorLabel: datasetControlLabel(
+                    'bibleLanguage',
+                    _selectedTopicLanguageCode,
                   ),
-                  HarmonyFilterButton(
-                    metadata: _datasetMetadata,
-                    selectedTypeIds: _datasetView.selectedTypeIds,
-                    onTypesChanged: _setTypes,
-                    filterState: _filterState,
-                    sortState: _sortState,
-                    uiLanguage: menuLanguage,
-                    topics: _topics,
-                    columns: _columnVisibility,
-                    currentResultCount: processed.visibleTopicCount,
-                    onChanged: _setFilterState,
-                    onSortChanged: _setSortState,
-                    onInteractionEnd: _commitControlState,
-                  ),
-                  _buildHarmonyResultCountChip(
-                    context: context,
-                    uiLanguage: menuLanguage,
-                    count: processed.visibleTopicCount,
-                  ),
-                  Chip(
-                    label: Text(
-                      '${processed.visibleReferenceCount} ${_selectedTopicLanguageCode == 'arabic' ? 'مراجع' : 'references'}',
-                    ),
-                  ),
-                  if (_filterState.isActive)
-                    _buildActiveSetFilterChip(
-                      context: context,
-                      state: _filterState,
-                      uiLanguage: menuLanguage,
-                      onDeleted: _clearFilter,
-                    ),
-                ],
-              ),
-              const Divider(height: 0),
-              Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(_error!),
-                            TextButton(
-                              onPressed: fetchTopics,
-                              child: Text(
-                                _selectedTopicLanguageCode == 'arabic'
-                                    ? 'إعادة المحاولة'
-                                    : 'Retry',
+                  languagesLoading: _languagesLoading,
+                  onLanguageChanged: _updateLanguage,
+                  onVersionChanged: (version) =>
+                      _updateVersionForLanguage(languageOption, version),
+                  onTranslationChanged: _updateContentTranslation,
+                  trailingActions: [
+                    if (isAdmin && kIsWeb)
+                      FilledButton.icon(
+                        key: const ValueKey<String>('export-topics-csv'),
+                        onPressed: document == null
+                            ? null
+                            : () => downloadTopicsCsv(
+                                document,
+                                '${_datasetView.datasetId}-${_topicLanguageOption.code}.csv',
                               ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : _topics.isEmpty && _datasetView.datasetId != 'harmony'
-                    ? Center(
-                        child: Text(
-                          _selectedTopicLanguageCode == 'arabic'
-                              ? 'لم يُنشر هذا الجدول بعد. استورده من بوابة الإدارة.'
-                              : 'This table has not been published yet. Import it from the Admin Portal.',
-                        ),
-                      )
-                    : DatasetNavigationScope(
-                        query: _viewQuery,
-                        child: HarmonyTable(
-                          key: _tableKey,
-                          metadata: _datasetMetadata,
-                          groupedByType: _datasetView.isGrouped,
-                          topics: processed.topics,
-                          topicDisplayIndexes: processed.sourceIndexes,
-                          languageOption: languageOption,
-                          topicLanguage: _topicLanguageOption,
-                          apiVersion: _apiVersionFor(languageOption),
-                          visibleGospels: _columnVisibility.visibleGospels
-                              .toList(),
-                        ),
+                        style: _toolbarFilledStyle(context),
+                        icon: const Icon(Icons.download_outlined, size: 18),
+                        label: Text(menuLanguage.ui.text('exportCsv')),
                       ),
-              ),
-            ],
+                    if (kIsWeb)
+                      OutlinedButton.icon(
+                        key: const ValueKey<String>('print-topics-table'),
+                        onPressed: document == null ? null : printTopicsTable,
+                        style: _toolbarOutlinedStyle(context),
+                        icon: const Icon(Icons.print_outlined, size: 18),
+                        label: Text(menuLanguage.ui.text('printPdf')),
+                      ),
+                    if (isAdmin)
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          _tableKey.currentState?.resetScroll();
+                        },
+                        style: _toolbarOutlinedStyle(context),
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: Text(menuLanguage.resetLabel),
+                      ),
+                    HarmonySortButton(
+                      state: _sortState,
+                      columns: _columnVisibility,
+                      uiLanguage: menuLanguage,
+                      onChanged: _setSortState,
+                      onColumnsChanged: _setColumnVisibility,
+                      onInteractionEnd: _commitControlState,
+                    ),
+                    HarmonyFilterButton(
+                      metadata: _datasetMetadata,
+                      selectedTypeIds: _datasetView.selectedTypeIds,
+                      onTypesChanged: _setTypes,
+                      filterState: _filterState,
+                      sortState: _sortState,
+                      uiLanguage: menuLanguage,
+                      topics: _topics,
+                      columns: _columnVisibility,
+                      currentResultCount: processed.visibleTopicCount,
+                      onChanged: _setFilterState,
+                      onSortChanged: _setSortState,
+                      onInteractionEnd: _commitControlState,
+                    ),
+                    _buildHarmonyResultCountChip(
+                      context: context,
+                      uiLanguage: menuLanguage,
+                      count: processed.visibleTopicCount,
+                    ),
+                    Chip(
+                      label: Text(
+                        '${processed.visibleReferenceCount} ${menuLanguage.ui.references}',
+                      ),
+                    ),
+                    if (_filterState.isActive)
+                      _buildActiveSetFilterChip(
+                        context: context,
+                        state: _filterState,
+                        uiLanguage: menuLanguage,
+                        onDeleted: _clearFilter,
+                      ),
+                  ],
+                ),
+                const Divider(height: 0),
+                Expanded(
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_error!),
+                              TextButton(
+                                onPressed: fetchTopics,
+                                child: Text(
+                                  _selectedTopicLanguageCode == 'arabic'
+                                      ? 'إعادة المحاولة'
+                                      : 'Retry',
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : _topics.isEmpty && _datasetView.datasetId != 'harmony'
+                      ? Center(
+                          child: Text(
+                            _selectedTopicLanguageCode == 'arabic'
+                                ? 'لم يُنشر هذا الجدول بعد. استورده من بوابة الإدارة.'
+                                : 'This table has not been published yet. Import it from the Admin Portal.',
+                          ),
+                        )
+                      : DatasetNavigationScope(
+                          query: _viewQuery,
+                          child: HarmonyTable(
+                            key: _tableKey,
+                            metadata: _datasetMetadata,
+                            groupedByType: _datasetView.isGrouped,
+                            topics: processed.topics,
+                            topicDisplayIndexes: processed.sourceIndexes,
+                            languageOption: languageOption,
+                            topicLanguage: _topicLanguageOption,
+                            apiVersion: _apiVersionFor(languageOption),
+                            visibleGospels: _columnVisibility.visibleGospels
+                                .toList(),
+                          ),
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -5962,31 +6015,48 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Tooltip(
-          message: language == 'arabic' ? 'لغة الجدول' : 'Table language',
+          message: label('tableLanguage'),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.language, size: 18),
               const SizedBox(width: 4),
-              DropdownButton<String>(
-                key: const ValueKey('table-language-selector'),
-                value: language,
-                underline: const SizedBox.shrink(),
-                items: [
-                  for (final code in {
-                    'english',
-                    'arabic',
-                    language,
-                    ..._datasetMetadata.languages,
-                  })
-                    DropdownMenuItem(
-                      value: code,
-                      child: Text(nativeLanguageName(code, code)),
-                    ),
-                ],
-                onChanged: (code) {
-                  if (code != null) unawaited(_setTableLanguage(code));
-                },
+              Flexible(
+                child: Text(
+                  '${label('tableLanguage')}: ',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Flexible(
+                child: DropdownButton<String>(
+                  key: const ValueKey('table-language-selector'),
+                  value: language,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final code in {
+                      language,
+                      if (_datasetView.datasetId == 'harmony')
+                        ..._supportedTopicLanguages.map((option) => option.code)
+                      else
+                        ..._datasetMetadata.languages,
+                    })
+                      DropdownMenuItem(
+                        value: code,
+                        child: Text(
+                          resolveDatasetTopicLanguage(
+                            _datasetView.datasetId,
+                            code,
+                          ).label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (code) {
+                    if (code != null) unawaited(_setTableLanguage(code));
+                  },
+                ),
               ),
             ],
           ),
@@ -6064,14 +6134,16 @@ TopicsTableDocument buildTopicsTableDocument({
   DatasetMetadata metadata = const DatasetMetadata(),
   bool grouped = false,
 }) {
-  final separateNumber = metadata.datasetId != 'harmony';
   List<String> row(Topic topic) => [
-    if (separateNumber)
-      _localizedTopicNumber(_topicNumberForDisplay(topic), topicLanguage),
-    if (separateNumber)
-      topic.name
-    else
-      '${_localizedTopicNumber(_topicNumberForDisplay(topic, zeroBasedIndex: sourceIndexes?[topics.indexOf(topic)] ?? topics.indexOf(topic)), topicLanguage)} ${topic.name}',
+    _localizedTopicNumber(
+      _topicNumberForDisplay(
+        topic,
+        zeroBasedIndex:
+            sourceIndexes?[topics.indexOf(topic)] ?? topics.indexOf(topic),
+      ),
+      topicLanguage,
+    ),
+    topic.name,
     if (metadata.hasTypes) metadata.typeLabel(topic.typeId, topicLanguage.code),
     for (final gospel in visibleGospels)
       _harmonyReferenceCellText(topic, gospel, topicLanguage.code),
@@ -6087,7 +6159,7 @@ TopicsTableDocument buildTopicsTableDocument({
     title: title,
     isRtl: topicLanguage.direction == TextDirection.rtl,
     headers: [
-      if (separateNumber) '#',
+      '#',
       topicLanguage.subjectsLabel,
       if (metadata.hasTypes) datasetControlLabel('type', topicLanguage.code),
       for (final gospel in visibleGospels)
@@ -6185,8 +6257,7 @@ class HarmonyTable extends StatefulWidget {
 }
 
 class _HarmonyTableState extends State<HarmonyTable> {
-  bool get _separateNumber => widget.metadata.datasetId != 'harmony';
-  int get _subjectColumn => _separateNumber ? 1 : 0;
+  static const _subjectColumn = 1;
   final Set<String> _collapsedTypes = {};
   String _lastDataset = '';
   late final ScrollController _verticalController;
@@ -6289,60 +6360,29 @@ class _HarmonyTableState extends State<HarmonyTable> {
     return map;
   }
 
-  Widget _buildNumberedTopic({
-    required int index,
+  Widget _buildTopicSubject({
     required Topic topic,
     required TextAlign textAlign,
     required bool isRtl,
     TextStyle? textStyle,
-  }) {
-    final alignment = isRtl ? Alignment.centerRight : Alignment.centerLeft;
-    final number = _localizedTopicNumber(
-      _topicNumberForDisplay(topic, zeroBasedIndex: index),
-      widget.topicLanguage,
-    );
-
-    return Align(
-      alignment: alignment,
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: isRtl
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-        children: [
-          if (!_separateNumber)
-            Text(
-              number,
-              style: textStyle,
-              textAlign: TextAlign.start,
-              maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
-            ),
-          if (!_separateNumber) const SizedBox(width: 8),
-          Expanded(
-            child: BrowserFindText(
-              text: topic.name,
-              style: textStyle,
-              textAlign: textAlign,
-              textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-              maxLines: 1,
-              child: Text(
-                topic.name,
-                style: textStyle,
-                textAlign: textAlign,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
-              ),
-            ),
-          ),
-        ],
+  }) => Align(
+    alignment: isRtl ? Alignment.centerRight : Alignment.centerLeft,
+    child: BrowserFindText(
+      text: topic.name,
+      style: textStyle,
+      textAlign: textAlign,
+      textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+      maxLines: 1,
+      child: Text(
+        topic.name,
+        style: textStyle,
+        textAlign: textAlign,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
       ),
-    );
-  }
+    ),
+  );
 
   Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
     return Padding(
@@ -6388,7 +6428,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
   double _harmonyTableWidthFor(double availableWidth) {
     final minimumWidth =
         280.0 +
-        (_separateNumber ? 52.0 : 0.0) +
+        52.0 +
         (widget.metadata.hasTypes ? 130.0 : 0.0) +
         (120.0 * _visibleGospels.length);
     return math.max(
@@ -6406,12 +6446,12 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final subjectWidth = math.max(
       280.0,
       tableWidth -
-          (_separateNumber ? 52.0 : 0.0) -
+          52.0 -
           (widget.metadata.hasTypes ? 130.0 : 0.0) -
           (referenceWidth * _visibleGospels.length),
     );
     return {
-      if (_separateNumber) 0: const FixedColumnWidth(52),
+      0: const FixedColumnWidth(52),
       _subjectColumn: FixedColumnWidth(subjectWidth),
       if (widget.metadata.hasTypes)
         _subjectColumn + 1: const FixedColumnWidth(130),
@@ -6524,6 +6564,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
         datasetId: topic.datasetId,
         topicName: topic.name,
         topicLanguage: widget.topicLanguage.code,
+        referenceDisplayLanguage: widget.topicLanguage.code,
         displayBook: widget
             .topicLanguage
             .gospelNames[orderedGospels.indexOf(_normalizeGospelName(gospel))],
@@ -6651,8 +6692,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
     final headerRow = TableRow(
       decoration: BoxDecoration(color: headerBackground),
       children: [
-        if (_separateNumber)
-          _buildHeaderCell('#', headerStyle, TextAlign.center),
+        _buildHeaderCell('#', headerStyle, TextAlign.center),
         _buildHeaderCell(
           widget.topicLanguage.subjectsLabel,
           headerStyle,
@@ -6704,7 +6744,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
           TableRow(
             decoration: BoxDecoration(color: headerBackground),
             children: [
-              if (_separateNumber) const SizedBox.shrink(),
+              const SizedBox.shrink(),
               TextButton.icon(
                 key: ValueKey('type-group-${entry.typeId}'),
                 onPressed: () => setState(() {
@@ -6748,18 +6788,17 @@ class _HarmonyTableState extends State<HarmonyTable> {
             color: isEvenRow ? baseColor : alternateColor,
           ),
           children: [
-            if (_separateNumber)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
-                child: Text(
-                  _localizedTopicNumber(
-                    _topicNumberForDisplay(topic),
-                    widget.topicLanguage,
-                  ),
-                  textAlign: TextAlign.center,
-                  style: subjectStyle,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+              child: Text(
+                _localizedTopicNumber(
+                  _topicNumberForDisplay(topic, zeroBasedIndex: displayIndex),
+                  widget.topicLanguage,
                 ),
+                textAlign: TextAlign.center,
+                style: subjectStyle,
               ),
+            ),
             TableCell(
               verticalAlignment: TableCellVerticalAlignment.top,
               child: Tooltip(
@@ -6774,8 +6813,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
                         horizontal: 10,
                         vertical: 7,
                       ),
-                      child: _buildNumberedTopic(
-                        index: displayIndex,
+                      child: _buildTopicSubject(
                         topic: topic,
                         textAlign: subjectAlign,
                         isRtl: isRtl,
@@ -6981,6 +7019,7 @@ class ReferenceHoverText extends StatefulWidget {
     this.version = defaultVersion,
     this.tooltipMessage = 'Click to read in chapter',
     this.labelOverride = '',
+    this.referenceDisplayLanguage,
     this.enableHoverPreview = true,
     this.withDiacritics,
     this.topicId = '',
@@ -7004,6 +7043,7 @@ class ReferenceHoverText extends StatefulWidget {
   final String version;
   final String tooltipMessage;
   final String labelOverride;
+  final String? referenceDisplayLanguage;
   final bool enableHoverPreview;
   final bool? withDiacritics;
   final String topicId;
@@ -7641,7 +7681,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final text = override.isNotEmpty
         ? override
         : widget.reference.formattedReference;
-    final browserFindText = formatVerseRef(text, widget.language);
+    final displayLanguage = widget.referenceDisplayLanguage ?? widget.language;
+    final browserFindText = formatVerseRef(text, displayLanguage);
     final alignment = _alignmentForTextAlign(widget.textAlign);
     final uri = _buildReferenceUri(widget.reference);
 
@@ -7692,7 +7733,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
                   maxLines: 1,
                   child: VerseRefText(
                     value: text,
-                    lang: widget.language,
+                    lang: displayLanguage,
                     style: _isHovered ? hoverStyle : baseStyle,
                     textAlign: widget.textAlign,
                   ),
@@ -9697,27 +9738,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
-    await _updateReferenceTranslation(
-      _languageOption,
-      newVersion,
-      updatePageLanguage: false,
-    );
+    await _updateReferenceTranslation(_languageOption, newVersion);
   }
 
   Future<void> _updateReferenceTranslation(
     LanguageOption language,
-    String versionId, {
-    bool updatePageLanguage = true,
-  }) async {
+    String versionId,
+  ) async {
     final currentTopic = widget.topicLanguage;
     final currentMenu = MenuLanguageScope.of(context).code;
-    final selection = updatePageLanguage && widget.datasetId == 'harmony'
-        ? readerLanguagesForSelection(
-            language,
-            topicLanguage: currentTopic,
-            menuLanguage: currentMenu,
-          )
-        : (bible: language, topic: currentTopic, menu: currentMenu);
+    final selection = (bible: language, topic: currentTopic, menu: currentMenu);
     final sanitized = language.code == 'arabic'
         ? (_resolveArabicVersion(
                 language,
@@ -9807,7 +9837,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       'book': _bookParameter,
       'bookDisplay': _displayGospelName(
         _currentCanonicalBook,
-        _languageOptionForCode(selection.menu),
+        _interfaceLanguageForTopic(
+          resolveDatasetTopicLanguage(widget.datasetId, selection.menu),
+        ),
       ),
       'chapter': widget.chapter.toString(),
       'version': _sanitizeVersionForLanguage(language, version),
@@ -11461,6 +11493,8 @@ class _ApiCache {
   static int _epoch = 0;
   static final Map<String, Future<Map<String, dynamic>>> _datasets = {};
   static final Map<String, DatasetMetadata> datasetMetadata = {};
+  static final Map<String, Map<String, TopicLanguageOption>> datasetLanguages =
+      {};
   static Future<List<Topic>>? _canonicalTopics;
   static final Map<String, Future<Map<String, String>>> _topicLocalizations =
       {};
@@ -11477,6 +11511,7 @@ class _ApiCache {
     _canonicalTopics = null;
     _datasets.clear();
     datasetMetadata.clear();
+    datasetLanguages.clear();
     _topicLocalizations.clear();
     _topicsByLanguage.clear();
     _chapters.clear();
@@ -11533,9 +11568,19 @@ class _ApiCache {
     });
   }
 
-  static Future<List<Topic>> _fetchDatasetTopics(
+  static Future<List<String>> tableLanguageCodes(String datasetId) async {
+    if (datasetId == 'harmony') {
+      return (await _loadTopicLanguages())
+          .map((option) => option.code)
+          .toList();
+    }
+    return DatasetMetadata.fromJson(
+      await _fetchDatasetEnvelope(datasetId),
+    ).languages;
+  }
+
+  static Future<Map<String, dynamic>> _fetchDatasetEnvelope(
     String datasetId,
-    String language,
   ) async {
     await accountAccess.ensureCanRead();
     _invalidateChangedCatalogCaches();
@@ -11549,10 +11594,34 @@ class _ApiCache {
       }
       return Map<String, dynamic>.from(json.decode(response.body) as Map);
     });
-    if (epoch != _epoch) return _fetchDatasetTopics(datasetId, language);
+    if (epoch != _epoch) return _fetchDatasetEnvelope(datasetId);
+    return envelope;
+  }
+
+  static Future<List<Topic>> _fetchDatasetTopics(
+    String datasetId,
+    String language,
+  ) async {
+    final envelope = await _fetchDatasetEnvelope(datasetId);
+    final epoch = _epoch;
     var metadata = DatasetMetadata.fromJson(envelope);
     final revision = metadata.revision;
     final normalized = language.trim().toLowerCase();
+    final languageOptions = <String, TopicLanguageOption>{};
+    final rawMetadata = envelope['metadata'];
+    final rawLanguages = rawMetadata is Map
+        ? rawMetadata['languageMetadata']
+        : null;
+    if (rawLanguages is Map) {
+      for (final entry in rawLanguages.entries) {
+        if (entry.value is! Map) continue;
+        final option = TopicLanguageOption.fromJson({
+          'id': entry.key.toString(),
+          ...Map<String, dynamic>.from(entry.value as Map),
+        });
+        languageOptions[option.code] = option;
+      }
+    }
     final topics = await _cached(
       _topicsByLanguage,
       _key([datasetId, revision, normalized]),
@@ -11578,6 +11647,14 @@ class _ApiCache {
             item['id'].toString(): (item['name'] ?? '').toString(),
         };
         final labels = localized['typeLabels'];
+        final languageMetadata = localized['language'];
+        if (languageMetadata is Map) {
+          final option = TopicLanguageOption.fromJson({
+            'id': normalized,
+            ...Map<String, dynamic>.from(languageMetadata),
+          });
+          languageOptions[option.code] = option;
+        }
         if (labels is Map) {
           metadata = metadata.withTypeLabels(
             Map<String, dynamic>.from(labels),
@@ -11602,7 +11679,17 @@ class _ApiCache {
       },
     );
     if (epoch != _epoch) return _fetchDatasetTopics(datasetId, language);
+    final previouslyLocalized = datasetMetadata[datasetId];
+    if (previouslyLocalized?.revision == revision) {
+      metadata = metadata.withTypeLabels({
+        for (final type in previouslyLocalized!.types) type.id: type.labels,
+      }, language: normalized);
+    }
     datasetMetadata[datasetId] = metadata;
+    datasetLanguages[datasetId] = {
+      ...?datasetLanguages[datasetId],
+      ...languageOptions,
+    };
     return topics;
   }
 
@@ -11635,6 +11722,7 @@ class _ApiCache {
   static Future<Map<String, String>> _fetchTopicLocalization(String language) {
     final key = _key(['topic-localization', language]);
     return _cached(_topicLocalizations, key, () async {
+      final epoch = _epoch;
       final uri = Uri.parse(
         '$apiBaseUrl/topic-localizations/${Uri.encodeComponent(language)}',
       );
@@ -11643,6 +11731,14 @@ class _ApiCache {
         throw Exception('Error ${response.statusCode}');
       }
       final decoded = json.decode(response.body);
+      final metadata = decoded is Map ? decoded['language'] : null;
+      if (metadata is Map && epoch == _epoch) {
+        final option = TopicLanguageOption.fromJson({
+          'id': language,
+          ...Map<String, dynamic>.from(metadata),
+        });
+        datasetLanguages.putIfAbsent('harmony', () => {})[option.code] = option;
+      }
       final rawTopics = decoded is Map ? decoded['topics'] : null;
       if (rawTopics is! List) return const <String, String>{};
       return <String, String>{
@@ -11941,7 +12037,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   bool _languagesLoading = false;
 
   LocalizedUiLabels get _labels => MenuLanguageScope.of(context).ui;
-  TopicLanguageOption get _topicLanguage => _topicLanguageOptionForCode(
+  TopicLanguageOption get _topicLanguage => resolveDatasetTopicLanguage(
+    _topic.datasetId,
     widget.topicLanguage ??
         TopicLanguageSelectionController.instance.languageCode,
   );
@@ -12313,18 +12410,11 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   Future<void> _changeMainTranslation(
     LanguageOption language,
-    String version, {
-    bool updatePageLanguage = true,
-  }) async {
+    String version,
+  ) async {
     final currentTopic = _topicLanguage.code;
     final currentMenu = MenuLanguageScope.of(context).code;
-    final selection = updatePageLanguage && _topic.datasetId == 'harmony'
-        ? readerLanguagesForSelection(
-            language,
-            topicLanguage: currentTopic,
-            menuLanguage: currentMenu,
-          )
-        : (bible: language, topic: currentTopic, menu: currentMenu);
+    final selection = (bible: language, topic: currentTopic, menu: currentMenu);
     final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
     final nextVersion = language.code == 'arabic'
         ? (_resolveArabicVersion(
@@ -12366,11 +12456,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   }
 
   Future<void> _handleToolbarVersionChanged(String version) async {
-    await _changeMainTranslation(
-      _languageOption,
-      version,
-      updatePageLanguage: false,
-    );
+    await _changeMainTranslation(_languageOption, version);
   }
 
   bool get _hasPreviousTopic =>

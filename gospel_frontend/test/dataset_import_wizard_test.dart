@@ -351,7 +351,7 @@ void main() {
   testWidgets(
     'invalid references block publication and dataset changes clear staged preview',
     (tester) async {
-      final client = _DatasetClient(valid: false);
+      final client = _DatasetClient(valid: false, hasTypes: false);
       await _pump(tester, client);
       await _tap(tester, find.byKey(const ValueKey('validate-dataset-source')));
       await _reveal(tester, find.byKey(const ValueKey('publish-dataset')));
@@ -362,6 +362,11 @@ void main() {
         isNull,
       );
       expect(find.text('Malformed reference'), findsOneWidget);
+      expect(find.textContaining('The table can be published'), findsNothing);
+      expect(
+        find.textContaining('Resolve any blocking errors before publishing.'),
+        findsOneWidget,
+      );
       await _choose(tester, 'dataset-import-target-miracles', 'Parables');
       expect(find.byKey(const ValueKey('publish-dataset')), findsNothing);
       expect(find.text('Parables.csv'), findsOneWidget);

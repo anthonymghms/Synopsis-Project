@@ -153,10 +153,10 @@ void main() {
       visibleGospels: columns.visibleGospels.toList(),
       title: 'Topics',
     );
-    expect(document.headers, ['Subjects', 'Luke']);
+    expect(document.headers, ['#', 'Subjects', 'Luke']);
     expect(document.rows, [
-      ['3 Earlier', '1:1'],
-      ['1 Later', '2:1'],
+      ['3', 'Earlier', '1:1'],
+      ['1', 'Later', '2:1'],
     ]);
     expect(document.toCsv(), isNot(contains('Excluded')));
     expect(document.toPrintHtml(), isNot(contains('<th>John</th>')));
@@ -196,8 +196,8 @@ void main() {
       title: 'المواضيع',
     );
     expect(document.isRtl, isTrue);
-    expect(document.rows.single.first, '٢٨٩ الموضوع');
-    final reference = document.rows.single[1].replaceAll(
+    expect(document.rows.single.take(2), ['٢٨٩', 'الموضوع']);
+    final reference = document.rows.single[2].replaceAll(
       RegExp('[\u200f\u2067\u2069]'),
       '',
     );

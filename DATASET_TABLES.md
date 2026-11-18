@@ -2,6 +2,8 @@
 
 The existing application now reads three independent topic datasets through Flask. Harmony remains the default, with its existing storage and URLs. Miracles and Parables use the same table, reference parser, reading pages, previews, Gospel filters, sorting, column visibility, and export facilities.
 
+All three tables now show a separate **#** column. To add or update a language without replacing canonical data, use the universal **Add / update table language** workflow documented in [TABLE_LANGUAGES.md](TABLE_LANGUAGES.md). It supports table-specific languages independently of the selected Bible language/version and preserves other translations.
+
 ## Verified Storage sources
 
 Inspected read-only on 15 November 2026 using the configured backend Firebase Admin connection to `synopsis-224b0.firebasestorage.app`. No live validation/import/publication endpoint was called and no Firebase data was written during development.

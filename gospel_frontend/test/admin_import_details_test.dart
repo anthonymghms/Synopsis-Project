@@ -21,7 +21,8 @@ class _ImportClient implements AdminClient {
     'import': {
       'id': _importId,
       'type': type,
-      if (type == 'dataset') 'datasetId': 'parables',
+      if (type == 'dataset' || type == 'table_language')
+        'datasetId': 'parables',
       'language': 'ancientgreek',
       'version': 'TR',
       'status': posts.isEmpty ? status : 'completed',
@@ -87,6 +88,22 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets(
+    'table language history identifies target and requires current preview',
+    (tester) async {
+      final client = _ImportClient(type: 'table_language');
+      await _pump(tester, client, () {});
+      expect(find.text('Parables · ancientgreek'), findsOneWidget);
+      expect(
+        find.textContaining('Open Add / update table language'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Finish the import below'), findsNothing);
+      expect(find.byKey(const ValueKey('resume-import')), findsNothing);
+      expect(client.posts, isEmpty);
+    },
+  );
+
   testWidgets(
     'dataset history names its target and requires reviewed revalidation',
     (tester) async {

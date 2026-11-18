@@ -11,6 +11,7 @@ from admin_content_api import admin_content_api
 from admin_users_api import admin_users_api
 from user_activity_api import user_activity_api
 from dataset_api import dataset_api, legacy_dataset_topics
+from table_language_api import table_language_api
 from services.admin_auth import AdminAuthorizationError, verify_identity
 from services.membership_service import verify_reader_authorization
 from services.admin_content_service import bible_verses_collection
@@ -30,6 +31,7 @@ app.register_blueprint(admin_content_api)
 app.register_blueprint(admin_users_api)
 app.register_blueprint(user_activity_api)
 app.register_blueprint(dataset_api)
+app.register_blueprint(table_language_api)
 
 
 def _cors_origins():
@@ -834,6 +836,7 @@ def _topic_language_metadata(language: str) -> dict | None:
     return {
         "id": language,
         "label": str(data.get("label") or language.title()),
+        "subjectsLabel": str(data.get("subjectsLabel") or ("المواضيع" if language == "arabic" else "Subjects")),
         "direction": str(data.get("direction") or "ltr").lower(),
         "gospels": data.get("gospels") if isinstance(data.get("gospels"), dict) else {},
         "active": data.get("active", True) is not False,

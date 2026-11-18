@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ part 'admin_content_editors.dart';
 part 'admin_import_details.dart';
 part 'bible_import_wizard.dart';
 part 'dataset_import_wizard.dart';
+part 'table_language_import_wizard.dart';
 
 class AdminPortal extends StatefulWidget {
   const AdminPortal({
@@ -69,7 +71,7 @@ class _AdminPortalState extends State<AdminPortal> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => TopicImportWizard(
+      builder: (_) => TableLanguageImportWizard(
         client: _client,
         arabic: _arabic,
         onCompleted: _importCompleted,
@@ -1708,7 +1710,8 @@ class _AdminLabels {
   String get masterHarmony => t('Master Harmony', 'جدول التناغم الرئيسي');
   String get updateMaster =>
       t('Import / Replace Master', 'استيراد / استبدال الجدول الرئيسي');
-  String get addTopicLanguage => t('Add Topic Language', 'إضافة لغة مواضيع');
+  String get addTopicLanguage =>
+      t('Add / update table language', 'إضافة / تحديث لغة الجدول');
   String get interfaceTranslations =>
       t('Interface translations', 'ترجمة الواجهة');
   String get interfaceLabelsCount =>
@@ -1736,7 +1739,7 @@ class _AdminLabels {
   String get history => t('Import History', 'سجل الاستيراد');
   String get addBible =>
       t('Add Bible Translation', 'إضافة ترجمة للكتاب المقدس');
-  String get addTopics => t('Add Topic Language', 'إضافة لغة مواضيع');
+  String get addTopics => addTopicLanguage;
   String get updateHarmony => t(
     'Import / Replace Master Harmony',
     'استيراد / استبدال جدول التناغم الرئيسي',

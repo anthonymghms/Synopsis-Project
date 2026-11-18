@@ -532,8 +532,8 @@ class _DatasetValidationPreview extends StatelessWidget {
         if (data['hasTypes'] != true)
           Text(
             labels.t(
-              'No Type classifications were found. The table can be published; upload an updated CSV with populated Type values to enable Type filters and grouping.',
-              'لم يُعثر على تصنيفات للنوع. يمكن نشر الجدول؛ ارفع ملف CSV محدثًا بقيم Type لتفعيل التصفية والتجميع حسب النوع.',
+              'No Type classifications were found. Upload an updated CSV with populated Type values to enable Type filters and grouping. Resolve any blocking errors before publishing.',
+              'لم يُعثر على تصنيفات للنوع. ارفع ملف CSV محدثًا بقيم Type لتفعيل التصفية والتجميع حسب النوع. صحّح الأخطاء المانعة قبل النشر.',
             ),
           )
         else

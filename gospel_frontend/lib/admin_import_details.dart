@@ -55,7 +55,8 @@ String _importStatus(Map<String, dynamic> item, _AdminLabels labels) {
     final stats = item['validation'] is Map
         ? Map<String, dynamic>.from(item['validation'] as Map)
         : <String, dynamic>{};
-    final count = stats['verses'] ?? stats['topics'] ?? stats['labels'];
+    final count =
+        stats['verses'] ?? stats['topics'] ?? stats['items'] ?? stats['labels'];
     return '${labels.t('Awaiting import — not published', 'بانتظار الاستيراد — غير منشور')}${count == null ? '' : ' · $count ${labels.t('validated', 'تم التحقق منها')}'}';
   }
   if (status == 'completed') {
@@ -69,12 +70,16 @@ String _importStatus(Map<String, dynamic> item, _AdminLabels labels) {
 }
 
 String _importTitle(Map<String, dynamic> item, _AdminLabels labels) {
-  if (item['type'] == 'dataset') {
-    return switch (item['datasetId']) {
+  if (item['type'] == 'dataset' || item['type'] == 'table_language') {
+    final table = switch (item['datasetId']) {
+      'harmony' => labels.t('Harmony / All Topics', 'التناغم / جميع المواضيع'),
       'miracles' => labels.t('Miracles', 'المعجزات'),
       'parables' => labels.t('Parables', 'الأمثال'),
       _ => item['datasetId']?.toString() ?? '',
     };
+    return item['type'] == 'table_language'
+        ? '$table · ${item['language'] ?? ''}'
+        : table;
   }
   return item['type'] == 'bible'
       ? '${item['language']} · ${item['version'] ?? ''}'
@@ -107,7 +112,11 @@ class _HistoryCards extends StatelessWidget {
               trailing: IconButton(
                 key: ValueKey('open-import-${item['id']}'),
                 tooltip:
-                    item['status'] == 'validated' && item['type'] != 'dataset'
+                    item['status'] == 'validated' &&
+                        !const {
+                          'dataset',
+                          'table_language',
+                        }.contains(item['type'])
                     ? labels.t(
                         'Review & finish import',
                         'مراجعة وإكمال الاستيراد',
@@ -260,7 +269,7 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               if (record['status'] == 'validated' &&
-                  record['type'] != 'dataset')
+                  !const {'dataset', 'table_language'}.contains(record['type']))
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
@@ -282,6 +291,21 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                     labels.t(
                       'To review and publish this table, open Import Miracles / Parables, choose its Storage file or upload an updated CSV, and validate the source again.',
                       'لمراجعة هذا الجدول ونشره، افتح استيراد المعجزات / الأمثال، واختر ملف التخزين أو ارفع CSV محدثًا، ثم أعد التحقق من المصدر.',
+                    ),
+                  ),
+                ),
+              if (record['type'] == 'table_language' &&
+                  const {
+                    'validated',
+                    'failed',
+                    'validation_failed',
+                  }.contains(record['status']))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    labels.t(
+                      'Open Add / update table language, select this table and language, and validate the current translation CSV before publishing.',
+                      'افتح إضافة / تحديث لغة الجدول، واختر هذا الجدول واللغة، ثم تحقق من ملف الترجمة CSV الحالي قبل النشر.',
                     ),
                   ),
                 ),
@@ -355,7 +379,7 @@ class _ImportDetailsDialogState extends State<ImportDetailsDialog> {
                   ),
                 ),
               if (record['status'] == 'validation_failed' &&
-                  record['type'] != 'dataset')
+                  !const {'dataset', 'table_language'}.contains(record['type']))
                 Text(
                   labels.t(
                     'Correct the reported errors and upload the files again.',

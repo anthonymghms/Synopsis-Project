@@ -611,7 +611,7 @@ void main() {
       final harmony = resolveReaderLanguages(
         Uri.parse(route(tableLanguage: 'arabic')),
       );
-      expect(harmony.topic, 'english');
+      expect(harmony.topic, 'arabic');
     },
   );
 

@@ -384,7 +384,7 @@ void main() {
     );
 
     testWidgets(
-      '$path real toolbar switches Arabic and English throughout the page',
+      '$path real toolbar switches Bible Arabic and English while retaining English table and menus',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -394,7 +394,7 @@ void main() {
             await tester.pumpWidget(app(route(path, comparison: true)));
             await tester.pumpAndSettle();
             await chooseLanguage(tester, 'العربية');
-            expectLanguages(tester, path, 'arabic', 'arabic');
+            expectLanguages(tester, path, 'arabic', 'english');
             expectComparison(tester, path);
             expect(
               find.textContaining('نص لوقا العربي', findRichText: true),
@@ -416,7 +416,7 @@ void main() {
     );
 
     testWidgets(
-      '$path selecting its current Bible language repairs a mixed-language link',
+      '$path selecting its current Bible language preserves independently selected Arabic table and menus',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(1600, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -426,7 +426,7 @@ void main() {
             await tester.pumpWidget(app(route(path, menu: 'arabic')));
             await tester.pumpAndSettle();
             await chooseLanguage(tester, 'English');
-            expectLanguages(tester, path, 'english', 'english');
+            expectLanguages(tester, path, 'english', 'arabic');
           } finally {
             await tester.pumpWidget(const SizedBox());
             accountAccess.clear();

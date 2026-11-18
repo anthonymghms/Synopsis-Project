@@ -8,6 +8,7 @@ from typing import Any
 from firebase_admin import firestore
 
 from .dataset_import_service import DATASET_FILES, DATASET_LABELS, GOSPEL_LABELS, dataset_id
+from .table_language_import_service import default_language_metadata
 from .firebase_service import FirebaseImportRepository, ImportCollisionError, ImportRecordError, firestore_client, storage_bucket, new_import_id
 
 MAX_DATASET_BYTES = 16 * 1024 * 1024
@@ -133,6 +134,7 @@ class DatasetRepository(FirebaseImportRepository):
             "datasetId": selected_dataset, "labels": DATASET_LABELS[selected_dataset],
             "itemCount": len(result.records), "topicCount": len(result.records),
             "languages": result.languages, "types": result.types,
+            "languageMetadata": {language: {**default_language_metadata(language, sum(language in item.names for item in result.records)), "canonicalTopicCount": len(result.records), "complete": all(language in item.names for item in result.records)} for language in result.languages},
             "hasTypes": bool(result.types), "hasTypeColumn": result.has_type_column,
             "sourceChecksum": checksum, "sourceFilename": source.get("filename"),
             "sourceGeneration": source.get("generation"),
@@ -192,7 +194,7 @@ class DatasetRepository(FirebaseImportRepository):
         metadata, ref = self._revision(selected_dataset, revision)
         topics = []
         if ref is not None:
-            for document in ref.collection("topics").stream():
+            for document in self.db.collection(metadata.get("canonicalTopicsPath") or f"{ref.path}/topics").stream():
                 data = document.to_dict() or {}
                 topics.append({"id": document.id, "datasetId": selected_dataset, **data, "references": data.get("entries", [])})
             topics.sort(key=lambda item: (item.get("sourceOrder", 0), item["id"]))
@@ -208,7 +210,8 @@ class DatasetRepository(FirebaseImportRepository):
             for candidate in ordered_languages:
                 if candidate not in available:
                     continue
-                for doc in ref.collection("localizations").document(candidate).collection("topics").stream():
+                path = metadata.get("localizationPaths", {}).get(candidate) or f"{ref.path}/localizations/{candidate}/topics"
+                for doc in self.db.collection(path).stream():
                     data = doc.to_dict() or {}
                     if data.get("name") and doc.id not in names:
                         names[doc.id] = {"id": doc.id, "name": data["name"], "canonicalOrder": data.get("canonicalOrder", 0), "nameLanguage": candidate, "fallback": candidate != language}
@@ -218,7 +221,7 @@ class DatasetRepository(FirebaseImportRepository):
         # Canonical metadata retains source labels for explicit client fallback.
         type_labels = {value["id"]: value["labels"][language] for value in types if value.get("labels", {}).get(language)}
         return {"datasetId": selected_dataset, "revision": metadata.get("activeRevision"), "typeLabels": type_labels,
-                "language": {"id": language, "label": "العربية" if language == "arabic" else language.title(), "direction": "rtl" if language == "arabic" else "ltr", "gospels": GOSPEL_LABELS.get(language, GOSPEL_LABELS["english"]), "active": True, "topicCount": len(topics), "canonicalSource": f"datasets/{selected_dataset}", "canonicalTopicCount": metadata.get("itemCount", 0), "complete": bool(topics) and all(not item["fallback"] for item in topics)}, "topics": topics}
+                "language": {**default_language_metadata(language, len(topics)), **metadata.get("languageMetadata", {}).get(language, {}), "canonicalSource": f"datasets/{selected_dataset}", "canonicalTopicCount": metadata.get("itemCount", 0), "complete": bool(topics) and all(not item["fallback"] for item in topics)}, "topics": topics}
 
     def localized_topics(self, selected_dataset: str, language: str):
         canonical = self.canonical_payload(selected_dataset)

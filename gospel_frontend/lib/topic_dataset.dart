@@ -17,19 +17,39 @@ bool _isArabic(String language) =>
 
 String datasetDisplayName(String datasetId, String language) {
   final arabic = _isArabic(language);
+  final french =
+      language.toLowerCase() == 'french' || language.toLowerCase() == 'fr';
   return switch (normalizeDatasetId(datasetId)) {
     'miracles' => arabic ? 'المعجزات' : 'Miracles',
-    'parables' => arabic ? 'الأمثال' : 'Parables',
-    _ => arabic ? 'التوافق / جميع المواضيع' : 'Harmony / All Topics',
+    'parables' =>
+      arabic
+          ? 'الأمثال'
+          : french
+          ? 'Paraboles'
+          : 'Parables',
+    _ =>
+      arabic
+          ? 'التوافق / جميع المواضيع'
+          : french
+          ? 'Harmonie / Tous les sujets'
+          : 'Harmony / All Topics',
   };
 }
 
 String datasetControlLabel(String key, String language) {
-  final labels = _isArabic(language) ? _arabicLabels : _englishLabels;
+  final labels = _isArabic(language)
+      ? _arabicLabels
+      : (language.toLowerCase() == 'french' || language.toLowerCase() == 'fr')
+      ? _frenchLabels
+      : _englishLabels;
   return labels[key] ?? _englishLabels[key] ?? key;
 }
 
 const _englishLabels = <String, String>{
+  'languageUnavailable':
+      '{requested} is not available for this table. Showing {shown}.',
+  'tableLanguage': 'Table language',
+  'bibleLanguage': 'Bible language',
   'dataset': 'Table',
   'selectDataset': 'Choose table',
   'type': 'Type',
@@ -45,6 +65,10 @@ const _englishLabels = <String, String>{
 };
 
 const _arabicLabels = <String, String>{
+  'languageUnavailable':
+      'لغة {requested} غير متاحة لهذا الجدول. يتم عرض {shown}.',
+  'tableLanguage': 'لغة الجدول',
+  'bibleLanguage': 'لغة الكتاب المقدس',
   'dataset': 'الجدول',
   'selectDataset': 'اختر الجدول',
   'type': 'النوع',
@@ -56,6 +80,25 @@ const _arabicLabels = <String, String>{
   'collapseAll': 'طي الكل',
   'items': 'موضوع',
   'noTypeInformation': 'يتاح التجميع حسب النوع بعد استيراد قيم النوع.',
+};
+
+const _frenchLabels = <String, String>{
+  'languageUnavailable':
+      '{requested} n’est pas disponible pour ce tableau. Affichage en {shown}.',
+  'tableLanguage': 'Langue du tableau',
+  'bibleLanguage': 'Langue de la Bible',
+  'dataset': 'Tableau',
+  'selectDataset': 'Choisir le tableau',
+  'type': 'Type',
+  'table': 'Tableau',
+  'groupByType': 'Grouper par type',
+  'allTypes': 'Tous les types',
+  'unclassified': 'Non classé',
+  'expandAll': 'Tout développer',
+  'collapseAll': 'Tout réduire',
+  'items': 'sujets',
+  'noTypeInformation':
+      'Le regroupement nécessite des valeurs de type importées.',
 };
 
 String datasetTypeId(String? typeId) {

@@ -304,7 +304,8 @@ void main() {
         visibleGospels: [Gospel.john],
         title: 'Harmony',
       );
-      expect(document.headers, ['Subjects', 'John']);
+      expect(document.headers, ['#', 'Subjects', 'John']);
+      expect(document.rows.single.take(2), ['41', 'Synthetic 1']);
       expect(document.groups, isEmpty);
       expect(result.visibleTopicCount, 1);
       expect(result.visibleReferenceCount, 1);
