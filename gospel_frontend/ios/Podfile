@@ -1,5 +1,4 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -39,5 +38,22 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    if %w[gRPC-Core gRPC-C++].include?(target.name)
+      # The SDK's gRPC 1.62 headers use a template qualifier without explicit
+      # arguments. Recent clang versions diagnose that legacy syntax as an error.
+      target.build_configurations.each do |config|
+        flags = Array(config.build_settings['OTHER_CPLUSPLUSFLAGS'] || '$(inherited)')
+        config.build_settings['OTHER_CPLUSPLUSFLAGS'] = flags + ['-Wno-missing-template-arg-list-after-template-kw']
+      end
+    end
+    # Firebase 10's BoringSSL pod passes an Xcode build setting as a clang
+    # flag. Xcode 16 and later reject it as an unsupported '-G' option.
+    if target.name == 'BoringSSL-GRPC'
+      target.source_build_phase.files.each do |file|
+        flags = file.settings&.fetch('COMPILER_FLAGS', nil)
+        next unless flags
+        file.settings['COMPILER_FLAGS'] = flags.split.reject { |flag| flag == '-GCC_WARN_INHIBIT_ALL_WARNINGS' }.join(' ')
+      end
+    end
   end
 end

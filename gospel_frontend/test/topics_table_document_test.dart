@@ -1,10 +1,44 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/gospel_filter.dart';
 import 'package:gospel_frontend/main.dart';
 import 'package:gospel_frontend/topic_language_catalog.dart';
 import 'package:gospel_frontend/topics_table_document.dart';
+import 'package:gospel_frontend/topics_table_output_native.dart' as mobile;
 
 void main() {
+  testWidgets('mobile print receives the complete escaped RTL table', (
+    tester,
+  ) async {
+    const channel = MethodChannel('gospel_topics/print');
+    MethodCall? call;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (method) async {
+      call = method;
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    const document = TopicsTableDocument(
+      title: 'مقارنة',
+      isRtl: true,
+      headers: ['الموضوع', 'متى'],
+      rows: [
+        ['أول', '١:١'],
+        ['<last>', '٢:١'],
+      ],
+    );
+    await mobile.printTopicsTable(document);
+    expect(call?.method, 'printTable');
+    final arguments = call?.arguments as Map;
+    expect(arguments['title'], document.title);
+    final html = arguments['html'] as String;
+    expect(html, contains('charset="utf-8"'));
+    expect(html, contains('dir="rtl"'));
+    expect(html, contains('&lt;last&gt;'));
+    expect(html, contains(document.toPrintHtml()));
+  });
+
   test('CSV preserves Unicode, commas, quotes and multiline topic names', () {
     const document = TopicsTableDocument(
       title: 'Topics',

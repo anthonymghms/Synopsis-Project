@@ -34,9 +34,9 @@ class ReaderAccessApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/topic-languages').status_code, 401)
         with patch.object(app_module, 'verify_reader_authorization') as reader, \
              patch.object(app_module, 'verify_identity', return_value={'uid': 'expired'}), \
-             patch.object(app_module, '_canonical_topics_collection', return_value=None), \
+             patch.object(app_module, '_canonical_topic_count', return_value=0), \
              patch.object(app_module, 'db') as db:
-            db.collection.return_value.list_documents.return_value = []
+            db.collection.return_value.stream.return_value = []
             response = self.client.get('/topic-languages', headers={'Authorization': 'Bearer expired'})
             self.assertEqual(response.status_code, 200)
             reader.assert_not_called()

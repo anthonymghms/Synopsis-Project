@@ -2,6 +2,7 @@ part of 'main.dart';
 
 const _datasetViewKeys = <String>{
   'dataset',
+  'tableLocale',
   'view',
   'types',
   'filter',
@@ -125,5 +126,180 @@ class DatasetSelector extends StatelessWidget {
         ),
       );
     },
+  );
+}
+
+/// Keeps the table and its scrollable controls usable even in phone landscape.
+class _DatasetWorkspace extends StatelessWidget {
+  const _DatasetWorkspace({
+    required this.header,
+    required this.selector,
+    required this.toolbar,
+    required this.body,
+    this.catalogRetry,
+  });
+
+  final Widget header;
+  final Widget selector;
+  final Widget toolbar;
+  final Widget body;
+  final Widget? catalogRetry;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final short = constraints.maxHeight < 420;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: constraints.maxHeight * .55),
+            child: SingleChildScrollView(
+              primary: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (!short) header,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: ResponsiveContentShell(
+                      maxWidth: _maxHarmonyTableWidth,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          selector,
+                          if (catalogRetry != null) catalogRetry!,
+                        ],
+                      ),
+                    ),
+                  ),
+                  toolbar,
+                ],
+              ),
+            ),
+          ),
+          Expanded(child: body),
+        ],
+      );
+    },
+  );
+}
+
+class _DatasetBanner extends StatelessWidget {
+  const _DatasetBanner({required this.title, required this.description});
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact = constraints.maxWidth < StudyTheme.compact;
+      final theme = Theme.of(context);
+      return ColoredBox(
+        color: StudyTheme.ivory,
+        child: Stack(
+          children: [
+            PositionedDirectional(
+              top: 0,
+              bottom: 0,
+              end: 0,
+              width: (constraints.maxWidth * (compact ? .43 : .54))
+                  .ceilToDouble(),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  StudyPhoto(
+                    compact: compact,
+                    alignment: const Alignment(.3, -.22),
+                  ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: AlignmentDirectional.centerStart,
+                        end: AlignmentDirectional.centerEnd,
+                        colors: [StudyTheme.ivory, Color(0x00FFFAF3)],
+                        stops: [0, .49],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ResponsiveContentShell(
+              maxWidth: _maxHarmonyTableWidth,
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: FractionallySizedBox(
+                  widthFactor: compact ? .64 : .52,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: compact ? 16 : 22),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            title,
+                            style:
+                                (compact
+                                        ? theme.textTheme.headlineSmall
+                                        : theme.textTheme.displaySmall)
+                                    ?.copyWith(
+                                      color: StudyTheme.plum,
+                                      fontFamily: StudyTheme.serif,
+                                    ),
+                          ),
+                        ),
+                        if (!compact) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            description,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: StudyTheme.muted,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _TableStatus extends StatelessWidget {
+  const _TableStatus({required this.icon, required this.message, this.action});
+
+  final IconData icon;
+  final String message;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      primary: false,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: StudyTheme.plum, size: 30),
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          if (action != null) action!,
+        ],
+      ),
+    ),
   );
 }

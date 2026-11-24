@@ -1,12 +1,12 @@
 {
-    "name": "gospel_frontend",
-    "short_name": "gospel_frontend",
+    "name": "Gospel Topics",
+    "short_name": "Gospel Topics",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#fcf6ee",
+    "theme_color": "#fcf6ee",
+    "description": "Study and compare Gospel accounts.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

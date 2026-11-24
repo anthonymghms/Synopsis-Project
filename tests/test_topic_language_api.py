@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import app as app_module
@@ -43,6 +44,10 @@ class _Collection:
             if path.startswith(prefix) and path.count("/") == depth:
                 snapshots.append(_Snapshot(path.rsplit("/", 1)[-1], data))
         return iter(snapshots)
+
+    def count(self):
+        rows = len(list(self.stream()))
+        return SimpleNamespace(get=lambda: [[SimpleNamespace(value=rows)]])
 
     def list_documents(self):
         return [
@@ -199,6 +204,40 @@ class TopicLanguageApiTests(unittest.TestCase):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_published_catalog_and_detail_do_not_stream_topic_rows(self):
+        store = app_module.db.documents
+        store["harmony/canonical"]["activeRevision"] = "rev"
+        store["harmony_localizations/english"]["activeRevision"] = "en"
+        for number in range(3, 290):
+            store[f"harmony_revisions/rev/topics/{number}"] = {"canonicalOrder": number}
+            store[f"harmony_localization_revisions/en/topics/{number}"] = {"name": str(number)}
+        store["harmony/canonical"]["topicCount"] = 289
+
+        streams = []
+        original = _Collection.stream
+        def tracked(collection):
+            streams.append(collection.path)
+            return original(collection)
+
+        with patch.object(_Collection, "stream", tracked):
+            catalog = self.client.get("/topic-languages").get_json()
+            self.assertEqual(catalog["languages"][0]["canonicalTopicCount"], 289)
+            self.assertEqual(streams, ["harmony_localizations"])
+            streams.clear()
+            detail = self.client.get("/english/kjv/topic/0250").get_json()
+            self.assertEqual(detail["id"], "250")
+            self.assertEqual(detail["name"], "250")
+            self.assertEqual(streams, [])
+
+        # A legacy pointer can lack a stored count and use padded name IDs.
+        store["harmony/canonical"].pop("activeRevision")
+        store["harmony/canonical"]["topicCount"] = 0
+        store["harmony_localizations/english"].pop("activeRevision")
+        store["harmony_localization_revisions/en/topics/0250"] = {"name": "Legacy spelling"}
+        catalog = self.client.get("/topic-languages").get_json()
+        self.assertEqual(catalog["languages"][0]["canonicalTopicCount"], 289)
+        self.assertEqual(self.client.get("/english/kjv/topic/250").get_json()["name"], "Legacy spelling")
 
     def test_topic_language_is_independent_from_bible_query(self):
         response = self.client.get(

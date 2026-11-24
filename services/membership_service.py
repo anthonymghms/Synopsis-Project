@@ -155,29 +155,32 @@ def access_payload(uid, resolved, *, now=None, disabled=False):
             "suggestedGuestExpiresOn": suggested, "suggestedSubscriptionExpiresOn": suggested}
 
 
-def get_account_access(identity, *, db=None, get_user=None, now=None):
+def get_account_access(identity, *, db=None, get_user=None, now=None, revocation_checked=False):
     database = db if db is not None else firestore_client()
     moment = now or utc_now()
     uid = identity["uid"]
-    # Check Auth on every access request, including initialized memberships.
-    # This prevents disabled/deleted accounts using an otherwise valid role.
-    user = (get_user or auth.get_user)(uid)
+    lookup_user = get_user or auth.get_user
     member_ref = database.collection("memberships").document(uid)
     member_snapshot = member_ref.get()
     member = snapshot_data(member_snapshot)
     if member is not None:
         role, source = effective_assigned_role({}, {}, member)
-        return access_payload(uid, {**member, "role": role, "roleSource": source}, now=moment, disabled=bool(user.disabled))
+        # verify_identity(check_revoked=True) has already checked the current
+        # Firebase Auth user for deletion, disabling and revocation on this request.
+        disabled = False if revocation_checked else bool(lookup_user(uid).disabled)
+        return access_payload(uid, {**member, "role": role, "roleSource": source}, now=moment, disabled=disabled)
+    # Bootstrap needs the current Auth creation time and stored claims.
+    user = lookup_user(uid)
     policy = initialize_membership_policy(db=database, now=moment)
     profile_ref = database.collection("users").document(uid)
 
     @firestore.transactional
     def initialize(transaction):
         current = snapshot_data(member_ref.get(transaction=transaction))
-        profile = snapshot_data(profile_ref.get(transaction=transaction)) or {}
         if current is not None:
             role, source = effective_assigned_role({}, {}, current)
             return {**current, "role": role, "roleSource": source}
+        profile = snapshot_data(profile_ref.get(transaction=transaction)) or {}
         # Auth's current claims are used for initialization, not a stale ID token.
         resolved = resolved_membership(profile, user.custom_claims or {}, None,
                                        created_at=auth_creation_time(user), policy=policy, now=moment)
@@ -194,7 +197,7 @@ def get_account_access(identity, *, db=None, get_user=None, now=None):
 
 def verify_reader_authorization(authorization_header, *, verify_token=auth.verify_id_token, db=None, get_user=None, now=None):
     identity = verify_identity(authorization_header, verify_token=verify_token)
-    access = get_account_access(identity, db=db, get_user=get_user, now=now)
+    access = get_account_access(identity, db=db, get_user=get_user, now=now, revocation_checked=True)
     if not access["canRead"]:
         if access["accountStatus"] != "active" or access["accessStatus"] == "disabled":
             code, message = "account_access_denied", "This account does not have access. Contact an administrator."

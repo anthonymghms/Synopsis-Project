@@ -104,7 +104,7 @@ void main() {
         selectedTypeIds: const {'teaching', 'journey'},
       );
       final table = Uri(
-        path: '/',
+        path: '/topics',
         queryParameters: {
           ...tableState.toQueryParameters(),
           ...harmonyViewQueryParameters(
@@ -116,6 +116,7 @@ void main() {
             sort: const GospelSortState(),
             columns: const ColumnVisibilityState(),
           ),
+          'tableLocale': 'arabic',
           'bibleLanguage': 'french',
           'language': 'french',
           'version': 'fixture-french',
@@ -133,7 +134,8 @@ void main() {
         final backward = BrowserRouteHistory.changes.first;
         html.window.history.back();
         final restored = await backward.timeout(const Duration(seconds: 10));
-        expect(restored.path, '/');
+        expect(restored.path, '/topics');
+        expect(restored.queryParameters['tableLocale'], 'arabic');
         expect(
           DatasetViewState.fromQueryParameters(restored.queryParameters),
           tableState,

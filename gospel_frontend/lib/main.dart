@@ -10,21 +10,26 @@ import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/profile_setup_screen.dart';
 import 'package:gospel_frontend/user_profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'api_config.dart';
+import 'bible_catalog_source.dart';
 import 'firebase_options.dart';
 import 'interface_translations.dart';
 import 'native_language_names.dart';
 import 'reader_language_route.dart';
+import 'reader_presentation.dart';
+import 'study_theme.dart';
 import 'account_access.dart';
 import 'user_activity.dart';
 import 'settings_screen.dart';
 export 'interface_translations.dart';
+export 'api_config.dart' show apiBaseUrl;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:gospel_frontend/utils/format_verse_ref.dart';
 import 'package:gospel_frontend/widgets/verse_ref_text.dart';
 import 'package:gospel_frontend/gospel_filter.dart';
-import 'package:gospel_frontend/admin_portal.dart';
+import 'admin_portal.dart' if (dart.library.js_interop) 'admin_portal_web.dart';
 import 'package:gospel_frontend/catalog_events.dart';
 import 'package:gospel_frontend/admin_access.dart';
 import 'package:gospel_frontend/admin_content_scope.dart';
@@ -36,26 +41,13 @@ import 'package:gospel_frontend/topic_language_catalog.dart';
 
 // ---- CONFIGURATION ----
 part 'dataset_reader.dart';
+part 'study_home.dart';
 
-const apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8010',
-);
 const defaultLanguage = "english";
 // Default version key used when fetching topics and verses
 const defaultVersion = "kjv";
 const arabicVersionWithDiacritics = 'Van Dyke';
 const arabicVersionWithoutDiacritics = 'Van Dyke-';
-const _versionFieldCandidates = [
-  'versions',
-  'availableVersions',
-  'available_versions',
-  'versionList',
-  'version_list',
-  'supportedVersions',
-  'supported_versions',
-];
-
 const double _zoomMin = 0.8;
 const double _zoomMax = 1.6;
 const double _zoomDefault = 1.0;
@@ -170,7 +162,7 @@ class LanguageSelectionController {
 
   void update(String code) {
     final normalized = code.trim();
-    if (normalized.isEmpty) {
+    if (normalized.isEmpty || _languageCode == normalized) {
       return;
     }
     _languageCode = normalized;
@@ -248,17 +240,11 @@ class MenuLanguageController {
       _prefs = prefs;
       final stored = prefs.getString('selected_menu_language_code');
       final fallback = fallbackLanguageCode?.trim();
-      _languageCode.value = fallback?.isNotEmpty == true
-          ? fallback!.toLowerCase()
-          : (stored?.trim().isNotEmpty == true
-                ? stored!.trim().toLowerCase()
+      _languageCode.value = stored?.trim().isNotEmpty == true
+          ? stored!.trim().toLowerCase()
+          : (fallback?.isNotEmpty == true
+                ? fallback!.toLowerCase()
                 : defaultLanguage);
-      if (fallback?.isNotEmpty == true) {
-        await prefs.setString(
-          'selected_menu_language_code',
-          _languageCode.value,
-        );
-      }
     } catch (_) {
       final fallback = fallbackLanguageCode?.trim();
       _languageCode.value = fallback?.isNotEmpty == true
@@ -465,16 +451,26 @@ Future<List<TopicLanguageOption>>? _topicLanguageOptionsLoadFuture;
 
 int _cachedCatalogRevision = catalogRevision.value;
 int _cachedAccessRevision = accountAccess.revision;
+String? _cachedCatalogUid = accountAccess.uid;
 
 void _invalidateChangedCatalogCaches() {
   if (_cachedCatalogRevision == catalogRevision.value &&
-      _cachedAccessRevision == accountAccess.revision) {
+      _cachedAccessRevision == accountAccess.revision &&
+      _cachedCatalogUid == accountAccess.uid) {
     return;
+  }
+  if (_cachedCatalogUid != accountAccess.uid) {
+    _cachedCatalogUid = accountAccess.uid;
+    _supportedLanguages = List.of(kBaseLanguageOptions);
+    _supportedTopicLanguages = List.of(bundledTopicLanguages);
+    clearUploadedInterfaceTranslations();
   }
   _cachedCatalogRevision = catalogRevision.value;
   _cachedAccessRevision = accountAccess.revision;
   _languageOptionsLoadFuture = null;
   _topicLanguageOptionsLoadFuture = null;
+  _primaryCatalogFuture = null;
+  _primaryLanguageCatalogsLoaded = false;
   _ApiCache.clear();
   _ReferenceHoverTextState._previewCache.clear();
 }
@@ -526,25 +522,27 @@ Future<List<TopicLanguageOption>> _loadTopicLanguages() {
   _invalidateChangedCatalogCaches();
   final cached = _topicLanguageOptionsLoadFuture;
   if (cached != null) return cached;
-  final future = TopicLanguageCatalog(baseUrl: apiBaseUrl).load();
+  final scope = (accountAccess.revision, catalogRevision.value);
+  final future = TopicLanguageCatalog(baseUrl: apiBaseUrl).load().then((
+    options,
+  ) {
+    final merged = [
+      ...options,
+      for (final bundled in bundledTopicLanguages)
+        if (!options.any((option) => option.code == bundled.code)) bundled,
+    ];
+    if (scope == (accountAccess.revision, catalogRevision.value)) {
+      _supportedTopicLanguages = merged;
+    }
+    return merged;
+  });
   _topicLanguageOptionsLoadFuture = future;
-  return future
-      .then((options) {
-        final merged = List<TopicLanguageOption>.from(options);
-        for (final bundled in bundledTopicLanguages) {
-          if (!merged.any((option) => option.code == bundled.code)) {
-            merged.add(bundled);
-          }
-        }
-        _supportedTopicLanguages = merged;
-        return merged;
-      })
-      .catchError((Object error) {
-        if (identical(_topicLanguageOptionsLoadFuture, future)) {
-          _topicLanguageOptionsLoadFuture = null;
-        }
-        throw error;
-      });
+  return future.catchError((Object error, StackTrace stack) {
+    if (identical(_topicLanguageOptionsLoadFuture, future)) {
+      _topicLanguageOptionsLoadFuture = null;
+    }
+    Error.throwWithStackTrace(error, stack);
+  });
 }
 
 /// Table locales are independent of the Bible catalog and other tables.
@@ -564,42 +562,82 @@ TopicLanguageOption resolveDatasetTopicLanguage(String datasetId, String code) {
   });
 }
 
-LanguageOption _interfaceLanguageForTopic(TopicLanguageOption topic) =>
-    _languageOptionForCode(topic.code).copyWith(
-      code: topic.code,
-      label: topic.label,
-      direction: topic.direction,
-      localizedGospelNames: topic.gospelNames,
-      ui: LocalizedUiLabels.forLanguage(topic.code, {
-        ...topic.interfaceTranslations,
-        'subjectsHeader': topic.subjectsLabel,
-        for (var i = 0; i < orderedGospels.length; i++)
-          'gospel${orderedGospels[i]}': topic.gospelNames[i],
-      }),
-    );
+// A table can ask for the same localized labels in every visible row.
+// Reuse the merged dictionary until either catalog supplies a replacement.
+final _interfaceOptions =
+    Expando<({LanguageOption bible, int revision, LanguageOption option})>();
+
+LanguageOption _interfaceLanguageForTopic(TopicLanguageOption topic) {
+  final bible = _languageOptionForCode(topic.code);
+  final cached = _interfaceOptions[topic];
+  if (cached != null &&
+      identical(cached.bible, bible) &&
+      cached.revision == interfaceTranslationRevision) {
+    return cached.option;
+  }
+  final option = bible.copyWith(
+    code: topic.code,
+    label: topic.label,
+    direction: topic.direction,
+    localizedGospelNames: topic.gospelNames,
+    ui: LocalizedUiLabels.forLanguage(topic.code, {
+      ...topic.interfaceTranslations,
+      'subjectsHeader': topic.subjectsLabel,
+      for (var i = 0; i < orderedGospels.length; i++)
+        'gospel${orderedGospels[i]}': topic.gospelNames[i],
+    }),
+  );
+  _interfaceOptions[topic] = (
+    bible: bible,
+    revision: interfaceTranslationRevision,
+    option: option,
+  );
+  return option;
+}
 
 Future<List<LanguageOption>>? _languageOptionsLoadFuture;
 bool _primaryLanguageCatalogsLoaded = false;
 
+Future<void>? _primaryCatalogFuture;
+
 Future<void> loadPrimaryLanguageCatalogs({
   Future<List<LanguageOption>> Function()? bibleLoader,
   Future<List<TopicLanguageOption>> Function()? topicLoader,
-}) async {
-  final catalogs = await Future.wait<Object>([
-    (bibleLoader ?? _loadLanguagesFromFirestore)(),
-    (topicLoader ?? _loadTopicLanguages)(),
-  ]);
-  // Reconcile the selection only after both catalogs are available. A slower
-  // topic request must not reset an imported Bible language to English.
-  _supportedLanguages = catalogs[0] as List<LanguageOption>;
-  _supportedTopicLanguages = catalogs[1] as List<TopicLanguageOption>;
-  for (final language in _supportedTopicLanguages) {
-    registerInterfaceTranslations(
-      language.code,
-      language.interfaceTranslations,
-    );
-  }
-  _primaryLanguageCatalogsLoaded = true;
+}) {
+  _invalidateChangedCatalogCaches();
+  final shared = bibleLoader == null && topicLoader == null;
+  final cached = _primaryCatalogFuture;
+  if (shared && cached != null) return cached;
+  final scope = (accountAccess.revision, catalogRevision.value);
+  final uid = accountAccess.uid;
+  final future =
+      Future.wait<Object>([
+        (bibleLoader ?? _loadLanguagesFromFirestore)(),
+        (topicLoader ?? _loadTopicLanguages)(),
+      ]).then<void>((catalogs) async {
+        if (shared && scope != (accountAccess.revision, catalogRevision.value)) {
+          // Imports and membership changes can invalidate an in-flight load.
+          if (accountAccess.uid == uid && accountAccess.canRead) {
+            return loadPrimaryLanguageCatalogs();
+          }
+          return;
+        }
+        _supportedLanguages = catalogs[0] as List<LanguageOption>;
+        _supportedTopicLanguages = catalogs[1] as List<TopicLanguageOption>;
+        for (final language in _supportedTopicLanguages) {
+          registerInterfaceTranslations(
+            language.code,
+            language.interfaceTranslations,
+          );
+        }
+        _primaryLanguageCatalogsLoaded = true;
+      });
+  if (!shared) return future;
+  _primaryCatalogFuture = future;
+  return future.catchError((Object error, StackTrace stack) {
+    if (identical(_primaryCatalogFuture, future)) _primaryCatalogFuture = null;
+    Error.throwWithStackTrace(error, stack);
+  });
 }
 
 final Map<String, LanguageOption> _baseLanguageLookup = {
@@ -662,116 +700,6 @@ String _versionLabel(String languageId, String versionId) {
   return _formatLanguageLabel(normalizedVersion);
 }
 
-void _collectVersionId(dynamic value, Set<String> versionIds) {
-  final id = value?.toString().trim();
-  if (id != null && id.isNotEmpty) {
-    versionIds.add(id);
-  }
-}
-
-void _collectVersionIdsFromField(dynamic field, Set<String> versionIds) {
-  if (field is Iterable) {
-    for (final entry in field) {
-      _collectVersionId(entry, versionIds);
-    }
-  } else if (field is Map) {
-    for (final entry in field.entries) {
-      _collectVersionId(entry.key, versionIds);
-    }
-  }
-}
-
-void _collectVersionIdsFromData(
-  Map<String, dynamic> data,
-  Set<String> versionIds,
-) {
-  for (final candidate in _versionFieldCandidates) {
-    if (data.containsKey(candidate)) {
-      _collectVersionIdsFromField(data[candidate], versionIds);
-    }
-  }
-}
-
-Future<void> _collectVersionManifestDocs(
-  DocumentReference<Map<String, dynamic>> docRef,
-  Set<String> versionIds,
-) async {
-  const manifestPaths = [
-    ['versions', 'manifest'],
-    ['versions', '_index'],
-    ['metadata', 'versions'],
-    ['meta', 'versions'],
-    ['version_manifest', 'index'],
-    ['version_manifest', 'all'],
-  ];
-
-  await Future.wait<void>(
-    manifestPaths.map((path) async {
-      try {
-        final snapshot = await docRef.collection(path[0]).doc(path[1]).get();
-        if (snapshot.exists) {
-          final data = snapshot.data() ?? {};
-          _collectVersionIdsFromData(data, versionIds);
-        }
-      } catch (_) {
-        // A missing legacy layout must not hide versions in another source.
-      }
-    }),
-  );
-}
-
-Future<List<BibleVersion>> _loadVersionsForLanguage(
-  DocumentReference<Map<String, dynamic>> docRef,
-  Map<String, dynamic> languageData,
-) async {
-  final languageId = docRef.id;
-  final Set<String> versionIds = {};
-  final Map<String, String> versionLabels = <String, String>{};
-
-  // The language query already returned this document. Fetch every optional
-  // metadata layout concurrently so distant readers do not pay a round trip
-  // for each historical layout before the login gate can open.
-  _collectVersionIdsFromData(languageData, versionIds);
-  await Future.wait<void>([
-    _collectVersionManifestDocs(docRef, versionIds),
-    () async {
-      try {
-        final versionsCollection = await docRef.collection('versions').get();
-        for (final versionDoc in versionsCollection.docs) {
-          final id = versionDoc.id.trim();
-          if (id.isNotEmpty) {
-            versionIds.add(id);
-          }
-          final versionData = versionDoc.data();
-          final explicitLabel =
-              versionData['label']?.toString().trim() ??
-              versionData['name']?.toString().trim() ??
-              '';
-          if (id.isNotEmpty && explicitLabel.isNotEmpty) {
-            versionLabels[id] = explicitLabel;
-          }
-          _collectVersionIdsFromData(versionData, versionIds);
-        }
-      } catch (_) {
-        // Some deployments expose versions on the language document only.
-      }
-    }(),
-  ]);
-
-  final versions = versionIds
-      .map(
-        (id) => BibleVersion(
-          id: id,
-          label: versionLabels[id] ?? _versionLabel(languageId, id),
-        ),
-      )
-      .toList();
-  versions.sort(
-    (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
-  );
-  return versions;
-}
-
 Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
   _invalidateChangedCatalogCaches();
   final cached = _languageOptionsLoadFuture;
@@ -795,73 +723,64 @@ Future<List<LanguageOption>> _loadLanguagesFromFirestore() async {
 Future<List<LanguageOption>> loadBibleLanguageCatalog({
   FirebaseFirestore? firestore,
 }) async {
-  final snapshot = await (firestore ?? FirebaseFirestore.instance)
-      .collection('bibles')
-      .get();
-  if (snapshot.docs.isEmpty) {
-    return kBaseLanguageOptions;
-  }
-
-  final documents = snapshot.docs
-      .where((doc) => doc.id.trim().isNotEmpty)
-      .toList(growable: false);
+  final documents = await readBibleCatalog(firestore: firestore);
+  if (documents.isEmpty) return kBaseLanguageOptions;
   final options = <LanguageOption>[];
-  // At most three languages (seven small lookups each) run together. This
-  // removes the serial waterfall without flooding Firestore after many imports.
-  for (var offset = 0; offset < documents.length; offset += 3) {
-    options.addAll(
-      await Future.wait<LanguageOption>(
-        documents.skip(offset).take(3).map((doc) async {
-          final languageId = doc.id.trim();
-          final normalizedCode = languageId.toLowerCase();
-          final baseOption = _baseLanguageLookup[normalizedCode];
-          final data = doc.data();
-          final labelFromData = (data['label'] as String?)?.trim();
-          final directionField = (data['direction'] as String?)
-              ?.trim()
-              .toLowerCase();
-          final rawGospels = data['gospels'];
-          final localizedGospelNames = rawGospels is Map
-              ? <String>[
-                  for (final gospel in orderedGospels)
-                    rawGospels[gospel]?.toString().trim() ?? '',
-                ]
-              : const <String>[];
-          final versions = await _loadVersionsForLanguage(doc.reference, data);
+  for (final doc in documents) {
+    final languageId = doc.id;
+    final normalizedCode = languageId.toLowerCase();
+    final baseOption = _baseLanguageLookup[normalizedCode];
+    final data = doc.data;
+    final labelFromData = (data['label'] as String?)?.trim();
+    final directionField = (data['direction'] as String?)?.trim().toLowerCase();
+    final rawGospels = data['gospels'];
+    final localizedGospelNames = rawGospels is Map
+        ? <String>[
+            for (final gospel in orderedGospels)
+              rawGospels[gospel]?.toString().trim() ?? '',
+          ]
+        : const <String>[];
+    final versions = [
+      for (final entry in doc.versions.entries)
+        BibleVersion(
+          id: entry.key,
+          label: entry.value.isEmpty
+              ? _versionLabel(languageId, entry.key)
+              : entry.value,
+        ),
+    ]..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    final template =
+        baseOption ?? _fallbackLanguageOption(languageId, versions);
+    final sanitizedVersions = versions.isNotEmpty
+        ? versions
+        : template.versions;
+    final apiVersion = sanitizedVersions.isNotEmpty
+        ? sanitizedVersions.first.id
+        : template.apiVersion;
+    final direction = directionField == 'rtl'
+        ? TextDirection.rtl
+        : directionField == 'ltr'
+        ? TextDirection.ltr
+        : template.direction;
 
-          final template =
-              baseOption ?? _fallbackLanguageOption(languageId, versions);
-          final sanitizedVersions = versions.isNotEmpty
-              ? versions
-              : template.versions;
-          final apiVersion = sanitizedVersions.isNotEmpty
-              ? sanitizedVersions.first.id
-              : template.apiVersion;
-          final direction = directionField == 'rtl'
-              ? TextDirection.rtl
-              : directionField == 'ltr'
-              ? TextDirection.ltr
-              : template.direction;
-
-          return template.copyWith(
-            code: normalizedCode,
-            label: nativeLanguageName(
-              normalizedCode,
-              labelFromData?.isNotEmpty == true
-                  ? labelFromData!
-                  : (baseOption?.label ?? _formatLanguageLabel(languageId)),
-            ),
-            apiLanguage: languageId,
-            apiVersion: apiVersion,
-            versions: sanitizedVersions,
-            direction: direction,
-            localizedGospelNames:
-                localizedGospelNames.length == 4 &&
-                    localizedGospelNames.every((name) => name.isNotEmpty)
-                ? localizedGospelNames
-                : template.localizedGospelNames,
-          );
-        }),
+    options.add(
+      template.copyWith(
+        code: normalizedCode,
+        label: nativeLanguageName(
+          normalizedCode,
+          labelFromData?.isNotEmpty == true
+              ? labelFromData!
+              : (baseOption?.label ?? _formatLanguageLabel(languageId)),
+        ),
+        apiLanguage: languageId,
+        apiVersion: apiVersion,
+        versions: sanitizedVersions,
+        direction: direction,
+        localizedGospelNames:
+            localizedGospelNames.length == 4 &&
+                localizedGospelNames.every((name) => name.isNotEmpty)
+            ? localizedGospelNames
+            : template.localizedGospelNames,
       ),
     );
   }
@@ -975,21 +894,29 @@ ReaderLanguages readerLanguagesForSelection(
   String datasetId = 'harmony',
   String? topicLanguage,
   String? menuLanguage,
+  String? tableLocale,
 }) {
   final id = normalizeDatasetId(datasetId);
   final available = id == 'harmony'
       ? _supportedTopicLanguages.map((option) => option.code)
       : _ApiCache.datasetMetadata[id]?.languages ?? const <String>[];
-  final locale = _matchingTableLanguage(bible.code, available);
+  final locale = _matchingTableLanguage(
+    tableLocale?.trim().isNotEmpty == true ? tableLocale!.trim() : bible.code,
+    available,
+  );
   return (bible: bible, topic: locale, menu: locale);
 }
 
 Future<ReaderLanguages> _readerLanguagesForDataset(
   LanguageOption bible,
-  String datasetId,
-) async {
+  String datasetId, {
+  String? tableLocale,
+}) async {
   final available = await _ApiCache.tableLanguageCodes(datasetId);
-  final locale = _matchingTableLanguage(bible.code, available);
+  final locale = _matchingTableLanguage(
+    tableLocale?.trim().isNotEmpty == true ? tableLocale!.trim() : bible.code,
+    available,
+  );
   return (bible: bible, topic: locale, menu: locale);
 }
 
@@ -1009,31 +936,68 @@ class DatasetReaderLanguageRoute extends StatefulWidget {
 
 class _DatasetReaderLanguageRouteState
     extends State<DatasetReaderLanguageRoute> {
-  late Future<ReaderLanguages> _selection = _resolve();
-  Future<ReaderLanguages> _resolve() => _readerLanguagesForDataset(
-    resolveReaderLanguages(widget.uri).bible,
-    normalizeDatasetId(widget.uri.queryParameters['dataset']),
-  );
+  ReaderLanguages? _known;
+  Future<ReaderLanguages>? _pending;
+
   @override
-  void didUpdateWidget(DatasetReaderLanguageRoute oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.uri != widget.uri) _selection = _resolve();
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  void _resolve() {
+    _invalidateChangedCatalogCaches();
+    final selection = resolveReaderLanguages(widget.uri);
+    final dataset = normalizeDatasetId(widget.uri.queryParameters['dataset']);
+    final locale = widget.uri.queryParameters['tableLocale'];
+    final requested = locale?.trim().isNotEmpty == true
+        ? locale!.trim()
+        : selection.bible.code;
+    final uid = accountAccess.uid;
+    final known = dataset == 'harmony'
+        ? _primaryLanguageCatalogsLoaded ||
+              bundledTopicLanguages.any((option) => option.code == requested)
+        : _ApiCache.datasetMetadata.containsKey(dataset);
+    if (known && uid != null && accountAccess.hasFreshAccessFor(uid)) {
+      _known = selection;
+      _pending = null;
+    } else {
+      _known = null;
+      _pending = _readerLanguagesForDataset(
+        selection.bible,
+        dataset,
+        tableLocale: locale,
+      );
+    }
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<ReaderLanguages>(
-    future: _selection,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
-      }
-      final selection = snapshot.data ?? resolveReaderLanguages(widget.uri);
-      return ReaderLanguageRoute(
-        onActivated: () => activateReaderLanguages(selection),
-        child: widget.builder(selection),
-      );
-    },
+  void didUpdateWidget(DatasetReaderLanguageRoute oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri) _resolve();
+  }
+
+  Widget _reader(ReaderLanguages selection) => ReaderLanguageRoute(
+    onActivated: () => activateReaderLanguages(selection),
+    child: widget.builder(selection),
   );
+
+  @override
+  Widget build(BuildContext context) {
+    final known = _known;
+    if (known != null) return _reader(known);
+    return FutureBuilder<ReaderLanguages>(
+      future: _pending,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return _reader(snapshot.data ?? resolveReaderLanguages(widget.uri));
+      },
+    );
+  }
 }
 
 /// Applies an explicit user selection or an active route, never during build.
@@ -1051,6 +1015,7 @@ ReaderLanguages resolveReaderLanguages(Uri uri) {
   return readerLanguagesForSelection(
     bible,
     datasetId: normalizeDatasetId(uri.queryParameters['dataset']),
+    tableLocale: uri.queryParameters['tableLocale'],
   );
 }
 
@@ -1059,8 +1024,13 @@ Map<String, String> readerLanguageQueryParameters({
   String datasetId = 'harmony',
   String? topicLanguage,
   String? menuLanguage,
+  String? tableLocale,
 }) {
-  final selection = readerLanguagesForSelection(bible, datasetId: datasetId);
+  final selection = readerLanguagesForSelection(
+    bible,
+    datasetId: datasetId,
+    tableLocale: tableLocale,
+  );
   return <String, String>{
     'menuLanguage': selection.menu,
     'topicLanguage': selection.topic,
@@ -1092,7 +1062,7 @@ Uri _mainTableUri({
       columns: columnVisibility,
     ),
   };
-  return Uri(path: '/', queryParameters: queryParameters);
+  return Uri(path: '/topics', queryParameters: queryParameters);
 }
 
 Uri _topicUri({
@@ -1108,6 +1078,7 @@ Uri _topicUri({
   final queryParameters = {
     ..._datasetRouteParameters(context, datasetId: topic.datasetId),
     ...readerLanguageQueryParameters(
+      tableLocale: _datasetRouteParameters(context)['tableLocale'],
       bible: language,
       datasetId: topic.datasetId,
       topicLanguage: topicLanguage,
@@ -1843,6 +1814,21 @@ class HarmonyTopicProcessingResult {
   int get visibleTopicCount => topics.length;
 }
 
+Iterable<Topic> _matchingTableTopics(
+  Iterable<Topic> topics,
+  GospelFilterState filter,
+  ColumnVisibilityState columns,
+  Set<String> types,
+) => topics.where(
+  (topic) =>
+      (types.isEmpty ||
+          types.contains(
+            topic.typeId.isEmpty ? unclassifiedTypeId : topic.typeId,
+          )) &&
+      matchesAdvancedFilter(topic, filter) &&
+      (topic.gospelPresenceMask & columns.visibleMask) != 0,
+);
+
 /// Canonical main-table pipeline: advanced filter, visible-column row pruning,
 /// canonical/default or Gospel chronology sorting, and displayed counts.
 HarmonyTopicProcessingResult processHarmonyTopics(
@@ -1855,17 +1841,12 @@ HarmonyTopicProcessingResult processHarmonyTopics(
   final sourceIndexes = <Topic, int>{
     for (var index = 0; index < topics.length; index++) topics[index]: index,
   };
-  final typed = selectedTypeIds.isEmpty
-      ? topics
-      : topics
-            .where(
-              (topic) => selectedTypeIds.contains(
-                topic.typeId.isEmpty ? unclassifiedTypeId : topic.typeId,
-              ),
-            )
-            .toList();
-  final filtered = applyAdvancedFilter(typed, filter);
-  final visible = removeRowsWithoutVisibleReferences(filtered, columns);
+  final visible = _matchingTableTopics(
+    topics,
+    filter,
+    columns,
+    selectedTypeIds,
+  );
   final sorted = sortTopics(visible, sort, sourceIndexes: sourceIndexes);
   return HarmonyTopicProcessingResult(
     topics: List<Topic>.unmodifiable(sorted),
@@ -1948,23 +1929,23 @@ String _numberedTopicTitle(
 String _zoomLabel(double value) => '${(value * 100).round()}%';
 
 ButtonStyle _toolbarOutlinedStyle(BuildContext context) {
+  final compact = MediaQuery.sizeOf(context).width < StudyTheme.compact;
   return OutlinedButton.styleFrom(
-    minimumSize: const Size(0, 36),
-    padding: const EdgeInsetsDirectional.symmetric(horizontal: 12, vertical: 8),
+    minimumSize: Size(44, compact ? 44 : 38),
+    padding: const EdgeInsetsDirectional.symmetric(horizontal: 14, vertical: 8),
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    visualDensity: VisualDensity.compact,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-    side: BorderSide(color: Theme.of(context).colorScheme.outline),
+    visualDensity: VisualDensity.standard,
+    foregroundColor: StudyTheme.plum,
+    backgroundColor: StudyTheme.paper,
+    side: const BorderSide(color: StudyTheme.line),
   );
 }
 
 ButtonStyle _toolbarFilledStyle(BuildContext context) {
-  return FilledButton.styleFrom(
-    minimumSize: const Size(0, 36),
-    padding: const EdgeInsetsDirectional.symmetric(horizontal: 14, vertical: 8),
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    visualDensity: VisualDensity.compact,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+  return _toolbarOutlinedStyle(context).copyWith(
+    backgroundColor: const WidgetStatePropertyAll(StudyTheme.plum),
+    foregroundColor: const WidgetStatePropertyAll(Colors.white),
+    side: const WidgetStatePropertyAll(BorderSide.none),
   );
 }
 
@@ -2315,6 +2296,9 @@ class AppToolbar extends StatefulWidget {
     this.onDiacriticsToggled,
     this.onTranslationChanged,
     this.maxContentWidth = _maxPageContentWidth,
+    this.controlsAlignment = WrapAlignment.center,
+    this.compactToolsLabel,
+    this.statusActions = const [],
   });
 
   final String? title;
@@ -2337,6 +2321,9 @@ class AppToolbar extends StatefulWidget {
   final VoidCallback? onDiacriticsToggled;
   final ToolbarTranslationChanged? onTranslationChanged;
   final double maxContentWidth;
+  final WrapAlignment controlsAlignment;
+  final String? compactToolsLabel;
+  final List<Widget> statusActions;
 
   @override
   State<AppToolbar> createState() => _AppToolbarState();
@@ -2346,6 +2333,7 @@ class _AppToolbarState extends State<AppToolbar> {
   final GlobalKey<PopupMenuButtonState<String>> _versionMenuKey =
       GlobalKey<PopupMenuButtonState<String>>();
   LanguageOption? _versionGuidanceLanguage;
+  bool _showCompactTools = false;
 
   LanguageOption get _versionLanguage =>
       _versionGuidanceLanguage ?? widget.language;
@@ -2431,7 +2419,12 @@ class _AppToolbarState extends State<AppToolbar> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _buildControls(context, constraints.maxWidth),
+  );
+
+  Widget _buildControls(BuildContext context, double availableWidth) {
     final titleText = widget.title?.trim() ?? '';
     final menuLanguage = MenuLanguageScope.of(context);
     final resolvedTitle =
@@ -2445,8 +2438,7 @@ class _AppToolbarState extends State<AppToolbar> {
                 ),
                 textAlign: TextAlign.center,
               ));
-    final controls = <Widget>[
-      if (widget.primaryActionsFirst) ...widget.primaryActions,
+    final languageControls = <Widget>[
       if (widget.showLanguageSelector)
         _buildToolbarLanguageButton(
           context: context,
@@ -2477,8 +2469,28 @@ class _AppToolbarState extends State<AppToolbar> {
               widget.onDiacriticsToggled != null,
           onPressed: widget.onDiacriticsToggled,
         ),
-      if (!widget.primaryActionsFirst) ...widget.primaryActions,
-      ...widget.trailingActions,
+    ];
+    final compactTools =
+        widget.compactToolsLabel != null && availableWidth < StudyTheme.compact;
+    final controls = <Widget>[
+      if (widget.primaryActionsFirst || compactTools) ...widget.primaryActions,
+      if (compactTools)
+        OutlinedButton.icon(
+          key: const ValueKey('compact-table-tools'),
+          onPressed: () =>
+              setState(() => _showCompactTools = !_showCompactTools),
+          style: _toolbarOutlinedStyle(context),
+          icon: Icon(
+            _showCompactTools ? Icons.expand_less : Icons.expand_more,
+            size: 18,
+          ),
+          label: Text(widget.compactToolsLabel!),
+        ),
+      if (!compactTools || _showCompactTools) ...languageControls,
+      if (!widget.primaryActionsFirst && !compactTools)
+        ...widget.primaryActions,
+      if (!compactTools || _showCompactTools) ...widget.trailingActions,
+      ...widget.statusActions,
     ].where((widget) => widget is! SizedBox).toList();
 
     return Directionality(
@@ -2487,7 +2499,7 @@ class _AppToolbarState extends State<AppToolbar> {
         maxWidth: widget.maxContentWidth,
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
             if (resolvedTitle != null) ...[
@@ -2496,7 +2508,7 @@ class _AppToolbarState extends State<AppToolbar> {
             ],
             if (controls.isNotEmpty)
               Wrap(
-                alignment: WrapAlignment.center,
+                alignment: widget.controlsAlignment,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 textDirection: menuLanguage.direction,
                 spacing: 6,
@@ -2720,26 +2732,6 @@ String _localizedResultsLabel(LanguageOption uiLanguage, int count) {
       ? toArabicIndicDigits(count.toString())
       : count.toString();
   return '$number ${uiLanguage.ui.results}';
-}
-
-Widget _buildHarmonyResultCountChip({
-  required BuildContext context,
-  required LanguageOption uiLanguage,
-  required int count,
-}) {
-  final theme = Theme.of(context);
-  return Chip(
-    key: const ValueKey<String>('visible-topic-count'),
-    visualDensity: VisualDensity.compact,
-    avatar: Icon(
-      Icons.format_list_numbered,
-      size: 18,
-      color: theme.colorScheme.primary,
-    ),
-    label: Text(_localizedResultsLabel(uiLanguage, count)),
-    side: BorderSide(color: theme.colorScheme.outlineVariant),
-    backgroundColor: theme.colorScheme.surface,
-  );
 }
 
 class DraggableDialogShell extends StatefulWidget {
@@ -3026,9 +3018,9 @@ class HarmonyFilterButton extends StatelessWidget {
         },
       );
     }
-    return OutlinedButton.icon(
+    return FilledButton.icon(
       onPressed: () => _showFilterDialog(context),
-      style: _toolbarOutlinedStyle(context),
+      style: _toolbarFilledStyle(context),
       icon: icon,
       label: Text(labels.filter, overflow: TextOverflow.ellipsis),
     );
@@ -3757,13 +3749,12 @@ class _HarmonySetFilterDialogState extends State<_HarmonySetFilterDialog> {
     _types = Set.of(widget.selectedTypeIds);
   }
 
-  int get _finalCount => processHarmonyTopics(
+  int get _finalCount => _matchingTableTopics(
     widget.topics,
     _state,
-    const GospelSortState(),
     widget.columns,
-    selectedTypeIds: _types,
-  ).visibleTopicCount;
+    _types,
+  ).length;
 
   void _update(GospelFilterState state) {
     if (state == _state) {
@@ -4385,40 +4376,63 @@ Widget _buildGlobalTopNavigation({
 }) {
   final menuLanguage = MenuLanguageScope.of(context);
   final labels = menuLanguage.ui;
+  String tableDestination() => _mainTableUri(
+    language: contentLanguage,
+    version: contentVersion,
+    topicLanguage: TopicLanguageSelectionController.instance.languageCode,
+    menuLanguage: MenuLanguageController.instance.languageCode,
+    datasetQuery: _datasetRouteParameters(context),
+    filterState: GospelFilterState.fromQueryParameters(
+      _datasetRouteParameters(context),
+    ),
+    sortState: GospelSortState.fromQueryValue(
+      _datasetRouteParameters(context)['sort'],
+    ),
+    columnVisibility: ColumnVisibilityState.fromQueryValue(
+      _datasetRouteParameters(context)['columns'],
+    ),
+  ).toString();
+  final small =
+      MediaQuery.sizeOf(context).width < StudyTheme.compact ||
+      MediaQuery.textScalerOf(context).scale(16) > 23;
+  void home() {
+    final navigator = Navigator.of(context);
+    var foundHome = false;
+    navigator.popUntil((route) {
+      foundHome = route.settings.name == '/';
+      return foundHome || route.isFirst;
+    });
+    if (!foundHome) navigator.pushReplacementNamed('/');
+  }
+
   return Directionality(
     textDirection: menuLanguage.direction,
-    child: Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 6,
-      runSpacing: 4,
+    child: Row(
       children: [
-        if (showBackToMainTable)
-          TextButton.icon(
-            onPressed: () async {
-              if (!context.mounted) return;
-              Navigator.of(context).pushNamed(
-                _mainTableUri(
-                  language: contentLanguage,
-                  version: contentVersion,
-                  topicLanguage:
-                      TopicLanguageSelectionController.instance.languageCode,
-                  menuLanguage: MenuLanguageController.instance.languageCode,
-                  datasetQuery: _datasetRouteParameters(context),
-                  filterState: GospelFilterState.fromQueryParameters(
-                    _datasetRouteParameters(context),
-                  ),
-                  sortState: GospelSortState.fromQueryValue(
-                    _datasetRouteParameters(context)['sort'],
-                  ),
-                  columnVisibility: ColumnVisibilityState.fromQueryValue(
-                    _datasetRouteParameters(context)['columns'],
-                  ),
-                ).toString(),
-              );
-            },
-            icon: const Icon(Icons.table_chart_outlined, size: 18),
-            label: Text(labels.backToMainTable),
+        Flexible(
+          child: StudyBrand(
+            name: labels.text('home.brand'),
+            onPressed: home,
+            small: small,
           ),
+        ),
+        if (showBackToMainTable) ...[
+          const SizedBox(width: 8),
+          if (small)
+            IconButton(
+              tooltip: labels.backToMainTable,
+              icon: const Icon(Icons.table_rows_outlined),
+              onPressed: () =>
+                  Navigator.of(context).pushNamed(tableDestination()),
+            )
+          else
+            TextButton.icon(
+              onPressed: () =>
+                  Navigator.of(context).pushNamed(tableDestination()),
+              icon: const Icon(Icons.table_rows_outlined, size: 18),
+              label: Text(labels.backToMainTable),
+            ),
+        ],
       ],
     ),
   );
@@ -4551,14 +4565,19 @@ int _compareBooks(String a, String b) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await LanguageSelectionController.instance.initialize();
-  await TopicLanguageSelectionController.instance.initialize();
-  await MenuLanguageController.instance.initialize(
-    fallbackLanguageCode:
-        TopicLanguageSelectionController.instance.languageCode,
-  );
-  await ZoomController.instance.initialize();
+  await Future.wait<void>([
+    Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    ).then<void>((_) {}),
+    LanguageSelectionController.instance.initialize(),
+    TopicLanguageSelectionController.instance.initialize().then(
+      (_) => MenuLanguageController.instance.initialize(
+        fallbackLanguageCode:
+            TopicLanguageSelectionController.instance.languageCode,
+      ),
+    ),
+    ZoomController.instance.initialize(),
+  ]);
   runApp(GospelApp());
 }
 
@@ -4597,15 +4616,21 @@ class _GospelAppState extends State<GospelApp> {
     final preferences = profile.preferences;
     ZoomController.instance.update(preferences.zoomLevel);
     final signature =
-        '${preferences.menuLanguage}:${preferences.topicLanguage}:${preferences.contentLanguage}';
+        '${preferences.menuLanguage}:${preferences.topicLanguage}:${preferences.contentLanguage}:${preferences.tableLanguageOverride}';
     if (_lastAppliedProfileLanguage == signature) {
       return;
     }
     _lastAppliedProfileLanguage = signature;
-    // Remember the initial profile even while catalogs are loading. An
-    // unrelated preference edit must not later overwrite an explicit URL's
-    // language just because the initial profile arrived before its catalogs.
-    if (!_primaryLanguageCatalogsLoaded) return;
+    // Restore the saved identifiers before an explicit route activates. An
+    // imported Bible is still a valid preference while discovery is in flight.
+    if (!_primaryLanguageCatalogsLoaded) {
+      LanguageSelectionController.instance.update(preferences.contentLanguage);
+      TopicLanguageSelectionController.instance.update(
+        preferences.topicLanguage,
+      );
+      MenuLanguageController.instance.update(preferences.menuLanguage);
+      return;
+    }
     applyUserPreferencesToLegacyControllers(preferences);
   }
 
@@ -4615,8 +4640,12 @@ class _GospelAppState extends State<GospelApp> {
       notifier: MenuLanguageController.instance.notifier,
       child: MaterialApp(
         title: 'Gospel Topics',
-        theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+        debugShowCheckedModeBanner: false,
+        theme: StudyTheme.theme,
         navigatorObservers: [readerLanguageRouteObserver],
+        onGenerateInitialRoutes: (route) => [
+          _onGenerateRoute(RouteSettings(name: route)),
+        ],
         onGenerateRoute: _onGenerateRoute,
         builder: (context, child) {
           final menuLanguage = MenuLanguageScope.of(context);
@@ -4652,19 +4681,78 @@ class _GospelAppState extends State<GospelApp> {
     final path = uri.path.isEmpty ? '/' : uri.path;
     final rawPrimaryLanguage = primaryLanguageQueryParameter(uri);
 
-    if (path == '/') {
-      final rawVersion = uri.queryParameters['version'];
-      return MaterialPageRoute(
+    if (path == '/' && !uri.queryParameters.keys.any(_isTableParameter)) {
+      return StudyPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
+          canOpenBeforeCatalogs: (preferences) =>
+              bundledInterfaceTranslations.containsKey(
+                preferences.menuLanguage,
+              ) &&
+              bundledTopicLanguages.any(
+                (language) => language.code == preferences.topicLanguage,
+              ),
+          signedOutBuilder: (_) => const GospelHomeScreen(),
+          builder: (_) {
+            final preferences = UserProfileController.instance.preferences;
+            return ReaderLanguageRoute(
+              onActivated: () {
+                final current = UserProfileController.instance.preferences;
+                LanguageSelectionController.instance.update(
+                  current.contentLanguage,
+                );
+                TopicLanguageSelectionController.instance.update(
+                  current.topicLanguage,
+                );
+                MenuLanguageController.instance.update(current.menuLanguage);
+              },
+              child: GospelHomeScreen(
+                authenticated: true,
+                topicLanguage: preferences.topicLanguage,
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    if (path == '/topics' || path == '/') {
+      return StudyPageRoute(
+        settings: settings,
+        builder: (_) => AuthGate(
+          canOpenBeforeCatalogs: (prefs) =>
+              canOpenTableWithBundledCatalog(uri, prefs),
           builder: (context) {
-            final selection = resolveReaderLanguages(uri);
+            final preferences = UserProfileController.instance.preferences;
+            final params = uri.queryParameters;
+            final explicitLanguage = primaryLanguageQueryParameter(uri);
+            final tableLocale =
+                params['tableLocale'] ??
+                (explicitLanguage == null
+                    ? preferences.tableLanguageOverride
+                    : '');
+            final selection = resolveReaderLanguages(
+              uri.replace(
+                queryParameters: {
+                  ...params,
+                  if (explicitLanguage == null)
+                    'bibleLanguage': preferences.contentLanguage,
+                  if (tableLocale.isNotEmpty) 'tableLocale': tableLocale,
+                },
+              ),
+            );
+            final rawVersion =
+                params['version'] ??
+                (selection.bible.code == preferences.contentLanguage
+                    ? preferences.preferredVersion
+                    : null);
             final language = selection.bible;
             return ReaderLanguageRoute(
               onActivated: () => activateReaderLanguages(selection),
               child: TopicListScreen(
                 initialLanguage: language.code,
                 initialTopicLanguage: selection.topic,
+                initialTableLocale: tableLocale,
                 initialDataset: uri.queryParameters['dataset'],
                 initialView: uri.queryParameters['view'],
                 initialTypes: uri.queryParameters['types'],
@@ -4683,10 +4771,11 @@ class _GospelAppState extends State<GospelApp> {
     }
 
     if (path == '/admin') {
-      return MaterialPageRoute(
+      return StudyPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
           requireAdmin: true,
+          canOpenBeforeCatalogs: (_) => true,
           builder: (context) => AdminPortal(apiBaseUrl: apiBaseUrl),
         ),
       );
@@ -4710,9 +4799,11 @@ class _GospelAppState extends State<GospelApp> {
       final gospel = uri.queryParameters['gospel'] ?? '';
       final comparisons = uri.queryParameters['comparisons'] ?? '';
 
-      return MaterialPageRoute(
+      return StudyPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
+          canOpenBeforeCatalogs: (prefs) =>
+              canOpenReaderWithBundledCatalog(uri, prefs),
           builder: (context) => DatasetReaderLanguageRoute(
             uri: uri,
             builder: (selection) {
@@ -4749,9 +4840,11 @@ class _GospelAppState extends State<GospelApp> {
       final initialTopicNumber = uri.queryParameters['topicNumber'] ?? '';
       final comparisons = uri.queryParameters['comparisons'] ?? '';
 
-      return MaterialPageRoute(
+      return StudyPageRoute(
         settings: settings,
         builder: (_) => AuthGate(
+          canOpenBeforeCatalogs: (prefs) =>
+              canOpenReaderWithBundledCatalog(uri, prefs),
           builder: (context) => DatasetReaderLanguageRoute(
             uri: uri,
             builder: (selection) {
@@ -4774,7 +4867,7 @@ class _GospelAppState extends State<GospelApp> {
       );
     }
 
-    return MaterialPageRoute(
+    return StudyPageRoute(
       settings: settings,
       builder: (_) => AuthGate(
         builder: (context) {
@@ -4794,18 +4887,73 @@ class _GospelAppState extends State<GospelApp> {
   }
 }
 
-class AuthGate extends StatelessWidget {
-  const AuthGate({super.key, required this.builder, this.requireAdmin = false});
+bool _isTableParameter(String key) =>
+    _datasetViewKeys.contains(key) ||
+    _menuLanguageQueryKeys.contains(key) ||
+    const {
+      'bibleLanguage',
+      'topicLanguage',
+      'language',
+      'version',
+    }.contains(key);
+
+@visibleForTesting
+bool canOpenTableWithBundledCatalog(Uri uri, UserPreferences preferences) {
+  final explicit = primaryLanguageQueryParameter(uri)?.toLowerCase();
+  final code = explicit ?? preferences.contentLanguage;
+  final bible = _baseLanguageLookup[code];
+  if (bible == null) return false;
+  final table =
+      uri.queryParameters['tableLocale'] ??
+      (explicit == null ? preferences.tableLanguageOverride : '');
+  if (table.isNotEmpty &&
+      !bundledTopicLanguages.any((option) => option.code == table)) {
+    return false;
+  }
+  final version =
+      uri.queryParameters['version'] ??
+      (code == preferences.contentLanguage ? preferences.preferredVersion : '');
+  return version.isEmpty ||
+      bible.versions.any(
+        (option) => option.id.toLowerCase() == version.toLowerCase(),
+      );
+}
+
+@visibleForTesting
+bool canOpenReaderWithBundledCatalog(Uri uri, UserPreferences preferences) =>
+    primaryLanguageQueryParameter(uri) != null &&
+    (uri.queryParameters['comparisons'] ?? '').isEmpty &&
+    canOpenTableWithBundledCatalog(uri, preferences);
+
+class AuthGate extends StatefulWidget {
+  const AuthGate({
+    super.key,
+    required this.builder,
+    this.requireAdmin = false,
+    this.signedOutBuilder,
+    this.canOpenBeforeCatalogs,
+  });
 
   final WidgetBuilder builder;
+  final WidgetBuilder? signedOutBuilder;
   final bool requireAdmin;
+  final bool Function(UserPreferences)? canOpenBeforeCatalogs;
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  late final _authChanges = FirebaseAuth.instance.authStateChanges();
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: _authChanges,
+      initialData: FirebaseAuth.instance.currentUser,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
@@ -4815,14 +4963,19 @@ class AuthGate extends StatelessWidget {
           return _AuthenticatedProfileGate(
             key: ValueKey<String>(user.uid),
             user: user,
-            builder: builder,
-            requireAdmin: requireAdmin,
+            builder: widget.builder,
+            requireAdmin: widget.requireAdmin,
+            canOpenBeforeCatalogs: widget.canOpenBeforeCatalogs,
           );
         }
         adminAccess.clearCache();
         if (accountAccess.uid != null) accountAccess.clear();
         UserProfileController.instance.clear();
-        return const AuthScreen();
+        if (widget.signedOutBuilder != null) {
+          return widget.signedOutBuilder!(context);
+        }
+        final menu = MenuLanguageScope.of(context);
+        return AuthScreen(language: menu.code, textDirection: menu.direction);
       },
     );
   }
@@ -4834,11 +4987,13 @@ class _AuthenticatedProfileGate extends StatefulWidget {
     required this.user,
     required this.builder,
     required this.requireAdmin,
+    required this.canOpenBeforeCatalogs,
   });
 
   final User user;
   final WidgetBuilder builder;
   final bool requireAdmin;
+  final bool Function(UserPreferences)? canOpenBeforeCatalogs;
 
   @override
   State<_AuthenticatedProfileGate> createState() =>
@@ -4847,19 +5002,32 @@ class _AuthenticatedProfileGate extends StatefulWidget {
 
 class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
   late Future<UserProfile> _loadFuture;
-  bool _adminContentLoaded = false;
+  bool _ready = false;
+  Object? _profileView;
+
+  Object _viewOf(UserProfile profile) => (
+    profile.profileCompleted,
+    profile.effectiveDisplayName,
+    profile.preferences.contentLanguage,
+    profile.preferences.topicLanguage,
+    profile.preferences.menuLanguage,
+    profile.preferences.preferredVersion,
+    profile.preferences.tableLanguageOverride,
+  );
 
   @override
   void initState() {
     super.initState();
-    UserProfileController.instance.addListener(_profileChanged);
-    _loadFuture = _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant _AuthenticatedProfileGate oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.user.uid != widget.user.uid) {
+    final controller = UserProfileController.instance;
+    final cached = controller.hasProfileFor(widget.user.uid)
+        ? controller.profile
+        : null;
+    _profileView = cached == null ? null : _viewOf(cached);
+    controller.addListener(_profileChanged);
+    if (cached != null && accountAccess.hasFreshAccessFor(widget.user.uid)) {
+      _ready = true;
+      _loadFuture = Future.value(cached);
+    } else {
       _loadFuture = _load();
     }
   }
@@ -4871,41 +5039,27 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
   }
 
   Future<UserProfile> _load({bool force = false}) async {
-    _adminContentLoaded = false;
-    final menuRevision = MenuLanguageController.instance.revision;
-    final adminFuture = adminAccess.currentUserIsAdmin(forceRefresh: force);
-    final profile = await UserProfileController.instance.loadForUser(
+    _ready = false;
+    final profileFuture = UserProfileController.instance.loadForUser(
       widget.user,
       force: force,
     );
-    // Membership provisioning must finish before Firestore catalog reads,
-    // which are protected by the same server-managed membership.
-    await adminFuture;
-    try {
-      await loadPrimaryLanguageCatalogs();
-    } catch (_) {
-      // Bundled languages remain available if a catalog is unreachable.
-    }
-    _adminContentLoaded = true;
-    final controller = UserProfileController.instance;
-    final currentProfile = controller.hasProfileFor(widget.user.uid)
-        ? controller.profile!
-        : profile;
-    // Loading an older or covered route must not undo a newer toolbar choice.
-    // Preference writes update the profile optimistically, so use its latest
-    // value rather than the snapshot captured before catalog requests.
-    if (mounted &&
-        ModalRoute.of(context)?.isCurrent != false &&
-        MenuLanguageController.instance.revision == menuRevision) {
-      applyUserPreferencesToLegacyControllers(currentProfile.preferences);
-    }
-    return currentProfile;
+    await Future.wait<Object>([
+      adminAccess.currentUserIsAdmin(forceRefresh: force),
+      profileFuture,
+    ]);
+    final profile = await profileFuture;
+    _ready = true;
+    return profile;
   }
 
   void _profileChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+    final controller = UserProfileController.instance;
+    if (!mounted || !controller.hasProfileFor(widget.user.uid)) return;
+    final next = _viewOf(controller.profile!);
+    if (next == _profileView) return;
+    _profileView = next;
+    setState(() {});
   }
 
   @override
@@ -4918,7 +5072,7 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
             ? controller.profile
             : null;
         if (snapshot.connectionState != ConnectionState.done &&
-            (cachedProfile == null || !_adminContentLoaded)) {
+            (cachedProfile == null || !_ready)) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
@@ -4988,7 +5142,7 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
           uid: widget.user.uid,
           language: profile.preferences.menuLanguage,
           onSettings: () => Navigator.of(context).push<bool>(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            StudyPageRoute(builder: (_) => const SettingsScreen()),
           ),
           onSignOut: () async {
             await finishUserActivity();
@@ -5019,14 +5173,81 @@ class _AuthenticatedProfileGateState extends State<_AuthenticatedProfileGate> {
                 ),
               );
             }
+            final content = _AuthorizedCatalogRoute(
+              canOpenEarly:
+                  widget.canOpenBeforeCatalogs?.call(profile.preferences) ==
+                  true,
+              builder: widget.builder,
+            );
             return AdminContentScope(
               enabled: admin,
-              child: admin
-                  ? SelectionArea(child: Builder(builder: widget.builder))
-                  : Builder(builder: widget.builder),
+              child: admin ? SelectionArea(child: content) : content,
             );
           },
         );
+      },
+    );
+  }
+}
+
+/// Mounted only after a verified access decision, including recovery from a
+/// failed check. Imported language and comparison links wait for their catalog.
+class _AuthorizedCatalogRoute extends StatefulWidget {
+  const _AuthorizedCatalogRoute({
+    required this.canOpenEarly,
+    required this.builder,
+  });
+  final bool canOpenEarly;
+  final WidgetBuilder builder;
+
+  @override
+  State<_AuthorizedCatalogRoute> createState() =>
+      _AuthorizedCatalogRouteState();
+}
+
+class _AuthorizedCatalogRouteState extends State<_AuthorizedCatalogRoute> {
+  Future<void>? _catalog;
+  bool _opened = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!_primaryLanguageCatalogsLoaded) {
+      _catalog = loadPrimaryLanguageCatalogs();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_catalog == null) return widget.builder(context);
+    return FutureBuilder<void>(
+      future: _catalog,
+      builder: (context, snapshot) {
+        if (_opened || widget.canOpenEarly || _primaryLanguageCatalogsLoaded) {
+          _opened = true;
+          return widget.builder(context);
+        }
+        if (snapshot.hasError) {
+          final labels = MenuLanguageScope.of(context).ui;
+          return Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(labels.text('catalog.loadFailed')),
+                  TextButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: Text(labels.text('home.retry')),
+                    onPressed: () => setState(
+                      () => _catalog = loadPrimaryLanguageCatalogs(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
       },
     );
   }
@@ -5046,7 +5267,12 @@ void applyUserPreferencesToLegacyControllers(UserPreferences preferences) {
     return;
   }
   final bible = _languageOptionForCode(preferences.contentLanguage);
-  activateReaderLanguages(readerLanguagesForSelection(bible));
+  activateReaderLanguages(
+    readerLanguagesForSelection(
+      bible,
+      tableLocale: preferences.tableLanguageOverride,
+    ),
+  );
 }
 
 Future<void> _updateUserPreferencesBestEffort(
@@ -5252,6 +5478,7 @@ class TopicListScreen extends StatefulWidget {
     this.initialView,
     this.initialTypes,
     this.initialTopicLanguage,
+    this.initialTableLocale,
     this.initialLanguage,
     this.initialVersion,
     this.initialFilterCode,
@@ -5266,6 +5493,7 @@ class TopicListScreen extends StatefulWidget {
   final String? initialView;
   final String? initialTypes;
   final String? initialTopicLanguage;
+  final String? initialTableLocale;
   final String? initialTopicId;
   final String? initialLanguage;
   final String? initialVersion;
@@ -5296,12 +5524,16 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       TopicLanguageSelectionController.instance.languageCode;
   String _selectedTopicLanguageCode =
       TopicLanguageSelectionController.instance.languageCode;
+  String _tableLocale = '';
+  List<String> _availableTableLocales = const [];
+  String get _requestedTableLanguage =>
+      _tableLocale.isEmpty ? _selectedLanguageCode : _tableLocale;
   bool _arabicWithDiacritics = false;
   final Map<String, String> _selectedVersions = {};
   SharedPreferences? _prefs;
   String? _pendingTopicId;
   bool _routeProvidedInitialVersion = false;
-  bool _topicsLoadRequested = false;
+
   int _topicLoadGeneration = 0;
   late GospelFilterState _filterState;
   late GospelSortState _sortState;
@@ -5362,9 +5594,11 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     }
     _selectedTopicLanguageCode =
         widget.initialTopicLanguage ?? _selectedLanguageCode;
+    _tableLocale = widget.initialTableLocale?.trim().toLowerCase() ?? '';
     _pendingTopicId = widget.initialTopicId?.trim().isNotEmpty == true
         ? widget.initialTopicId!.trim()
         : null;
+    unawaited(fetchTopics());
     _initializePreferences();
     _refreshLanguagesFromFirestore();
     unawaited(_refreshDatasetCatalog());
@@ -5408,7 +5642,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   void _catalogChanged() {
     _invalidateChangedCatalogCaches();
     unawaited(_refreshDatasetCatalog());
-    unawaited(_refreshLanguagesFromFirestore());
+    unawaited(_refreshLanguagesFromFirestore(refreshTopics: true));
   }
 
   Future<void> _refreshDatasetCatalog() async {
@@ -5429,9 +5663,14 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   }
 
   void _restoreControlStateFromUri(Uri uri) {
-    if (!mounted || (uri.path.isNotEmpty && uri.path != '/')) {
+    if (!mounted ||
+        _tableRoute?.isCurrent == false ||
+        !(uri.path == '/topics' ||
+            ((uri.path == '/' || uri.path.isEmpty) &&
+                uri.queryParameters.isNotEmpty))) {
       return;
     }
+    final oldRequest = _requestedTableLanguage;
     final oldDataset = _datasetView.datasetId;
     final oldLanguage = _selectedTopicLanguageCode;
     final selection = resolveReaderLanguages(uri);
@@ -5443,6 +5682,8 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         uri.queryParameters['columns'],
       );
       _selectedLanguageCode = selection.bible.code;
+      _tableLocale =
+          uri.queryParameters['tableLocale']?.trim().toLowerCase() ?? '';
       _selectedTopicLanguageCode = selection.topic;
       _selectedVersions[selection.bible.code] =
           uri.queryParameters['version'] ?? _apiVersionFor(selection.bible);
@@ -5450,12 +5691,14 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     });
     activateReaderLanguages(selection);
     if (oldDataset != _datasetView.datasetId ||
-        oldLanguage != _selectedTopicLanguageCode) {
+        oldLanguage != _selectedTopicLanguageCode ||
+        oldRequest != _requestedTableLanguage) {
       unawaited(fetchTopics());
     }
   }
 
   Map<String, String> get _viewQuery => {
+    if (_tableLocale.isNotEmpty) 'tableLocale': _tableLocale,
     ..._datasetView.toQueryParameters(),
     ...harmonyViewQueryParameters(
       filter: _filterState,
@@ -5470,7 +5713,8 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     final saved = _savedDatasetQueries[id] ?? {'dataset': id};
     setState(() {
       _datasetView = DatasetViewState.fromQueryParameters(saved);
-      _selectedTopicLanguageCode = _selectedLanguageCode;
+      _selectedTopicLanguageCode = _requestedTableLanguage;
+      _availableTableLocales = const [];
       _filterState = GospelFilterState.fromQueryParameters(saved);
       _sortState = GospelSortState.fromQueryValue(saved['sort']);
       _columnVisibility = ColumnVisibilityState.fromQueryValue(
@@ -5548,6 +5792,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
           versionSelections[option.code] = storedVersion.trim();
         }
       }
+      if (!mounted) return;
       setState(() {
         _prefs = prefs;
         _arabicWithDiacritics =
@@ -5563,17 +5808,20 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
       });
     } catch (_) {
       // If persistence fails we silently fall back to defaults.
-    } finally {
-      if (mounted) {
-        fetchTopics();
-      }
     }
   }
 
-  Future<void> _refreshLanguagesFromFirestore() async {
+  Future<void> _refreshLanguagesFromFirestore({
+    bool refreshTopics = false,
+  }) async {
     setState(() {
       _languagesLoading = true;
     });
+    // The topic catalog is independent of Firestore's Bible-version catalog.
+    // Its shared request can expose new table locales even if Firestore is offline.
+    if (_datasetView.datasetId == 'harmony') {
+      unawaited(_refreshHarmonyTableLocales());
+    }
     try {
       await loadPrimaryLanguageCatalogs();
       if (!mounted) {
@@ -5599,7 +5847,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
           LanguageSelectionController.instance.update(fallbackCode);
         }
       }
-      await fetchTopics();
+      if (!hasSelection || refreshTopics) await fetchTopics();
     } catch (e) {
       if (!mounted) {
         return;
@@ -5610,10 +5858,19 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
           _supportedLanguages = kBaseLanguageOptions;
         }
       });
-    } finally {
-      if (mounted && !_topicsLoadRequested) {
-        fetchTopics();
-      }
+    }
+  }
+
+  Future<void> _refreshHarmonyTableLocales() async {
+    try {
+      await _loadTopicLanguages();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || _datasetView.datasetId != 'harmony') return;
+    final locales = _supportedTopicLanguages.map((option) => option.code).toList();
+    if (!listEquals(_availableTableLocales, locales)) {
+      setState(() => _availableTableLocales = locales);
     }
   }
 
@@ -5669,7 +5926,11 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
               _sanitizeVersionForLanguage(option, versionId))
         : _sanitizeVersionForLanguage(option, versionId);
     if (normalized.isEmpty) return;
-    final selection = await _readerLanguagesForDataset(option, dataset);
+    final selection = await _readerLanguagesForDataset(
+      option,
+      dataset,
+      tableLocale: _tableLocale,
+    );
     if (!mounted ||
         generation != _translationChangeGeneration ||
         dataset != _datasetView.datasetId) {
@@ -5686,8 +5947,8 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     _commitControlState();
     // Changing only the Bible version keeps the loaded table and filters.
     if (reloadNames) unawaited(fetchTopics());
-    if (!reloadNames && selection.topic != option.code) {
-      _showTableLanguageFallback(option.code, selection.topic);
+    if (!reloadNames && selection.topic != _requestedTableLanguage) {
+      _showTableLanguageFallback(_requestedTableLanguage, selection.topic);
     }
     await _persistLanguageVersion(
       option,
@@ -5757,15 +6018,23 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
 
   Future<void> fetchTopics() async {
     final generation = ++_topicLoadGeneration;
-    _topicsLoadRequested = true;
-    final expectedTopicLanguage = _selectedLanguageCode;
+
+    final expectedTopicLanguage = _requestedTableLanguage;
     final expectedDataset = _datasetView.datasetId;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final available = await _ApiCache.tableLanguageCodes(expectedDataset);
+      // Bundled Harmony names can start loading alongside the optional catalogs.
+      final bundled =
+          expectedDataset == 'harmony' &&
+          bundledTopicLanguages.any(
+            (locale) => locale.code == expectedTopicLanguage,
+          );
+      final available = bundled
+          ? _supportedTopicLanguages.map((locale) => locale.code).toList()
+          : await _ApiCache.tableLanguageCodes(expectedDataset);
       final actualLanguage = _matchingTableLanguage(
         expectedTopicLanguage,
         available,
@@ -5778,11 +6047,14 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         return;
       }
       if (generation != _topicLoadGeneration ||
-          _selectedLanguageCode != expectedTopicLanguage ||
+          _requestedTableLanguage != expectedTopicLanguage ||
           _datasetView.datasetId != expectedDataset) {
         return;
       }
       setState(() {
+        _availableTableLocales = bundled
+            ? _supportedTopicLanguages.map((locale) => locale.code).toList()
+            : available;
         _selectedTopicLanguageCode = actualLanguage;
         _topics = topics;
         _datasetMetadata =
@@ -5811,7 +6083,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
         return;
       }
       if (generation != _topicLoadGeneration ||
-          _selectedLanguageCode != expectedTopicLanguage ||
+          _requestedTableLanguage != expectedTopicLanguage ||
           _datasetView.datasetId != expectedDataset) {
         return;
       }
@@ -5840,14 +6112,28 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     WidgetsBinding.instance.addPostFrameCallback((_) => _openTopic(match!));
   }
 
+  Object? _processingInputs;
+  HarmonyTopicProcessingResult? _previousResults;
+
   HarmonyTopicProcessingResult _processedTopics() {
-    return processHarmonyTopics(
+    final inputs = (
       _topics,
       _filterState,
       _sortState,
       _columnVisibility,
-      selectedTypeIds: _datasetView.selectedTypeIds,
+      _datasetView.selectedTypeIds,
     );
+    if (inputs != _processingInputs) {
+      _previousResults = processHarmonyTopics(
+        _topics,
+        _filterState,
+        _sortState,
+        _columnVisibility,
+        selectedTypeIds: _datasetView.selectedTypeIds,
+      );
+      _processingInputs = inputs;
+    }
+    return _previousResults!;
   }
 
   String get _controlSignature => <Object>[
@@ -5856,6 +6142,7 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     (_datasetView.selectedTypeIds.toList()..sort()).join(','),
     _selectedLanguageCode,
     _selectedTopicLanguageCode,
+    _tableLocale,
     _apiVersionFor(_languageOption),
     _filterState.mode.name,
     _filterState.includeMask,
@@ -5912,6 +6199,18 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     );
   }
 
+  Future<void> _runTableOutput(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      if (!mounted) return;
+      final ui = _interfaceLanguageForTopic(_topicLanguageOption).ui;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(ui.text('tableOutputFailed'))));
+    }
+  }
+
   void _clearFilter() {
     _setFilterState(const GospelFilterState());
     _commitControlState();
@@ -5923,24 +6222,24 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
     final menuLanguage = _interfaceLanguageForTopic(_topicLanguageOption);
     final processed = _processedTopics();
     final isAdmin = AdminContentScope.allowsSelection(context);
-    final document = _loading || _error != null
-        ? null
-        : buildTopicsTableDocument(
-            topics: processed.topics,
-            sourceIndexes: processed.sourceIndexes,
-            topicLanguage: _topicLanguageOption,
-            visibleGospels: _columnVisibility.visibleGospels.toList(),
-            title: datasetDisplayName(
-              _datasetView.datasetId,
-              _selectedTopicLanguageCode,
-            ),
-            metadata: _datasetMetadata,
-            grouped: _datasetView.isGrouped,
-          );
+    final canExport = !_loading && _error == null;
+    final topicLanguage = _topicLanguageOption;
+    final datasetView = _datasetView;
+    final metadata = _datasetMetadata;
+    final columns = _columnVisibility;
+    late final document = buildTopicsTableDocument(
+      topics: processed.topics,
+      sourceIndexes: processed.sourceIndexes,
+      topicLanguage: topicLanguage,
+      visibleGospels: columns.visibleGospels.toList(),
+      title: datasetDisplayName(datasetView.datasetId, topicLanguage.code),
+      metadata: metadata,
+      grouped: datasetView.isGrouped,
+    );
     return DatasetNavigationScope(
       query: _viewQuery,
       child: TopicsTablePrintScope(
-        document: document,
+        buildDocument: canExport ? () => document : null,
         child: Directionality(
           textDirection: _topicLanguageOption.direction,
           child: MainScaffold(
@@ -5955,180 +6254,275 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
             accountTooltip: menuLanguage.ui.account,
             showAdmin: isAdmin,
             adminLabel: menuLanguage.ui.text('admin'),
-            body: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ResponsiveContentShell(
-                  maxWidth: _maxHarmonyTableWidth,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        DatasetSelector(
-                          catalog: _datasetCatalog,
-                          datasetId: _datasetView.datasetId,
-                          language: _selectedTopicLanguageCode,
-                          onChanged: _switchDataset,
-                        ),
-                        if (_datasetCatalogFailed)
-                          TextButton.icon(
-                            key: const ValueKey('retry-dataset-catalog'),
-                            onPressed: _refreshDatasetCatalog,
-                            icon: const Icon(Icons.refresh, size: 16),
-                            label: Text(
-                              _selectedTopicLanguageCode == 'arabic'
-                                  ? 'تعذر تحميل قائمة الجداول. إعادة المحاولة'
-                                  : _selectedTopicLanguageCode == 'french'
-                                  ? 'Impossible de charger les tableaux. Réessayer'
-                                  : 'Could not load all tables. Retry',
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
+            body: _DatasetWorkspace(
+              header: _DatasetBanner(
+                title:
+                    _datasetView.datasetId == 'harmony' &&
+                        datasetDisplayName('harmony', menuLanguage.code) ==
+                            builtinDatasetCatalog.first.label(menuLanguage.code)
+                    ? menuLanguage.ui.title
+                    : datasetDisplayName(
+                        _datasetView.datasetId,
+                        menuLanguage.code,
+                      ),
+                description: datasetControlLabel(
+                  'tableIntroduction',
+                  menuLanguage.code,
                 ),
-                AppToolbar(
-                  maxContentWidth: _maxHarmonyTableWidth,
-                  language: languageOption,
-                  version: _apiVersionFor(languageOption),
-                  languages: readerLanguageOptions(),
-                  primaryActions: [
-                    if (_datasetMetadata.hasTypes ||
-                        _datasetView.datasetId != 'harmony')
-                      _buildDatasetControls(),
-                  ],
-                  languageSelectorLabel: datasetControlLabel(
-                    'bibleLanguage',
-                    _selectedTopicLanguageCode,
+              ),
+              selector: DatasetSelector(
+                catalog: _datasetCatalog,
+                datasetId: _datasetView.datasetId,
+                language: _selectedTopicLanguageCode,
+                onChanged: _switchDataset,
+              ),
+              catalogRetry: _datasetCatalogFailed
+                  ? TextButton.icon(
+                      key: const ValueKey('retry-dataset-catalog'),
+                      onPressed: _refreshDatasetCatalog,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: Text(
+                        datasetControlLabel('catalogRetry', menuLanguage.code),
+                      ),
+                    )
+                  : null,
+              toolbar: AppToolbar(
+                maxContentWidth: _maxHarmonyTableWidth,
+                language: languageOption,
+                version: _apiVersionFor(languageOption),
+                languages: readerLanguageOptions(),
+                primaryActionsFirst: true,
+                compactToolsLabel: datasetControlLabel(
+                  'languagesAndTools',
+                  menuLanguage.code,
+                ),
+                controlsAlignment: WrapAlignment.start,
+                primaryActions: [
+                  HarmonyFilterButton(
+                    metadata: _datasetMetadata,
+                    selectedTypeIds: _datasetView.selectedTypeIds,
+                    onTypesChanged: _setTypes,
+                    filterState: _filterState,
+                    sortState: _sortState,
+                    uiLanguage: menuLanguage,
+                    topics: _topics,
+                    columns: _columnVisibility,
+                    currentResultCount: processed.visibleTopicCount,
+                    onChanged: _setFilterState,
+                    onSortChanged: _setSortState,
+                    onInteractionEnd: _commitControlState,
                   ),
-                  languagesLoading: _languagesLoading,
-                  onLanguageChanged: _updateLanguage,
-                  onVersionChanged: (version) =>
-                      _updateVersionForLanguage(languageOption, version),
-                  onTranslationChanged: _updateContentTranslation,
-                  trailingActions: [
-                    if (isAdmin && kIsWeb)
-                      FilledButton.icon(
-                        key: const ValueKey<String>('export-topics-csv'),
-                        onPressed: document == null
-                            ? null
-                            : () => downloadTopicsCsv(
+                  HarmonySortButton(
+                    state: _sortState,
+                    columns: _columnVisibility,
+                    uiLanguage: menuLanguage,
+                    onChanged: _setSortState,
+                    onColumnsChanged: _setColumnVisibility,
+                    onInteractionEnd: _commitControlState,
+                  ),
+                  if (_datasetMetadata.hasTypes ||
+                      _datasetView.datasetId != 'harmony')
+                    _buildDatasetControls(),
+                ],
+                languageSelectorLabel: datasetControlLabel(
+                  'bibleLanguage',
+                  _selectedTopicLanguageCode,
+                ),
+                languagesLoading: _languagesLoading,
+                onLanguageChanged: _updateLanguage,
+                onVersionChanged: (version) =>
+                    _updateVersionForLanguage(languageOption, version),
+                onTranslationChanged: _updateContentTranslation,
+                trailingActions: [
+                  _tableLanguageControl(context, menuLanguage),
+                  if (isAdmin && supportsTableOutput)
+                    FilledButton.icon(
+                      key: const ValueKey<String>('export-topics-csv'),
+                      onPressed: !canExport
+                          ? null
+                          : () => _runTableOutput(
+                              () => downloadTopicsCsv(
                                 document,
                                 '${_datasetView.datasetId}-${_topicLanguageOption.code}.csv',
                               ),
-                        style: _toolbarFilledStyle(context),
-                        icon: const Icon(Icons.download_outlined, size: 18),
-                        label: Text(menuLanguage.ui.text('exportCsv')),
-                      ),
-                    if (kIsWeb)
-                      OutlinedButton.icon(
-                        key: const ValueKey<String>('print-topics-table'),
-                        onPressed: document == null ? null : printTopicsTable,
-                        style: _toolbarOutlinedStyle(context),
-                        icon: const Icon(Icons.print_outlined, size: 18),
-                        label: Text(menuLanguage.ui.text('printPdf')),
-                      ),
-                    if (isAdmin)
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          _tableKey.currentState?.resetScroll();
-                        },
-                        style: _toolbarOutlinedStyle(context),
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: Text(menuLanguage.resetLabel),
-                      ),
-                    HarmonySortButton(
-                      state: _sortState,
-                      columns: _columnVisibility,
-                      uiLanguage: menuLanguage,
-                      onChanged: _setSortState,
-                      onColumnsChanged: _setColumnVisibility,
-                      onInteractionEnd: _commitControlState,
+                            ),
+                      style: _toolbarFilledStyle(context),
+                      icon: const Icon(Icons.download_outlined, size: 18),
+                      label: Text(menuLanguage.ui.text('exportCsv')),
                     ),
-                    HarmonyFilterButton(
-                      metadata: _datasetMetadata,
-                      selectedTypeIds: _datasetView.selectedTypeIds,
-                      onTypesChanged: _setTypes,
-                      filterState: _filterState,
-                      sortState: _sortState,
-                      uiLanguage: menuLanguage,
-                      topics: _topics,
-                      columns: _columnVisibility,
-                      currentResultCount: processed.visibleTopicCount,
-                      onChanged: _setFilterState,
-                      onSortChanged: _setSortState,
-                      onInteractionEnd: _commitControlState,
+                  if (supportsTableOutput)
+                    OutlinedButton.icon(
+                      key: const ValueKey<String>('print-topics-table'),
+                      onPressed: !canExport
+                          ? null
+                          : () => _runTableOutput(
+                              () => printTopicsTable(document),
+                            ),
+                      style: _toolbarOutlinedStyle(context),
+                      icon: const Icon(Icons.print_outlined, size: 18),
+                      label: Text(menuLanguage.ui.text('printPdf')),
                     ),
-                    _buildHarmonyResultCountChip(
-                      context: context,
-                      uiLanguage: menuLanguage,
-                      count: processed.visibleTopicCount,
+                  if (isAdmin)
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        _tableKey.currentState?.resetScroll();
+                      },
+                      style: _toolbarOutlinedStyle(context),
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: Text(menuLanguage.resetLabel),
                     ),
-                    Chip(
-                      label: Text(
-                        '${processed.visibleReferenceCount} ${menuLanguage.ui.references}',
-                      ),
-                    ),
-                    if (_filterState.isActive)
-                      _buildActiveSetFilterChip(
-                        context: context,
-                        state: _filterState,
-                        uiLanguage: menuLanguage,
-                        onDeleted: _clearFilter,
-                      ),
-                  ],
-                ),
-                const Divider(height: 0),
-                Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _error != null
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_error!),
-                              TextButton(
-                                onPressed: fetchTopics,
-                                child: Text(
-                                  _selectedTopicLanguageCode == 'arabic'
-                                      ? 'إعادة المحاولة'
-                                      : 'Retry',
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _topics.isEmpty && _datasetView.datasetId != 'harmony'
-                      ? Center(
-                          child: Text(
-                            _selectedTopicLanguageCode == 'arabic'
-                                ? 'لم يُنشر هذا الجدول بعد. استورده من بوابة الإدارة.'
-                                : 'This table has not been published yet. Import it from the Admin Portal.',
-                          ),
-                        )
-                      : DatasetNavigationScope(
-                          query: _viewQuery,
-                          child: HarmonyTable(
-                            key: _tableKey,
-                            metadata: _datasetMetadata,
-                            groupedByType: _datasetView.isGrouped,
-                            topics: processed.topics,
-                            topicDisplayIndexes: processed.sourceIndexes,
-                            languageOption: languageOption,
-                            topicLanguage: _topicLanguageOption,
-                            apiVersion: _apiVersionFor(languageOption),
-                            visibleGospels: _columnVisibility.visibleGospels
-                                .toList(),
-                          ),
+                ],
+                statusActions: [
+                  if (!_loading && _error == null)
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        '${_localizedResultsLabel(menuLanguage, processed.visibleTopicCount)} · '
+                        '${_localizedTopicNumber(processed.visibleReferenceCount.toString(), _topicLanguageOption)} ${menuLanguage.ui.references}',
+                        key: const ValueKey('visible-topic-count'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: StudyTheme.muted,
                         ),
-                ),
-              ],
+                      ),
+                    ),
+                  if (_filterState.isActive)
+                    _buildActiveSetFilterChip(
+                      context: context,
+                      state: _filterState,
+                      uiLanguage: menuLanguage,
+                      onDeleted: _clearFilter,
+                    ),
+                ],
+              ),
+              body: _buildTableBody(menuLanguage, processed),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _tableLanguageControl(BuildContext context, LanguageOption menu) {
+    final options = _availableTableLocales;
+    String languageName(String code) => nativeLanguageName(
+      code,
+      resolveDatasetTopicLanguage(_datasetView.datasetId, code).label,
+    );
+    return _toolbarDropdownButton<String>(
+      context: context,
+      popupKey: const ValueKey('table-language-selector'),
+      icon: Icons.translate,
+      label:
+          '${datasetControlLabel('tableLanguage', menu.code)} · ${languageName(_selectedTopicLanguageCode)}',
+      enabled: options.isNotEmpty,
+      items: [
+        _checkedMenuItem(
+          value: '',
+          label: datasetControlLabel('followBible', menu.code),
+          selected: _tableLocale.isEmpty,
+          textDirection: menu.direction,
+        ),
+        for (final code in options)
+          _checkedMenuItem(
+            value: code,
+            label: languageName(code),
+            selected: _tableLocale == code,
+            textDirection: menu.direction,
+          ),
+      ],
+      onSelected: _selectTableLocale,
+    );
+  }
+
+  void _selectTableLocale(String locale) {
+    if (_tableLocale == locale) return;
+    ++_translationChangeGeneration;
+    setState(() {
+      _tableLocale = locale;
+      _selectedTopicLanguageCode = _matchingTableLanguage(
+        _requestedTableLanguage,
+        _availableTableLocales,
+      );
+    });
+    activateReaderLanguages((
+      bible: _languageOption,
+      topic: _selectedTopicLanguageCode,
+      menu: _selectedTopicLanguageCode,
+    ));
+    _commitControlState();
+    final profile = UserProfileController.instance;
+    if (profile.profile != null) {
+      unawaited(
+        _updateUserPreferencesBestEffort(
+          profile.preferences.copyWith(
+            tableLanguageOverride: locale,
+            topicLanguage: _selectedTopicLanguageCode,
+            menuLanguage: _selectedTopicLanguageCode,
+          ),
+        ),
+      );
+    }
+    unawaited(fetchTopics());
+  }
+
+  Widget _buildTableBody(
+    LanguageOption menu,
+    HarmonyTopicProcessingResult processed,
+  ) {
+    String label(String key) => datasetControlLabel(key, menu.code);
+    if (_loading) {
+      return Center(
+        child: CircularProgressIndicator(semanticsLabel: label('loadingTable')),
+      );
+    }
+    if (_error != null) {
+      return _TableStatus(
+        icon: Icons.cloud_off_outlined,
+        message: label('loadFailed'),
+        action: TextButton.icon(
+          onPressed: fetchTopics,
+          label: Text(label('retry')),
+          icon: const Icon(Icons.refresh),
+        ),
+      );
+    }
+    if (_topics.isEmpty || processed.topics.isEmpty) {
+      final canReset =
+          _topics.isNotEmpty &&
+          (_filterState.isActive ||
+              _datasetView.selectedTypeIds.isNotEmpty ||
+              _columnVisibility != const ColumnVisibilityState());
+      return _TableStatus(
+        icon: _topics.isEmpty
+            ? Icons.menu_book_outlined
+            : Icons.filter_alt_off_outlined,
+        message: label(_topics.isEmpty ? 'emptyDataset' : 'emptyFilter'),
+        action: canReset
+            ? TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _filterState = const GospelFilterState();
+                    _columnVisibility = const ColumnVisibilityState();
+                    _datasetView = _datasetView.copyWith(selectedTypeIds: {});
+                  });
+                  _commitControlState();
+                },
+                icon: const Icon(Icons.replay),
+                label: Text(menu.ui.clearFilter),
+              )
+            : null,
+      );
+    }
+    return HarmonyTable(
+      key: _tableKey,
+      metadata: _datasetMetadata,
+      groupedByType: _datasetView.isGrouped,
+      topics: processed.topics,
+      topicDisplayIndexes: processed.sourceIndexes,
+      languageOption: _languageOption,
+      topicLanguage: _topicLanguageOption,
+      apiVersion: _apiVersionFor(_languageOption),
+      visibleGospels: _columnVisibility.visibleGospels.toList(),
     );
   }
 
@@ -6175,31 +6569,17 @@ class _TopicListScreenState extends State<TopicListScreen> with RouteAware {
   }
 
   void _openTopic(Topic topic) {
-    final authors = topic.references.map((e) => e.book).toSet().toList()
-      ..sort(_compareBooks);
-    if (kIsWeb) {
-      final language = _languageOption;
-      final version = _apiVersionFor(language);
-      final uri = _topicUri(
-        context: context,
-        topic: topic,
-        language: language,
-        version: version,
-      );
-      Navigator.of(context).pushNamed(uri.toString());
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AuthorComparisonScreen(
-          topicLanguage: _selectedTopicLanguageCode,
-          languageOption: _languageOption,
-          apiVersion: _apiVersionFor(_languageOption),
-          topic: topic,
-          initialAuthors: authors,
-          topicNumber: _topicNumberForDisplay(topic),
-        ),
-      ),
+    final uri = _topicUri(
+      context: context,
+      topic: topic,
+      language: _languageOption,
+      topicLanguage: _selectedTopicLanguageCode,
+      version: _apiVersionFor(_languageOption),
+    );
+    Navigator.of(context).pushNamed(
+      uri
+          .replace(queryParameters: {...uri.queryParameters, ..._viewQuery})
+          .toString(),
     );
   }
 }
@@ -6213,13 +6593,13 @@ TopicsTableDocument buildTopicsTableDocument({
   DatasetMetadata metadata = const DatasetMetadata(),
   bool grouped = false,
 }) {
+  final displayIndexes = {
+    for (var index = 0; index < topics.length; index++)
+      topics[index]: sourceIndexes?[index] ?? index,
+  };
   List<String> row(Topic topic) => [
     _localizedTopicNumber(
-      _topicNumberForDisplay(
-        topic,
-        zeroBasedIndex:
-            sourceIndexes?[topics.indexOf(topic)] ?? topics.indexOf(topic),
-      ),
+      _topicNumberForDisplay(topic, zeroBasedIndex: displayIndexes[topic]),
       topicLanguage,
     ),
     topic.name,
@@ -6234,6 +6614,7 @@ TopicsTableDocument buildTopicsTableDocument({
           metadata: metadata,
         )
       : null;
+  final rows = {for (final topic in topics) topic: row(topic)};
   return TopicsTableDocument(
     title: title,
     isRtl: topicLanguage.direction == TextDirection.rtl,
@@ -6244,14 +6625,17 @@ TopicsTableDocument buildTopicsTableDocument({
       for (final gospel in visibleGospels)
         topicLanguage.gospelNames[Gospel.values.indexOf(gospel)],
     ],
-    rows: (groups?.expand((group) => group.items) ?? topics).map(row).toList(),
+    rows: [
+      for (final topic in groups?.expand((group) => group.items) ?? topics)
+        rows[topic]!,
+    ],
     groups: groups == null
         ? const []
         : [
             for (final group in groups)
               TopicsTableDocumentGroup(
                 label: metadata.typeLabel(group.typeId, topicLanguage.code),
-                rows: group.items.map(row).toList(),
+                rows: [for (final topic in group.items) rows[topic]!],
               ),
           ],
   );
@@ -6337,8 +6721,23 @@ class HarmonyTable extends StatefulWidget {
 
 class _HarmonyTableState extends State<HarmonyTable> {
   static const _subjectColumn = 1;
+  static const _lazyRowThreshold = 32;
   final Set<String> _collapsedTypes = {};
   String _lastDataset = '';
+  final _matchedCellKey = GlobalKey();
+  (Object, int, int)? _findMatch;
+
+  void _revealMatch(Object revision, int row, int column) {
+    final match = (revision, row, column);
+    if (_findMatch != match) setState(() => _findMatch = match);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _matchedCellKey.currentContext;
+      if (!mounted || _findMatch != match || target == null) return;
+      Scrollable.ensureVisible(target, alignment: .5);
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
   late final ScrollController _verticalController;
   late final ScrollController _headerHorizontalController;
   late final ScrollController _bodyHorizontalController;
@@ -6451,34 +6850,40 @@ class _HarmonyTableState extends State<HarmonyTable> {
       style: textStyle,
       textAlign: textAlign,
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-      maxLines: 1,
-      child: Text(
-        topic.name,
-        style: textStyle,
-        textAlign: textAlign,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        softWrap: false,
-      ),
+      child: Text(topic.name, style: textStyle, textAlign: textAlign),
     ),
   );
 
-  Widget _buildHeaderCell(String label, TextStyle? style, TextAlign align) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-      child: BrowserFindText(
-        text: label,
-        style: style,
-        textAlign: align,
-        maxLines: 1,
-        child: Text(
-          label,
-          style: style,
-          textAlign: align,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          softWrap: false,
-        ),
+  Widget _buildHeaderCell(
+    String label,
+    TextStyle? style,
+    TextAlign align, {
+    bool gospel = false,
+  }) {
+    final text = BrowserFindText(
+      text: label,
+      style: style,
+      textAlign: align,
+      child: Text(label, style: style, textAlign: align),
+    );
+    return Semantics(
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: gospel
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.menu_book_outlined,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(child: text),
+                ],
+              )
+            : text,
       ),
     );
   }
@@ -6504,39 +6909,37 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
   List<Gospel> get _visibleGospels => widget.visibleGospels ?? Gospel.values;
 
-  double _harmonyTableWidthFor(double availableWidth) {
-    final minimumWidth =
-        280.0 +
-        52.0 +
-        (widget.metadata.hasTypes ? 130.0 : 0.0) +
-        (120.0 * _visibleGospels.length);
+  double _harmonyTableWidthFor(double availableWidth, bool compact) {
+    final minimum = compact
+        ? 228.0 + 133.0 * _visibleGospels.length
+        : math.min(
+                _minHarmonyTableWidth,
+                302.0 + 120.0 * _visibleGospels.length,
+              ) +
+              (widget.metadata.hasTypes ? 120.0 : 0);
     return math.max(
-      math.min(_minHarmonyTableWidth, minimumWidth),
+      minimum,
       _responsiveContentWidth(availableWidth, maxWidth: _maxHarmonyTableWidth),
     );
   }
 
-  Map<int, TableColumnWidth> _harmonyColumnWidths(double tableWidth) {
-    final referenceWidth = switch (tableWidth) {
-      < 840 => 116.0,
-      < 1000 => 128.0,
-      _ => 136.0,
-    };
-    final subjectWidth = math.max(
-      280.0,
-      tableWidth -
-          52.0 -
-          (widget.metadata.hasTypes ? 130.0 : 0.0) -
-          (referenceWidth * _visibleGospels.length),
-    );
+  Map<int, TableColumnWidth> _harmonyColumnWidths(
+    double tableWidth,
+    bool compact,
+  ) {
+    final numberWidth = compact ? 40.0 : 48.0;
+    final separateType = widget.metadata.hasTypes && !compact;
+    final typeWidth = separateType ? 120.0 : 0.0;
+    final dataWidth = tableWidth - numberWidth - typeWidth;
+    final subjectWidth = compact ? 188.0 : math.max(280.0, dataWidth * .32);
     return {
-      0: const FixedColumnWidth(52),
+      0: FixedColumnWidth(numberWidth),
       _subjectColumn: FixedColumnWidth(subjectWidth),
-      if (widget.metadata.hasTypes)
-        _subjectColumn + 1: const FixedColumnWidth(130),
+      if (separateType) _subjectColumn + 1: FixedColumnWidth(typeWidth),
       for (var i = 0; i < _visibleGospels.length; i++)
-        i + _subjectColumn + (widget.metadata.hasTypes ? 2 : 1):
-            FixedColumnWidth(referenceWidth),
+        i + _subjectColumn + (separateType ? 2 : 1): FixedColumnWidth(
+          (dataWidth - subjectWidth) / _visibleGospels.length,
+        ),
     };
   }
 
@@ -6571,6 +6974,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
     List<GospelReference> refs,
     TextStyle? style,
     TextAlign align,
+    String tooltipMessage,
   ) {
     final filteredRefs = refs
         .where(_referenceHasData)
@@ -6605,9 +7009,6 @@ class _HarmonyTableState extends State<HarmonyTable> {
 
     final referenceDirection = widget.topicLanguage.direction;
     final wrapAlignment = _wrapAlignmentForTextAlign(align, referenceDirection);
-    final tooltipMessage = MenuLanguageScope.of(
-      context,
-    ).ui.clickToReadInChapter;
     final topicNumber = _topicNumberForDisplay(
       topic,
       zeroBasedIndex: displayIndex,
@@ -6678,7 +7079,10 @@ class _HarmonyTableState extends State<HarmonyTable> {
     }
 
     final cellContent = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: useCombinedHoverPreview ? 2 : 7,
+        vertical: 6,
+      ),
       child: Align(
         alignment: cellAlignment,
         child: Wrap(
@@ -6744,23 +7148,31 @@ class _HarmonyTableState extends State<HarmonyTable> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(builder: _buildTable);
+
+  Widget _buildTable(BuildContext context, BoxConstraints constraints) {
+    final availableWidth = constraints.maxWidth.isFinite
+        ? constraints.maxWidth
+        : MediaQuery.sizeOf(context).width;
+    final compact = availableWidth < StudyTheme.compact;
+    final separateType = widget.metadata.hasTypes && !compact;
     final theme = Theme.of(context);
     final menuLanguage = MenuLanguageScope.of(context);
     final labels = menuLanguage.ui;
     final isRtl = widget.topicLanguage.direction == TextDirection.rtl;
-    final headerStyle = theme.textTheme.titleSmall?.copyWith(
-      fontWeight: FontWeight.w600,
-      letterSpacing: 0,
-      color: theme.colorScheme.onSurface,
-    );
+    final headerStyle = StudyTheme.heading(17, color: Colors.white);
     final subjectStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: StudyTheme.ink,
       fontWeight: FontWeight.w600,
-      height: 1.18,
+      height: 1.4,
     );
-    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.18);
-    final borderColor = theme.dividerColor.withValues(alpha: 0.4);
-    final headerBackground = theme.colorScheme.surfaceContainerHighest;
+    final referenceStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: StudyTheme.plum,
+      fontWeight: FontWeight.w600,
+      height: 1.4,
+    );
+    const borderColor = StudyTheme.line;
+    const headerBackground = StudyTheme.plum;
     final subjectAlign = isRtl ? TextAlign.right : TextAlign.left;
     final referenceAlign = isRtl ? TextAlign.right : TextAlign.center;
     assert(
@@ -6769,7 +7181,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
     );
 
     final headerRow = TableRow(
-      decoration: BoxDecoration(color: headerBackground),
+      decoration: const BoxDecoration(color: headerBackground),
       children: [
         _buildHeaderCell('#', headerStyle, TextAlign.center),
         _buildHeaderCell(
@@ -6777,7 +7189,7 @@ class _HarmonyTableState extends State<HarmonyTable> {
           headerStyle,
           subjectAlign,
         ),
-        if (widget.metadata.hasTypes)
+        if (separateType)
           _buildHeaderCell(
             datasetControlLabel('type', widget.topicLanguage.code),
             headerStyle,
@@ -6788,10 +7200,13 @@ class _HarmonyTableState extends State<HarmonyTable> {
             widget.topicLanguage.gospelNames[Gospel.values.indexOf(gospel)],
             headerStyle,
             TextAlign.center,
+            gospel: true,
           ),
       ],
     );
-    final bodyRows = <TableRow>[];
+    final topicIndexes = <Topic, int>{
+      for (var i = 0; i < widget.topics.length; i++) widget.topics[i]: i,
+    };
     if (_lastDataset != widget.metadata.datasetId) {
       _collapsedTypes.clear();
       _lastDataset = widget.metadata.datasetId;
@@ -6812,259 +7227,383 @@ class _HarmonyTableState extends State<HarmonyTable> {
           if (!_collapsedTypes.contains(group.typeId)) ...group.items,
         ],
     ];
-    for (final entry in displayEntries) {
+    TableRow buildRow(Object entry) {
       if (entry is DatasetItemGroup<Topic>) {
         final collapsed = _collapsedTypes.contains(entry.typeId);
         final label = widget.metadata.typeLabel(
           entry.typeId,
           widget.topicLanguage.code,
         );
-        bodyRows.add(
-          TableRow(
-            decoration: BoxDecoration(color: headerBackground),
-            children: [
-              const SizedBox.shrink(),
-              TextButton.icon(
-                key: ValueKey('type-group-${entry.typeId}'),
-                onPressed: () => setState(() {
-                  if (collapsed) {
-                    _collapsedTypes.remove(entry.typeId);
-                  } else {
-                    _collapsedTypes.add(entry.typeId);
-                  }
-                }),
-                icon: Icon(collapsed ? Icons.chevron_right : Icons.expand_more),
-                label: Text(
-                  '$label — ${entry.count} ${datasetControlLabel('items', widget.topicLanguage.code)}',
-                ),
-                style: TextButton.styleFrom(
-                  alignment: AlignmentDirectional.centerStart,
-                ),
+        return TableRow(
+          decoration: const BoxDecoration(color: StudyTheme.lavender),
+          children: [
+            const SizedBox.shrink(),
+            TextButton.icon(
+              key: ValueKey('type-group-${entry.typeId}'),
+              onPressed: () => setState(() {
+                if (collapsed) {
+                  _collapsedTypes.remove(entry.typeId);
+                } else {
+                  _collapsedTypes.add(entry.typeId);
+                }
+              }),
+              icon: Icon(collapsed ? Icons.chevron_right : Icons.expand_more),
+              label: Text(
+                '$label — ${entry.count} ${datasetControlLabel('items', widget.topicLanguage.code)}',
               ),
-              for (
-                var column = 0;
-                column <
-                    _visibleGospels.length + (widget.metadata.hasTypes ? 1 : 0);
-                column++
-              )
-                const SizedBox.shrink(),
-            ],
-          ),
+              style: TextButton.styleFrom(
+                alignment: AlignmentDirectional.centerStart,
+              ),
+            ),
+            for (
+              var column = 0;
+              column < _visibleGospels.length + (separateType ? 1 : 0);
+              column++
+            )
+              const SizedBox.shrink(),
+          ],
         );
-        continue;
       }
       final topic = entry as Topic;
-      final i = widget.topics.indexOf(topic);
+      final i = topicIndexes[topic]!;
       final displayIndex = _displayIndexForRow(i);
       final grouped = _groupReferences(topic);
       final isEvenRow = i.isEven;
-      final baseColor = theme.colorScheme.surface;
-      final alternateColor = theme.colorScheme.surfaceContainerHighest
-          .withValues(alpha: 0.35);
-      bodyRows.add(
-        TableRow(
-          decoration: BoxDecoration(
-            color: isEvenRow ? baseColor : alternateColor,
+      return TableRow(
+        decoration: BoxDecoration(
+          color: isEvenRow ? StudyTheme.paper : StudyTheme.ivory,
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+            child: Text(
+              _localizedTopicNumber(
+                _topicNumberForDisplay(topic, zeroBasedIndex: displayIndex),
+                widget.topicLanguage,
+              ),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: StudyTheme.muted,
+              ),
+            ),
           ),
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
-              child: Text(
-                _localizedTopicNumber(
-                  _topicNumberForDisplay(topic, zeroBasedIndex: displayIndex),
-                  widget.topicLanguage,
+          TableCell(
+            verticalAlignment: TableCellVerticalAlignment.middle,
+            child: Tooltip(
+              message: labels.clickToReadAllReferences,
+              waitDuration: const Duration(milliseconds: 400),
+              child: BrowserRouteLink(
+                uri: _topicRouteUri(topic, displayIndex),
+                builder: (context, followLink) => TableRowInkWell(
+                  onTap: followLink,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 12,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildTopicSubject(
+                          topic: topic,
+                          textAlign: subjectAlign,
+                          isRtl: isRtl,
+                          textStyle: subjectStyle,
+                        ),
+                        if (compact && widget.metadata.hasTypes)
+                          Text(
+                            widget.metadata.typeLabel(
+                              topic.typeId,
+                              widget.topicLanguage.code,
+                            ),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: StudyTheme.muted,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
-                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+          if (separateType)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              child: Text(
+                widget.metadata.typeLabel(
+                  topic.typeId,
+                  widget.topicLanguage.code,
+                ),
                 style: subjectStyle,
               ),
             ),
+          for (final gospel in _visibleGospels)
             TableCell(
-              verticalAlignment: TableCellVerticalAlignment.top,
-              child: Tooltip(
-                message: labels.clickToReadAllReferences,
-                waitDuration: const Duration(milliseconds: 400),
-                child: BrowserRouteLink(
-                  uri: _topicRouteUri(topic, displayIndex),
-                  builder: (context, followLink) => TableRowInkWell(
-                    onTap: followLink,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      child: _buildTopicSubject(
-                        topic: topic,
-                        textAlign: subjectAlign,
-                        isRtl: isRtl,
-                        textStyle: subjectStyle,
-                      ),
-                    ),
-                  ),
-                ),
+              verticalAlignment: TableCellVerticalAlignment.middle,
+              child: _buildReferenceCell(
+                topic,
+                displayIndex,
+                gospel.canonicalName,
+                grouped[gospel.canonicalName] ?? const <GospelReference>[],
+                referenceStyle,
+                referenceAlign,
+                labels.clickToReadInChapter,
               ),
             ),
-            if (widget.metadata.hasTypes)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-                child: Text(
-                  widget.metadata.typeLabel(
-                    topic.typeId,
-                    widget.topicLanguage.code,
-                  ),
-                  style: subjectStyle,
-                ),
-              ),
-            for (final gospel in _visibleGospels)
-              TableCell(
-                verticalAlignment: TableCellVerticalAlignment.top,
-                child: _buildReferenceCell(
-                  topic,
-                  displayIndex,
-                  gospel.canonicalName,
-                  grouped[gospel.canonicalName] ?? const <GospelReference>[],
-                  referenceStyle,
-                  referenceAlign,
-                ),
-              ),
-          ],
-        ),
+        ],
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final availableWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : MediaQuery.sizeOf(context).width;
-        final tableWidth = _harmonyTableWidthFor(availableWidth);
-        final horizontalFrameWidth = math.max(availableWidth, tableWidth);
-        final columnWidths = _harmonyColumnWidths(tableWidth);
+    final tableWidth = _harmonyTableWidthFor(availableWidth, compact);
+    final horizontalFrameWidth = math.max(availableWidth, tableWidth);
+    final columnWidths = _harmonyColumnWidths(tableWidth, compact);
 
-        return Column(
-          children: [
-            if (groups != null)
-              Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: Wrap(
-                  children: [
-                    TextButton(
-                      key: const ValueKey('expand-all-types'),
-                      onPressed: () => setState(_collapsedTypes.clear),
-                      child: Text(
-                        datasetControlLabel(
-                          'expandAll',
-                          widget.topicLanguage.code,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      key: const ValueKey('collapse-all-types'),
-                      onPressed: () => setState(
-                        () => _collapsedTypes.addAll(
-                          groups.map((group) => group.typeId),
-                        ),
-                      ),
-                      child: Text(
-                        datasetControlLabel(
-                          'collapseAll',
-                          widget.topicLanguage.code,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            SingleChildScrollView(
-              controller: _headerHorizontalController,
+    const gridLine = BorderSide(color: borderColor, width: .7);
+    Widget bodyTable(List<TableRow> rows) => Table(
+      border: const TableBorder(
+        horizontalInside: gridLine,
+        verticalInside: gridLine,
+        bottom: gridLine,
+        left: gridLine,
+        right: gridLine,
+      ),
+      columnWidths: columnWidths,
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      children: rows,
+    );
+    final keepAllRows =
+        displayEntries.length <= _lazyRowThreshold ||
+        AdminContentScope.allowsSelection(context);
+    final indexed = kIsWeb && !keepAllRows;
+    final revision = (
+      widget.topics,
+      widget.topicDisplayIndexes,
+      widget.topicLanguage,
+      widget.metadata,
+      widget.groupedByType,
+      Object.hashAllUnordered(_collapsedTypes),
+      compact,
+      Object.hashAll(_visibleGospels),
+    );
+    final match = indexed && _findMatch?.$1 == revision ? _findMatch : null;
+
+    Widget frame(Widget child) => SizedBox(
+      width: horizontalFrameWidth,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(width: tableWidth, child: child),
+      ),
+    );
+    Widget visibleRow(int index) {
+      final row = buildRow(displayEntries[index]);
+      if (match == null || match.$2 != index || match.$3 >= row.children.length) {
+        return bodyTable([row]);
+      }
+      final cells = [...row.children];
+      cells[match.$3] = KeyedSubtree(
+        key: _matchedCellKey,
+        child: cells[match.$3],
+      );
+      return bodyTable([
+        TableRow(
+          decoration: const BoxDecoration(color: StudyTheme.lavender),
+          children: cells,
+        ),
+      ]);
+    }
+
+    // A matched row gets its own sliver. It has a real layout position even
+    // outside the cache extent, so Find can reveal variable-height RTL/LTR cells.
+    Widget rowsFrom(int start, int count) => SliverList.builder(
+      itemCount: count,
+      itemBuilder: (_, index) => visibleRow(start + index),
+    );
+    final body = keepAllRows
+        ? SingleChildScrollView(
+            controller: _verticalController,
+            child: SingleChildScrollView(
+              controller: _bodyHorizontalController,
               scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: horizontalFrameWidth,
-                child: Center(
-                  child: SizedBox(
-                    width: tableWidth,
-                    child: Table(
-                      border: TableBorder(
-                        verticalInside: BorderSide(
-                          color: borderColor,
-                          width: 0.6,
-                        ),
-                        top: BorderSide(color: borderColor, width: 0.8),
-                        bottom: BorderSide(color: borderColor, width: 0.6),
-                        left: BorderSide(color: borderColor, width: 0.8),
-                        right: BorderSide(color: borderColor, width: 0.8),
-                      ),
-                      columnWidths: columnWidths,
-                      defaultVerticalAlignment:
-                          TableCellVerticalAlignment.middle,
-                      children: [headerRow],
-                    ),
-                  ),
-                ),
-              ),
+              child: frame(bodyTable(displayEntries.map(buildRow).toList())),
             ),
-            Expanded(
-              child: Scrollbar(
+          )
+        : SingleChildScrollView(
+            controller: _bodyHorizontalController,
+            scrollDirection: Axis.horizontal,
+            child: frame(
+              CustomScrollView(
                 controller: _verticalController,
-                thumbVisibility: true,
-                child: SingleChildScrollView(
-                  controller: _verticalController,
-                  child: Scrollbar(
-                    controller: _bodyHorizontalController,
-                    thumbVisibility: true,
-                    notificationPredicate: (notification) =>
-                        notification.metrics.axis == Axis.horizontal,
-                    child: SingleChildScrollView(
-                      controller: _bodyHorizontalController,
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(
-                        width: horizontalFrameWidth,
-                        child: Center(
-                          child: SizedBox(
-                            width: tableWidth,
-                            child: Table(
-                              border: TableBorder(
-                                horizontalInside: BorderSide(
-                                  color: borderColor,
-                                  width: 0.6,
-                                ),
-                                verticalInside: BorderSide(
-                                  color: borderColor,
-                                  width: 0.6,
-                                ),
-                                bottom: BorderSide(
-                                  color: borderColor,
-                                  width: 0.8,
-                                ),
-                                left: BorderSide(
-                                  color: borderColor,
-                                  width: 0.8,
-                                ),
-                                right: BorderSide(
-                                  color: borderColor,
-                                  width: 0.8,
-                                ),
-                              ),
-                              columnWidths: columnWidths,
-                              defaultVerticalAlignment:
-                                  TableCellVerticalAlignment.middle,
-                              children: bodyRows,
-                            ),
-                          ),
-                        ),
+                slivers: [
+                  if (match != null) ...[
+                    if (match.$2 > 0) rowsFrom(0, match.$2),
+                    SliverToBoxAdapter(child: visibleRow(match.$2)),
+                    if (match.$2 + 1 < displayEntries.length)
+                      rowsFrom(
+                        match.$2 + 1,
+                        displayEntries.length - match.$2 - 1,
+                      ),
+                  ] else
+                    rowsFrom(0, displayEntries.length),
+                  const SliverPadding(padding: EdgeInsets.only(bottom: 12)),
+                ],
+              ),
+            ),
+          );
+    Iterable<List<String>> findRows() sync* {
+      for (final entry in displayEntries) {
+        if (entry is DatasetItemGroup<Topic>) {
+          yield [
+            '',
+            '${widget.metadata.typeLabel(entry.typeId, widget.topicLanguage.code)} — ${entry.count} ${datasetControlLabel('items', widget.topicLanguage.code)}',
+          ];
+          continue;
+        }
+        final topic = entry as Topic;
+        final type = widget.metadata.hasTypes
+            ? widget.metadata.typeLabel(topic.typeId, widget.topicLanguage.code)
+            : '';
+        yield [
+          _localizedTopicNumber(
+            _topicNumberForDisplay(
+              topic,
+              zeroBasedIndex: _displayIndexForRow(topicIndexes[topic]!),
+            ),
+            widget.topicLanguage,
+          ),
+          if (compact && type.isNotEmpty)
+            '${topic.name}\n$type'
+          else
+            topic.name,
+          if (separateType) type,
+          for (final gospel in _visibleGospels)
+            _harmonyReferenceCellText(topic, gospel, widget.topicLanguage.code),
+        ];
+      }
+    }
+
+    return Column(
+      children: [
+        if (groups != null)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Wrap(
+              children: [
+                TextButton(
+                  key: const ValueKey('expand-all-types'),
+                  onPressed: () => setState(_collapsedTypes.clear),
+                  child: Text(
+                    datasetControlLabel('expandAll', widget.topicLanguage.code),
+                  ),
+                ),
+                TextButton(
+                  key: const ValueKey('collapse-all-types'),
+                  onPressed: () => setState(
+                    () => _collapsedTypes.addAll(
+                      groups.map((group) => group.typeId),
+                    ),
+                  ),
+                  child: Text(
+                    datasetControlLabel(
+                      'collapseAll',
+                      widget.topicLanguage.code,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        SingleChildScrollView(
+          controller: _headerHorizontalController,
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: horizontalFrameWidth,
+            child: Center(
+              child: SizedBox(
+                width: tableWidth,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(StudyTheme.radius),
+                  ),
+                  child: Table(
+                    border: TableBorder(
+                      verticalInside: BorderSide(
+                        color: borderColor,
+                        width: 0.6,
                       ),
                     ),
+                    columnWidths: columnWidths,
+                    defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                    children: [headerRow],
                   ),
                 ),
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+        Expanded(
+          child: Scrollbar(
+            controller: _verticalController,
+            thumbVisibility: true,
+            notificationPredicate: (event) =>
+                event.metrics.axis == Axis.vertical,
+            child: Scrollbar(
+              controller: _bodyHorizontalController,
+              thumbVisibility: true,
+              notificationPredicate: (event) =>
+                  event.metrics.axis == Axis.horizontal,
+              child: indexed
+                  ? BrowserTableFindIndex(
+                      revision: revision,
+                      buildRows: findRows,
+                      onMatch: (row, column) {
+                        if (row >= 0 && row < displayEntries.length) {
+                          _revealMatch(revision, row, column);
+                        }
+                      },
+                      child: body,
+                    )
+                  : body,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
 const _referencePreviewHoverDelay = Duration(milliseconds: 250);
+
+/// Follow real layout/scroll frames without waking an idle reader at 60 Hz.
+class _PreviewPositionTracker {
+  int _generation = 0;
+
+  void start(GlobalKey anchor, VoidCallback onMoved) {
+    final generation = ++_generation;
+    Rect? bounds() {
+      final box = anchor.currentContext?.findRenderObject() as RenderBox?;
+      return box != null && box.hasSize
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
+    }
+
+    var previous = bounds();
+    void afterLayout(Duration _) {
+      if (generation != _generation) return;
+      final current = bounds();
+      if (current != previous) {
+        previous = current;
+        onMoved();
+      }
+      WidgetsBinding.instance.addPostFrameCallback(afterLayout);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(afterLayout);
+  }
+
+  void stop() => _generation++;
+}
 
 class _ReferencePreviewDelay {
   Timer? _timer;
@@ -7151,7 +7690,8 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
   bool _isTriggerHovered = false;
   bool _isPreviewHovered = false;
   Timer? _hidePreviewTimer;
-  Timer? _repositionPreviewTimer;
+  final _positionTracker = _PreviewPositionTracker();
+  bool _watchingPreview = false;
   final _previewDelay = _ReferencePreviewDelay();
   final GlobalKey _anchorKey = GlobalKey();
   final GlobalKey _previewKey = GlobalKey();
@@ -7195,6 +7735,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     final queryParameters = <String, String>{
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
+        tableLocale: _datasetRouteParameters(context)['tableLocale'],
         bible: primaryLanguage,
         datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
@@ -7248,6 +7789,7 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     if (_previewEntry != null) {
       return;
     }
+    _watchPreview();
     _previewDelay.schedule(() {
       if (!mounted || !_isTriggerHovered || !widget.enableHoverPreview) {
         return;
@@ -7384,32 +7926,6 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       _previewSize = measured;
       _markPreviewNeedsBuild();
     });
-  }
-
-  void _startRepositionListener() {
-    _repositionPreviewTimer?.cancel();
-    Rect? anchorRect() {
-      final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
-      return box != null && box.hasSize
-          ? box.localToGlobal(Offset.zero) & box.size
-          : null;
-    }
-
-    var previousAnchor = anchorRect();
-    _repositionPreviewTimer = Timer.periodic(const Duration(milliseconds: 16), (
-      _,
-    ) {
-      final currentAnchor = anchorRect();
-      if (currentAnchor == previousAnchor) return;
-      previousAnchor = currentAnchor;
-      // Follow scrolling without rebuilding the verse text while stationary.
-      _markPreviewNeedsBuild();
-    });
-  }
-
-  void _stopRepositionListener() {
-    _repositionPreviewTimer?.cancel();
-    _repositionPreviewTimer = null;
   }
 
   Future<void> _loadPreview() async {
@@ -7560,11 +8076,13 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
       },
     );
     overlay.insert(_previewEntry!);
-    _startRepositionListener();
+    WidgetsBinding.instance.addObserver(this);
+    _positionTracker.start(_anchorKey, _markPreviewNeedsBuild);
   }
 
   void _hidePreview() {
-    _stopRepositionListener();
+    _positionTracker.stop();
+    if (_previewEntry != null) WidgetsBinding.instance.removeObserver(this);
     _previewEntry?.remove();
     _previewEntry = null;
   }
@@ -7586,10 +8104,9 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
         oldReference.verses != reference.verses;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
+  void _watchPreview() {
+    if (_watchingPreview) return;
+    _watchingPreview = true;
     catalogRevision.addListener(_resetPreview);
     accountAccess.addListener(_accessChanged);
   }
@@ -7740,10 +8257,10 @@ class _ReferenceHoverTextState extends State<ReferenceHoverText>
     _previewLoadGeneration++;
     _previewDelay.cancel();
     _cancelHideTimer();
-    catalogRevision.removeListener(_resetPreview);
-    accountAccess.removeListener(_accessChanged);
-    WidgetsBinding.instance.removeObserver(this);
-    _stopRepositionListener();
+    if (_watchingPreview) {
+      catalogRevision.removeListener(_resetPreview);
+      accountAccess.removeListener(_accessChanged);
+    }
     _hidePreview();
     super.dispose();
   }
@@ -7896,7 +8413,8 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
   bool _isPreviewHovered = false;
   OverlayEntry? _previewEntry;
   Timer? _hidePreviewTimer;
-  Timer? _repositionPreviewTimer;
+  final _positionTracker = _PreviewPositionTracker();
+  bool _watchingPreview = false;
   final _previewDelay = _ReferencePreviewDelay();
   final GlobalKey _anchorKey = GlobalKey();
   final GlobalKey _previewKey = GlobalKey();
@@ -7925,6 +8443,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     final queryParameters = <String, String>{
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
+        tableLocale: _datasetRouteParameters(context)['tableLocale'],
         bible: primaryLanguage,
         datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
@@ -8086,6 +8605,7 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     if (_previewEntry != null) {
       return;
     }
+    _watchPreview();
     _previewDelay.schedule(() {
       if (!mounted || !_isTriggerHovered) {
         return;
@@ -8160,32 +8680,6 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       _previewSize = measured;
       _markPreviewNeedsBuild();
     });
-  }
-
-  void _startRepositionListener() {
-    _repositionPreviewTimer?.cancel();
-    Rect? anchorRect() {
-      final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
-      return box != null && box.hasSize
-          ? box.localToGlobal(Offset.zero) & box.size
-          : null;
-    }
-
-    var previousAnchor = anchorRect();
-    _repositionPreviewTimer = Timer.periodic(const Duration(milliseconds: 16), (
-      _,
-    ) {
-      final currentAnchor = anchorRect();
-      if (currentAnchor == previousAnchor) return;
-      previousAnchor = currentAnchor;
-      // Follow scrolling without rebuilding the verse text while stationary.
-      _markPreviewNeedsBuild();
-    });
-  }
-
-  void _stopRepositionListener() {
-    _repositionPreviewTimer?.cancel();
-    _repositionPreviewTimer = null;
   }
 
   Future<MapEntry<String, _ReferencePreviewCache>> _fetchPreview(
@@ -8364,11 +8858,13 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
       },
     );
     overlay.insert(_previewEntry!);
-    _startRepositionListener();
+    WidgetsBinding.instance.addObserver(this);
+    _positionTracker.start(_anchorKey, _markPreviewNeedsBuild);
   }
 
   void _hidePreview() {
-    _stopRepositionListener();
+    _positionTracker.stop();
+    if (_previewEntry != null) WidgetsBinding.instance.removeObserver(this);
     _previewEntry?.remove();
     _previewEntry = null;
   }
@@ -8399,10 +8895,9 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     return false;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
+  void _watchPreview() {
+    if (_watchingPreview) return;
+    _watchingPreview = true;
     catalogRevision.addListener(_resetPreview);
     accountAccess.addListener(_accessChanged);
   }
@@ -8620,10 +9115,10 @@ class _ReferenceCellHoverPreviewState extends State<ReferenceCellHoverPreview>
     _previewLoadGeneration++;
     _previewDelay.cancel();
     _cancelHideTimer();
-    catalogRevision.removeListener(_resetPreview);
-    accountAccess.removeListener(_accessChanged);
-    WidgetsBinding.instance.removeObserver(this);
-    _stopRepositionListener();
+    if (_watchingPreview) {
+      catalogRevision.removeListener(_resetPreview);
+      accountAccess.removeListener(_accessChanged);
+    }
     _hidePreview();
     super.dispose();
   }
@@ -8801,7 +9296,8 @@ class ChapterNav extends StatelessWidget {
           ];
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      color: theme.colorScheme.secondaryContainer,
+      margin: const EdgeInsets.symmetric(vertical: 6),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
@@ -8814,8 +9310,8 @@ class ChapterNav extends StatelessWidget {
                 child: Text(
                   title,
                   textAlign: TextAlign.center,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
                   ),
                 ),
               ),
@@ -8851,17 +9347,15 @@ class TranslationPanelCard extends StatelessWidget {
       title,
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+      style: theme.textTheme.titleMedium?.copyWith(
+        color: theme.colorScheme.primary,
+      ),
     );
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
-      ),
+    return Card(
+      margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Directionality(
           textDirection: textDirection,
           child: Column(
@@ -9004,7 +9498,7 @@ class ChapterTopicHeading extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final labels = MenuLanguageScope.of(context).ui;
-    final borderRadius = BorderRadius.circular(8);
+    final borderRadius = BorderRadius.circular(StudyTheme.radius);
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 10),
       child: Tooltip(
@@ -9018,9 +9512,7 @@ class ChapterTopicHeading extends StatelessWidget {
           ),
           openInNewTab: true,
           builder: (context, followLink) => Material(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.35,
-            ),
+            color: theme.colorScheme.secondaryContainer,
             borderRadius: borderRadius,
             child: InkWell(
               onTap: followLink,
@@ -9069,6 +9561,8 @@ enum _ComparisonScopeMode { highlight, custom, chapter }
 class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   static const double _minTextScale = _zoomMin;
   static const double _maxTextScale = _zoomMax;
+  int _chapterGeneration = 0;
+  int _headingsGeneration = 0;
   bool _loadingChapter = true;
   String? _error;
   List<_VerseLine> _chapterVerses = const <_VerseLine>[];
@@ -9077,6 +9571,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   bool _loadingHarmonyTopics = false;
   String? _harmonyTopicsError;
   List<Topic> _harmonyTopics = const <Topic>[];
+  Map<int, Topic>? _chapterHeadings;
   bool _withDiacritics = false;
   bool _showTopicNames = false;
   bool _interlinearView = false;
@@ -9170,9 +9665,13 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Future<void> _reloadAfterCatalogChange() async {
     await _refreshLanguagesForToolbar();
     if (!mounted) return;
-    await _loadChapter();
-    if (mounted && _isHarmonySource) await _loadHarmonyTopics();
-    if (mounted) await _refreshTopicLanguageMetadata();
+    _harmonyTopics = const [];
+    _chapterHeadings = null;
+    _headingsGeneration++;
+    _loadingHarmonyTopics = false;
+    _harmonyTopicsError = null;
+    if (_showTopicNames) unawaited(_loadHarmonyTopics());
+    await Future.wait([_loadChapter(), _refreshTopicLanguageMetadata()]);
   }
 
   @override
@@ -9260,10 +9759,8 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _withDiacritics = withDiacritics;
       _syncComparisonDiacriticsWithGlobal();
     });
+    if (_showTopicNames) unawaited(_loadHarmonyTopics());
     await _loadChapter();
-    if (mounted && _isHarmonySource) {
-      await _loadHarmonyTopics();
-    }
   }
 
   Future<void> _refreshLanguagesForToolbar() async {
@@ -9549,6 +10046,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final queryParameters = <String, String>{
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
+        tableLocale: _datasetRouteParameters(context)['tableLocale'],
         bible: _languageOption,
         datasetId: widget.datasetId,
         topicLanguage: widget.topicLanguage,
@@ -9579,6 +10077,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _loadHarmonyTopics() async {
+    final generation = ++_headingsGeneration;
     setState(() {
       _loadingHarmonyTopics = true;
       _harmonyTopicsError = null;
@@ -9588,15 +10087,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         topicLanguage: widget.topicLanguage,
         datasetId: widget.datasetId,
       );
-      if (!mounted) {
+      if (!mounted || generation != _headingsGeneration) {
         return;
       }
       setState(() {
         _harmonyTopics = list;
+        _chapterHeadings = null;
         _loadingHarmonyTopics = false;
       });
     } catch (e) {
-      if (!mounted) {
+      if (!mounted || generation != _headingsGeneration) {
         return;
       }
       setState(() {
@@ -9606,9 +10106,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     }
   }
 
-  Set<int> _topicVerseNumbersForCurrentChapter(GospelReference reference) {
+  Set<int> _topicVerseNumbersForCurrentChapter(
+    GospelReference reference,
+    int maxVerse,
+  ) {
     final verses = <int>{};
-    final maxVerse = _chapterVerses.length;
     if (reference.chapter <= 0 || maxVerse <= 0) {
       return verses;
     }
@@ -9747,6 +10249,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _loadChapter() async {
+    final generation = ++_chapterGeneration;
     final bookParam = _bookParameter;
     if (widget.chapter <= 0 || bookParam.isEmpty) {
       setState(() {
@@ -9761,6 +10264,16 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _error = null;
     });
 
+    // Comparison ranges come from the route or picker, independent of the
+    // main chapter response. Start them in the same network round trip.
+    unawaited(
+      _loadReadingBatches(
+        List.of(_comparisons),
+        limit: 2,
+        active: () => mounted && generation == _chapterGeneration,
+        load: _loadComparisonPassage,
+      ),
+    );
     try {
       final verses = _normalizeVerseLinesForDisplay(
         await _ApiCache.fetchChapter(
@@ -9776,21 +10289,19 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       final start = highlights.isEmpty
           ? null
           : (highlights.toList()..sort()).first;
-      if (!mounted) {
+      if (!mounted || generation != _chapterGeneration) {
         return;
       }
       setState(() {
         _chapterVerses = verses;
+        _chapterHeadings = null;
         _highlightVerses = highlights;
         _highlightStart = start;
         _loadingChapter = false;
       });
-      for (final comparison in _comparisons) {
-        _loadComparisonPassage(comparison);
-      }
       _scrollToHighlightedVerse();
     } catch (e) {
-      if (!mounted) {
+      if (!mounted || generation != _chapterGeneration) {
         return;
       }
       setState(() {
@@ -9812,11 +10323,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       _withDiacritics = next;
       _syncComparisonDiacriticsWithGlobal();
     });
-    await _persistArabicDiacriticsPreference(next);
-    await _loadChapter();
-    if (_isHarmonySource) {
-      await _loadHarmonyTopics();
-    }
+    await Future.wait([
+      _persistArabicDiacriticsPreference(next),
+      _loadChapter(),
+    ]);
   }
 
   Future<void> _updateSelectedVersion(String newVersion) async {
@@ -9830,6 +10340,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final selection = await _readerLanguagesForDataset(
       language,
       widget.datasetId,
+      tableLocale: _datasetRouteParameters(context)['tableLocale'],
     );
     if (!mounted) return;
     final sanitized = language.code == 'arabic'
@@ -9866,13 +10377,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     String? markerLanguage,
     String? markerVersion,
   }) {
-    final TextStyle baseStyle =
-        theme.textTheme.bodyLarge?.copyWith(height: 1.6) ??
-        const TextStyle(fontSize: 16, height: 1.6);
+    final TextStyle baseStyle = scriptureStyle(theme);
     final TextStyle verseStyle = highlighted
         ? baseStyle.copyWith(fontWeight: FontWeight.w700)
         : baseStyle;
     final TextStyle numberStyle = baseStyle.copyWith(
+      color: theme.colorScheme.primary,
       fontWeight: highlighted ? FontWeight.w700 : FontWeight.w600,
     );
     return Padding(
@@ -9885,7 +10395,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         selectionColor: Theme.of(
           context,
         ).colorScheme.primary.withValues(alpha: 0.3),
-        textScaler: TextScaler.linear(_textScale),
+        textScaler: ReadingTextScaler.of(context, _textScale),
         textAlign: TextAlign.start,
         text: TextSpan(
           style: verseStyle,
@@ -9908,6 +10418,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     final queryParameters = <String, String>{
       ..._datasetRouteParameters(context, datasetId: widget.datasetId),
       ...readerLanguageQueryParameters(
+        tableLocale: _datasetRouteParameters(context)['tableLocale'],
         bible: language,
         datasetId: widget.datasetId,
         topicLanguage: selection.topic,
@@ -9989,12 +10500,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
     );
   }
 
-  List<_ChapterVerseGroup> _buildChapterVerseGroups(List<_VerseLine> verses) {
-    if (!_showTopicNames || verses.isEmpty || _harmonyTopics.isEmpty) {
-      return [_ChapterVerseGroup(topic: null, verses: verses)];
-    }
-
+  Map<int, Topic> _indexChapterHeadings() {
     final canonicalBook = _currentCanonicalBook;
+    // Translations can omit verse numbers. Use the last numbered verse as
+    // the upper bound when mapping references into this chapter.
+    final maxVerse = _chapterMaxVerse;
     final topicByVerse = <int, Topic>{};
     for (final topic in _harmonyTopics) {
       final topicTitle = topic.name.trim();
@@ -10007,13 +10517,23 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         }
         final verseNumbers = _topicVerseNumbersForCurrentChapter(
           reference,
-        ).toList()..sort();
+          maxVerse,
+        );
         for (final number in verseNumbers) {
           topicByVerse.putIfAbsent(number, () => topic);
         }
       }
     }
 
+    return topicByVerse;
+  }
+
+  List<_ChapterVerseGroup> _buildChapterVerseGroups(List<_VerseLine> verses) {
+    if (!_showTopicNames || verses.isEmpty || _harmonyTopics.isEmpty) {
+      return [_ChapterVerseGroup(topic: null, verses: verses)];
+    }
+
+    final topicByVerse = _chapterHeadings ??= _indexChapterHeadings();
     if (topicByVerse.isEmpty) {
       return [_ChapterVerseGroup(topic: null, verses: verses)];
     }
@@ -10247,7 +10767,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   Widget _wrapWithTextScale(BuildContext context, Widget child) {
     final mediaQuery = MediaQuery.of(context);
     return MediaQuery(
-      data: mediaQuery.copyWith(textScaler: TextScaler.linear(_textScale)),
+      data: mediaQuery.copyWith(
+        textScaler: ReadingTextScaler.of(context, _textScale),
+      ),
       child: child,
     );
   }
@@ -10355,10 +10877,10 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                 selectedVersion = choices.first.version;
               }
 
-              return Padding(
+              return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisSize: MainAxisSize.max,
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     DropdownButtonFormField<LanguageOption>(
@@ -10366,6 +10888,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         'reference-add-language-${selectedLanguage.code}',
                       ),
                       initialValue: selectedLanguage,
+                      isExpanded: true,
                       decoration: InputDecoration(labelText: labels.language),
                       items: _supportedLanguages
                           .map(
@@ -10403,6 +10926,7 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         'reference-add-version-${selectedLanguage.code}-${choices.length}-$selectedVersion',
                       ),
                       focusNode: versionFocusNode,
+                      isExpanded: true,
                       initialValue:
                           choices.any(
                             (choice) => choice.version == selectedVersion,
@@ -10451,9 +10975,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
                         });
                       },
                     ),
-                    const Spacer(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                    const SizedBox(height: 20),
+                    Wrap(
+                      alignment: WrapAlignment.end,
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
@@ -10539,9 +11063,12 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
   }
 
   Future<void> _loadComparisonPassage(_ComparisonPassage entry) async {
+    if (!_comparisons.contains(entry)) return;
+    final revision = ++entry.loadRevision;
     final bookParam = _bookParameter;
     if (widget.chapter <= 0 || bookParam.isEmpty) {
       setState(() {
+        entry.loading = false;
         entry.error =
             'This reference is missing details needed to load the text.';
       });
@@ -10569,7 +11096,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         language: entry.language,
         withDiacritics: entry.withDiacritics,
       );
-      if (!mounted) {
+      if (!mounted ||
+          revision != entry.loadRevision ||
+          !_comparisons.contains(entry)) {
         return;
       }
       setState(() {
@@ -10577,7 +11106,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
         entry.loading = false;
       });
     } catch (e) {
-      if (!mounted) {
+      if (!mounted ||
+          revision != entry.loadRevision ||
+          !_comparisons.contains(entry)) {
         return;
       }
       setState(() {
@@ -10828,11 +11359,11 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       panels: panels,
       textDirection: _languageOption.direction,
       status: [
-        if (_loadingHarmonyTopics) ...[
+        if (_showTopicNames && _loadingHarmonyTopics) ...[
           const LinearProgressIndicator(),
           const SizedBox(height: 8),
         ],
-        if (_harmonyTopicsError != null) ...[
+        if (_showTopicNames && _harmonyTopicsError != null) ...[
           Text(
             _harmonyTopicsError!,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -10994,10 +11525,9 @@ class _ReferenceViewerPageState extends State<ReferenceViewerPage> {
       textDirection: direction,
       child: Column(
         children: [
-          Material(
-            color: theme.colorScheme.surface,
-            elevation: 1,
-            surfaceTintColor: theme.colorScheme.surfaceTint,
+          ReaderTools(
+            label: _labels.text('reader.tools'),
+            version: _currentVersionLabel(),
             child: AppToolbar(
               language: _languageOption,
               version: _activeVersion,
@@ -11204,13 +11734,13 @@ class InterlinearVerseGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scaler = TextScaler.linear(
+    final scaler = ReadingTextScaler.of(
+      context,
       textScale.clamp(_zoomMin, _zoomMax).toDouble(),
     );
-    final resolvedTextStyle =
-        textStyle ?? theme.textTheme.bodyLarge?.copyWith(height: 1.6);
+    final resolvedTextStyle = textStyle ?? scriptureStyle(theme);
     final verseTextStyle = emphasized
-        ? resolvedTextStyle?.copyWith(fontWeight: FontWeight.w700)
+        ? resolvedTextStyle.copyWith(fontWeight: FontWeight.w700)
         : resolvedTextStyle;
     final resolvedLabelStyle =
         labelStyle ??
@@ -11234,34 +11764,38 @@ class InterlinearVerseGroup extends StatelessWidget {
             final verseText = text.isNotEmpty ? text : '—';
             return Padding(
               padding: const EdgeInsets.only(bottom: 4),
-              child: Directionality(
-                textDirection: translation.direction,
-                child: RichText(
-                  selectionRegistrar: SelectionContainer.maybeOf(context),
-                  selectionColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withValues(alpha: 0.3),
-                  textScaler: scaler,
-                  textAlign: TextAlign.start,
-                  text: TextSpan(
-                    style: resolvedTextStyle,
-                    children: [
-                      if (index == 0)
-                        TextSpan(
-                          text: '$verseMarker. ',
-                          style: verseTextStyle?.copyWith(
-                            fontWeight: FontWeight.w600,
+              child: SizedBox(
+                width: double.infinity,
+                child: Directionality(
+                  textDirection: translation.direction,
+                  child: RichText(
+                    selectionRegistrar: SelectionContainer.maybeOf(context),
+                    selectionColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.3),
+                    textScaler: scaler,
+                    textAlign: TextAlign.start,
+                    text: TextSpan(
+                      style: resolvedTextStyle,
+                      children: [
+                        if (index == 0)
+                          TextSpan(
+                            text: '$verseMarker. ',
+                            style: verseTextStyle.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      TextSpan(text: verseText, style: verseTextStyle),
-                      if (showTranslationLabels) ...[
-                        const TextSpan(text: ' '),
-                        TextSpan(
-                          text: '(${translation.label})',
-                          style: resolvedLabelStyle,
-                        ),
+                        TextSpan(text: verseText, style: verseTextStyle),
+                        if (showTranslationLabels) ...[
+                          const TextSpan(text: ' '),
+                          TextSpan(
+                            text: '(${translation.label})',
+                            style: resolvedLabelStyle,
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -11271,6 +11805,22 @@ class InterlinearVerseGroup extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Start independent passage requests together without issuing every request
+/// from a large topic or bookmarked comparison at once. Keep source order.
+Future<List<R>> _loadReadingBatches<T, R>(
+  List<T> items, {
+  required int limit,
+  required bool Function() active,
+  required Future<R> Function(T) load,
+}) async {
+  final result = <R>[];
+  for (var start = 0; start < items.length && active(); start += limit) {
+    final end = math.min(start + limit, items.length);
+    result.addAll(await Future.wait(items.getRange(start, end).map(load)));
+  }
+  return result;
 }
 
 class _ComparisonPassage {
@@ -11291,6 +11841,7 @@ class _ComparisonPassage {
   List<_VerseLine> verses = const <_VerseLine>[];
   String? error;
   bool loading = false;
+  int loadRevision = 0;
   bool withDiacritics;
 }
 
@@ -11968,7 +12519,7 @@ class _ChooseVersionScreenState extends State<ChooseVersionScreen> {
                   : () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
+                        StudyPageRoute(
                           builder: (_) => ChooseAuthorScreen(
                             topic: widget.topic,
                             version: _selected!,
@@ -12060,7 +12611,7 @@ class _ChooseAuthorScreenState extends State<ChooseAuthorScreen> {
                   : () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
+                        StudyPageRoute(
                           builder: (_) => AuthorComparisonScreen(
                             languageOption: _languageOptionForVersion(
                               widget.version,
@@ -12134,6 +12685,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   final Map<String, List<_ComparisonPassage>> _entryComparisons = {};
   final List<_ComparisonPassage> _comparisonTemplates = [];
   String? _error;
+  int _textGeneration = 0;
   bool _loading = true;
   bool _withDiacritics = false;
   bool _interlinearView = false;
@@ -12180,10 +12732,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
 
   List<GospelReference> get _visibleReferences {
     final references = <String, GospelReference>{};
-    for (final author in _selected) {
-      for (final entry in _texts[author] ?? const <_AuthorTextEntry>[]) {
-        final key = _entryKey(entry.reference);
-        references.putIfAbsent(key, () => entry.reference);
+    for (final reference in _topic.references) {
+      if (_selected.contains(_normalizeGospelName(reference.book))) {
+        references.putIfAbsent(_entryKey(reference), () => reference);
       }
     }
     return references.values.toList();
@@ -12393,6 +12944,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     bool preserveComparisons = false,
     bool reloadAllComparisons = false,
   }) async {
+    final generation = ++_textGeneration;
     if (_selected.isEmpty) {
       setState(() {
         _texts = {};
@@ -12412,18 +12964,29 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         _comparisonTemplates.clear();
       }
     });
+    final option = _languageOption;
+    final version = _activeVersion;
+    final withDiacritics = _withDiacritics;
+    final authorLabels = {
+      for (final author in _selected) author: _displayAuthorName(author),
+    };
+    final references = _topic.references
+        .where((ref) => _selected.contains(_normalizeGospelName(ref.book)))
+        .toList(growable: false);
+    if (_comparisonTemplates.isNotEmpty) {
+      _syncComparisonTemplatesToVisibleReferences(
+        reloadMissing: true,
+        reloadAll: reloadAllComparisons,
+      );
+    }
     try {
-      final option = _languageOption;
-      final version = _activeVersion;
-      final futures = _selected.map((author) async {
-        final refs = _topic.references.where(
-          (r) => _normalizeGospelName(r.book) == author,
-        );
-        final displayAuthor = _displayAuthorName(author);
-        final parts = <_AuthorTextEntry>[];
-        for (final ref in refs) {
+      final entries = await _loadReadingBatches(
+        references,
+        limit: 4,
+        active: () => mounted && generation == _textGeneration,
+        load: (ref) async {
           final bookId = ref.bookId.isNotEmpty ? ref.bookId : ref.book;
-          final verseLines = _normalizeVerseLinesForDisplay(
+          final verses = _normalizeVerseLinesForDisplay(
             await _ApiCache.fetchVerseRange(
               language: option.apiLanguage,
               version: version,
@@ -12432,59 +12995,51 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
               verse: ref.verses.trim().isEmpty ? '1' : ref.verses.trim(),
             ),
             language: option,
-            withDiacritics: _withDiacritics,
+            withDiacritics: withDiacritics,
           );
-          final text = verseLines
-              .map((v) {
-                if (v.number == null) {
-                  return v.text;
-                }
+          final text = verses
+              .map((verse) {
+                if (verse.number == null) return verse.text;
                 final marker = formatVerseMarker(
-                  v.number!,
+                  verse.number!,
                   language: option.apiLanguage,
-                  version: _activeVersion,
+                  version: version,
                 );
-                return '$marker. ${v.text}';
+                return '$marker. ${verse.text}';
               })
-              .join("\n");
+              .join('\n');
+          final author = authorLabels[_normalizeGospelName(ref.book)]!;
           final refLabel = ref.formattedReference;
-          final direction = option.direction;
-          final baseTitle = refLabel.isEmpty
-              ? displayAuthor
+          final title = refLabel.isEmpty
+              ? author
               : _combineBookAndReference(
-                  displayAuthor,
+                  author,
                   refLabel,
-                  direction,
+                  option.direction,
                   isArabic: option.code == 'arabic',
                 );
-          final title = baseTitle;
-          parts.add(
-            _AuthorTextEntry(
-              reference: ref,
-              title: title,
-              text: text,
-              verses: verseLines,
-              displayAuthor: displayAuthor,
-            ),
+          return _AuthorTextEntry(
+            reference: ref,
+            title: title,
+            text: text,
+            verses: verses,
+            displayAuthor: author,
           );
-        }
-        return MapEntry(author, parts);
-      });
-
-      final results = await Future.wait(futures);
-      if (!mounted) return;
-      setState(() {
-        _texts = Map.fromEntries(results);
-        _loading = false;
-      });
-      if (_comparisonTemplates.isNotEmpty) {
-        _syncComparisonTemplatesToVisibleReferences(
-          reloadMissing: true,
-          reloadAll: reloadAllComparisons,
+        },
+      );
+      if (!mounted || generation != _textGeneration) return;
+      final byAuthor = <String, List<_AuthorTextEntry>>{};
+      for (final entry in entries) {
+        (byAuthor[_normalizeGospelName(entry.reference.book)] ??= []).add(
+          entry,
         );
       }
+      setState(() {
+        _texts = byAuthor;
+        _loading = false;
+      });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _textGeneration) return;
       setState(() {
         _error = "Failed to fetch: $e";
         _loading = false;
@@ -12512,8 +13067,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       _withDiacritics = next;
       _syncTopicComparisonDiacriticsWithGlobal();
     });
-    await _persistArabicDiacriticsPreference(next);
-    await fetchTexts(preserveComparisons: true, reloadAllComparisons: true);
+    await Future.wait([
+      _persistArabicDiacriticsPreference(next),
+      fetchTexts(preserveComparisons: true, reloadAllComparisons: true),
+    ]);
   }
 
   Future<void> _changeMainTranslation(
@@ -12523,6 +13080,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     final selection = await _readerLanguagesForDataset(
       language,
       _topic.datasetId,
+      tableLocale: _datasetRouteParameters(context)['tableLocale'],
     );
     if (!mounted) return;
     final sanitizedVersion = _sanitizeVersionForLanguage(language, version);
@@ -12818,6 +13376,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             final created = _comparisonTemplateFrom(template);
             nextEntries.add(created);
             if (reloadMissing || reloadAll) {
+              created.loading = true;
               loads.add(MapEntry(reference, created));
             }
             continue;
@@ -12834,6 +13393,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             ..withDiacritics = template.withDiacritics;
           nextEntries.add(entry);
           if (reloadAll || shouldReload) {
+            entry.loading = true;
             loads.add(MapEntry(reference, entry));
           }
         }
@@ -12846,9 +13406,14 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
       }
     });
 
-    for (final load in loads) {
-      _loadEntryComparison(load.key, load.value);
-    }
+    unawaited(
+      _loadReadingBatches(
+        loads,
+        limit: 2,
+        active: () => mounted,
+        load: (load) => _loadEntryComparison(load.key, load.value),
+      ),
+    );
   }
 
   void _removeComparisonTemplate(_ComparisonPassage entry) {
@@ -12969,8 +13534,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Theme.of(context).dividerColor),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text(label),
             IconButton(
@@ -13033,10 +13598,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                   ? selectedVersion
                   : null;
 
-              return Padding(
+              return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisSize: MainAxisSize.max,
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     DropdownButtonFormField<LanguageOption>(
@@ -13044,6 +13609,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         'topic-add-language-${selectedLanguage.code}',
                       ),
                       initialValue: selectedLanguage,
+                      isExpanded: true,
                       decoration: InputDecoration(labelText: labels.language),
                       items: _supportedLanguages
                           .map(
@@ -13085,6 +13651,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                         'topic-add-version-${selectedLanguage.code}-$currentDropdownValue-${choices.length}',
                       ),
                       focusNode: versionFocusNode,
+                      isExpanded: true,
                       initialValue: currentDropdownValue,
                       decoration: InputDecoration(
                         labelText:
@@ -13110,43 +13677,37 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                             },
                     ),
                     const SizedBox(height: 16),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            labelText: labels.selected,
-                          ),
-                          child: selectedTemplates.isEmpty
-                              ? Text(
-                                  labels.selectVersions,
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
+                    InputDecorator(
+                      decoration: InputDecoration(labelText: labels.selected),
+                      child: selectedTemplates.isEmpty
+                          ? Text(
+                              labels.selectVersions,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            )
+                          : Wrap(
+                              textDirection: MenuLanguageScope.of(
+                                context,
+                              ).direction,
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < selectedTemplates.length;
+                                  index++
                                 )
-                              : Wrap(
-                                  textDirection: MenuLanguageScope.of(
+                                  buildSelectedTemplateChip(
                                     context,
-                                  ).direction,
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    for (
-                                      var index = 0;
-                                      index < selectedTemplates.length;
-                                      index++
-                                    )
-                                      buildSelectedTemplateChip(
-                                        context,
-                                        setModalState,
-                                        index,
-                                      ),
-                                  ],
-                                ),
-                        ),
-                      ),
+                                    setModalState,
+                                    index,
+                                  ),
+                              ],
+                            ),
                     ),
                     const SizedBox(height: 8),
                     CheckboxListTile(
@@ -13165,8 +13726,8 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
                       },
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                    Wrap(
+                      alignment: WrapAlignment.end,
                       children: [
                         FilledButton(
                           onPressed: () {
@@ -13199,11 +13760,16 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     GospelReference reference,
     _ComparisonPassage entry,
   ) async {
+    final entryKey = _entryKey(reference);
+    bool isVisible() => _entryComparisons[entryKey]?.contains(entry) == true;
+    if (!isVisible()) return;
+    final revision = ++entry.loadRevision;
     final bookParam = reference.bookId.trim().isNotEmpty
         ? reference.bookId.trim()
         : reference.book.trim();
     if (reference.chapter <= 0 || bookParam.isEmpty) {
       setState(() {
+        entry.loading = false;
         entry.error =
             'This reference is missing details needed to load the text.';
       });
@@ -13235,7 +13801,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         language: entry.language,
         withDiacritics: entry.withDiacritics,
       );
-      if (!mounted) {
+      if (!mounted || revision != entry.loadRevision || !isVisible()) {
         return;
       }
       setState(() {
@@ -13243,7 +13809,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         entry.loading = false;
       });
     } catch (e) {
-      if (!mounted) {
+      if (!mounted || revision != entry.loadRevision || !isVisible()) {
         return;
       }
       setState(() {
@@ -13342,9 +13908,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   }) {
     final markerLanguage = language ?? _languageOption;
     final markerVersion = version ?? _activeVersion;
-    final baseStyle =
-        theme.textTheme.bodyMedium?.copyWith(height: 1.5) ??
-        const TextStyle(fontSize: 15, height: 1.5);
+    final baseStyle = scriptureStyle(theme);
     final numberStyle = baseStyle.copyWith(fontWeight: FontWeight.w600);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -13353,7 +13917,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         selectionColor: Theme.of(
           context,
         ).colorScheme.primary.withValues(alpha: 0.3),
-        textScaler: TextScaler.linear(_textScale),
+        textScaler: ReadingTextScaler.of(context, _textScale),
         text: TextSpan(
           style: baseStyle,
           children: [
@@ -13421,7 +13985,9 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
   Widget _wrapWithTextScale(BuildContext context, Widget child) {
     final mediaQuery = MediaQuery.of(context);
     return MediaQuery(
-      data: mediaQuery.copyWith(textScaler: TextScaler.linear(_textScale)),
+      data: mediaQuery.copyWith(
+        textScaler: ReadingTextScaler.of(context, _textScale),
+      ),
       child: child,
     );
   }
@@ -13518,7 +14084,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
             language: _languageOption.apiLanguage,
             version: _activeVersion,
             textScale: _textScale,
-            textStyle: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+            textStyle: scriptureStyle(theme),
             showTranslationLabels: _showTranslationLabels,
           ),
         ),
@@ -13585,7 +14151,7 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
           if (_interlinearView)
             _buildEntryInterlinearSection(entry, comparisons, theme)
           else ...[
-            Text(entry.text),
+            Text(entry.text, style: scriptureStyle(theme)),
             if (comparisons.isNotEmpty) ...[
               const SizedBox(height: 8),
               ...comparisons.map(
@@ -13608,14 +14174,10 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
     LanguageOption option,
   ) {
     final entries = _texts[author] ?? const <_AuthorTextEntry>[];
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.45)),
-      ),
+    return Card(
+      margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 2),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -13724,61 +14286,74 @@ class _AuthorComparisonScreenState extends State<AuthorComparisonScreen> {
         accountTooltip: menuLanguage.ui.account,
         body: Column(
           children: [
-            AppToolbar(
-              titleWidget: Directionality(
-                textDirection: _topicLanguage.direction,
-                child: _buildTopicTitleNavigation(),
-              ),
-              language: option,
-              version: _activeVersion,
-              languages: readerLanguageOptions(),
-              languagesLoading: _languagesLoading,
-              onLanguageChanged: _handleToolbarLanguageChanged,
-              onVersionChanged: _handleToolbarVersionChanged,
-              onTranslationChanged: _changeMainTranslation,
-              showDiacriticsToggle: _hasArabicTextInvolved,
-              withDiacritics: _withDiacritics,
-              diacriticsToggleEnabled:
-                  _withDiacritics || _canDisplayDiacriticsForVisibleArabicText,
-              onDiacriticsToggled: _toggleTopicDiacritics,
-              primaryActions: [
-                FilledButton.icon(
-                  onPressed: (_visibleReferences.isEmpty || _loading)
-                      ? null
-                      : _showTopicComparisonPicker,
-                  style: _toolbarFilledStyle(context),
-                  icon: const Icon(Icons.library_add, size: 18),
-                  label: Text(_labels.addTranslation),
-                ),
-                _buildInterlinearToggleButton(),
-                _buildZoomControl(),
-              ],
+            Directionality(
+              textDirection: _topicLanguage.direction,
+              child: _buildTopicTitleNavigation(),
             ),
-            ResponsiveContentShell(
-              maxWidth: _maxPageContentWidth,
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ..._allAuthors.map(
-                    (author) => FilterChip(
-                      label: Text(_displayAuthorName(author)),
-                      selected: _selected.contains(author),
-                      onSelected: (val) {
-                        setState(() {
-                          if (val) {
-                            _selected.add(author);
-                          } else {
-                            _selected.remove(author);
-                          }
-                        });
-                        fetchTexts(preserveComparisons: true);
-                      },
+            Directionality(
+              textDirection: menuLanguage.direction,
+              child: ReaderTools(
+                label: _labels.text('reader.tools'),
+                version: _versionLabel(option.code, _activeVersion),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppToolbar(
+                      language: option,
+                      version: _activeVersion,
+                      languages: readerLanguageOptions(),
+                      languagesLoading: _languagesLoading,
+                      onLanguageChanged: _handleToolbarLanguageChanged,
+                      onVersionChanged: _handleToolbarVersionChanged,
+                      onTranslationChanged: _changeMainTranslation,
+                      showDiacriticsToggle: _hasArabicTextInvolved,
+                      withDiacritics: _withDiacritics,
+                      diacriticsToggleEnabled:
+                          _withDiacritics ||
+                          _canDisplayDiacriticsForVisibleArabicText,
+                      onDiacriticsToggled: _toggleTopicDiacritics,
+                      primaryActions: [
+                        FilledButton.icon(
+                          onPressed: (_visibleReferences.isEmpty || _loading)
+                              ? null
+                              : _showTopicComparisonPicker,
+                          style: _toolbarFilledStyle(context),
+                          icon: const Icon(Icons.library_add, size: 18),
+                          label: Text(_labels.addTranslation),
+                        ),
+                        _buildInterlinearToggleButton(),
+                        _buildZoomControl(),
+                      ],
                     ),
-                  ),
-                ],
+                    ResponsiveContentShell(
+                      maxWidth: _maxPageContentWidth,
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ..._allAuthors.map(
+                            (author) => FilterChip(
+                              label: Text(_displayAuthorName(author)),
+                              selected: _selected.contains(author),
+                              onSelected: (val) {
+                                setState(() {
+                                  if (val) {
+                                    _selected.add(author);
+                                  } else {
+                                    _selected.remove(author);
+                                  }
+                                });
+                                fetchTexts(preserveComparisons: true);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const Divider(height: 0),

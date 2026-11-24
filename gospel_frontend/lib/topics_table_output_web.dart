@@ -7,29 +7,22 @@ import 'dart:html' as html;
 import 'package:flutter/widgets.dart';
 import 'topics_table_document.dart';
 
-void downloadTopicsCsv(TopicsTableDocument document, String filename) {
-  final blob = html.Blob([document.toCsv()], 'text/csv;charset=utf-8');
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  final anchor = html.AnchorElement(href: url)
-    ..download = filename
-    ..style.display = 'none';
-  html.document.body!.append(anchor);
-  anchor.click();
-  anchor.remove();
-  Timer(const Duration(seconds: 1), () => html.Url.revokeObjectUrl(url));
-}
+const supportsTableOutput = true;
 
-void printTopicsTable() => html.window.print();
+Future<void> printTopicsTable(TopicsTableDocument document) async =>
+    html.window.print();
 
 /// Browser menu/Ctrl+P and the toolbar print action share the same full table.
 class TopicsTablePrintScope extends StatefulWidget {
   const TopicsTablePrintScope({
     super.key,
-    required this.document,
+    this.document,
+    this.buildDocument,
     required this.child,
   });
 
   final TopicsTableDocument? document;
+  final TopicsTableDocument Function()? buildDocument;
   final Widget child;
 
   @override
@@ -51,8 +44,9 @@ class _TopicsTablePrintScopeState extends State<TopicsTablePrintScope> {
   }
 
   void _prepare() {
-    final document = widget.document;
-    if (!_isCurrentRoute || document == null) return;
+    if (!_isCurrentRoute) return;
+    final document = widget.buildDocument?.call() ?? widget.document;
+    if (document == null) return;
     _clear();
     _style = html.StyleElement()..text = topicsPrintStyles;
     // All document content is escaped by toPrintHtml; only our markup is trusted.

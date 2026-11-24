@@ -18,6 +18,7 @@ class UserPreferences {
     String? topicLanguage,
     String? contentLanguage,
     this.preferredVersion = defaultProfileVersion,
+    this.tableLanguageOverride = '',
     this.showDiacritics = false,
     this.zoomLevel = 1.0,
     this.interlinearEnabled = false,
@@ -39,6 +40,8 @@ class UserPreferences {
            contentLanguage ??
            defaultProfileMenuLanguage;
 
+  /// Empty follows the selected Bible, as on older clients.
+  final String tableLanguageOverride;
   final String menuLanguage;
   final String topicLanguage;
   final String contentLanguage;
@@ -88,6 +91,9 @@ class UserPreferences {
       legacy['menuLanguage'],
     ], topicLanguage).toLowerCase();
     return UserPreferences(
+      tableLanguageOverride: _string(
+        data['tableLanguageOverride'],
+      ).trim().toLowerCase(),
       menuLanguage: menuLanguage,
       topicLanguage: topicLanguage,
       contentLanguage: contentLanguage,
@@ -119,6 +125,8 @@ class UserPreferences {
   }
 
   Map<String, dynamic> toMap() => <String, dynamic>{
+    if (tableLanguageOverride.isNotEmpty)
+      'tableLanguageOverride': tableLanguageOverride,
     'menuLanguage': menuLanguage,
     'topicLanguage': topicLanguage,
     'bibleLanguage': contentLanguage,
@@ -134,6 +142,7 @@ class UserPreferences {
   };
 
   UserPreferences copyWith({
+    String? tableLanguageOverride,
     String? menuLanguage,
     String? topicLanguage,
     String? bibleLanguage,
@@ -147,6 +156,8 @@ class UserPreferences {
     bool? showTranslationLabels,
   }) {
     return UserPreferences(
+      tableLanguageOverride:
+          tableLanguageOverride ?? this.tableLanguageOverride,
       menuLanguage: menuLanguage ?? this.menuLanguage,
       topicLanguage: topicLanguage ?? this.topicLanguage,
       contentLanguage: bibleLanguage ?? contentLanguage ?? this.contentLanguage,
@@ -458,6 +469,10 @@ class UserProfileController extends ChangeNotifier {
         changedFields[entry.key] = entry.value;
       }
     }
+    if (current.tableLanguageOverride.isNotEmpty &&
+        next.tableLanguageOverride.isEmpty) {
+      changedFields['tableLanguageOverride'] = FieldValue.delete();
+    }
     if (changedFields.isEmpty) {
       return;
     }
@@ -499,34 +514,29 @@ class UserProfileController extends ChangeNotifier {
   Future<void> _syncLocalCache(UserPreferences preferences) async {
     try {
       final local = await SharedPreferences.getInstance();
-      await Future.wait(<Future<bool>>[
-        local.setString('selected_language_code', preferences.contentLanguage),
-        local.setString(
-          'selected_topic_language_code',
-          preferences.topicLanguage,
-        ),
-        local.setString(
-          'selected_menu_language_code',
-          preferences.menuLanguage,
-        ),
-        local.setString(
-          'selected_version_${preferences.contentLanguage}',
-          preferences.preferredVersion,
-        ),
-        local.setBool('arabic_with_diacritics', preferences.showDiacritics),
-        local.setDouble('reader_zoom_scale', preferences.zoomLevel),
-        local.setBool(
-          'default_interlinear_enabled',
-          preferences.interlinearEnabled,
-        ),
-        local.setBool(
-          'show_topic_names_in_chapter',
-          preferences.showTopicNamesInChapter,
-        ),
-        local.setBool(
-          'show_translation_labels',
-          preferences.showTranslationLabels,
-        ),
+      final values = <String, Object>{
+        'selected_language_code': preferences.contentLanguage,
+        'selected_topic_language_code': preferences.topicLanguage,
+        'selected_menu_language_code': preferences.menuLanguage,
+        'selected_version_${preferences.contentLanguage}':
+            preferences.preferredVersion,
+        'arabic_with_diacritics': preferences.showDiacritics,
+        'reader_zoom_scale': preferences.zoomLevel,
+        'default_interlinear_enabled': preferences.interlinearEnabled,
+        'show_topic_names_in_chapter': preferences.showTopicNamesInChapter,
+        'show_translation_labels': preferences.showTranslationLabels,
+      };
+      // Editing one preference, or signing back in on the same device, should
+      // only persist values that actually changed.
+      await Future.wait([
+        for (final entry in values.entries)
+          if (local.get(entry.key) != entry.value)
+            switch (entry.value) {
+              final String value => local.setString(entry.key, value),
+              final bool value => local.setBool(entry.key, value),
+              final double value => local.setDouble(entry.key, value),
+              _ => throw StateError('Unsupported preference type'),
+            },
       ]);
     } catch (_) {
       // Firestore remains the source of truth if local browser storage fails.

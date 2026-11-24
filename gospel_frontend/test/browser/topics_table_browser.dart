@@ -8,8 +8,69 @@ import 'package:gospel_frontend/topics_table_document.dart';
 import 'package:gospel_frontend/topics_table_output.dart';
 import 'package:gospel_frontend/admin_content_scope.dart';
 import 'package:gospel_frontend/browser_route_link.dart';
+import 'package:gospel_frontend/browser_find_text.dart';
+import 'package:gospel_frontend/main.dart';
+import 'package:gospel_frontend/topic_language_catalog.dart';
 
 void main() {
+  testWidgets(
+    'large searchable table mounts visible links and reveals a distant chapter cell',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 740));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final subjects = [
+        for (var i = 1; i <= 289; i++)
+          Topic(
+            id: '$i',
+            name: 'Study subject $i',
+            references: [
+              GospelReference(book: 'John', chapter: 1, verses: '$i'),
+            ],
+          ),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HarmonyTable(
+              topics: subjects,
+              languageOption: kBaseLanguageOptions.first,
+              topicLanguage: bundledTopicLanguages.first,
+              apiVersion: 'kjv',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final mounted = find.byType(ReferenceHoverText).evaluate().length;
+      expect(mounted, inInclusiveRange(1, 60));
+      expect(find.text('Study subject 289'), findsNothing);
+      final index = tester.widget<BrowserTableFindIndex>(
+        find.byType(BrowserTableFindIndex),
+      );
+      final row = index.buildRows().last;
+      expect(row[1], 'Study subject 289');
+      expect(row.last, '1:289');
+      index.onMatch(288, 5);
+      await tester.pumpAndSettle();
+      final last = find.byWidgetPredicate(
+        (w) => w is ReferenceHoverText && w.topicId == '289',
+      );
+      expect(last, findsOneWidget);
+      final center = tester.getCenter(last);
+      expect(center.dx, inInclusiveRange(0, 390));
+      expect(center.dy, inInclusiveRange(0, 740));
+      expect(find.byType(ReferenceHoverText).evaluate().length, lessThan(65));
+      final href = tester
+          .widget<BrowserRouteLink>(
+            find.descendant(of: last, matching: find.byType(BrowserRouteLink)),
+          )
+          .uri!;
+      expect(href.queryParameters['topicId'], '289');
+      expect(href.queryParameters['book'], 'John');
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets(
     'admin links allow selection without a native navigation overlay',
     (tester) async {
@@ -62,20 +123,26 @@ void main() {
           ],
         ),
       );
+      var builds = 0;
       await tester.pumpWidget(
         MaterialApp(
           navigatorKey: navigator,
           home: ValueListenableBuilder<TopicsTableDocument>(
             valueListenable: current,
             builder: (context, document, _) => TopicsTablePrintScope(
-              document: document,
+              buildDocument: () {
+                builds++;
+                return document;
+              },
               child: const Scaffold(body: Text('Screen viewport')),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
+      expect(builds, 0);
       html.window.dispatchEvent(html.Event('beforeprint'));
+      expect(builds, 1);
       expect(
         html.document.querySelectorAll('#harmony-print-root tbody tr'),
         hasLength(289),

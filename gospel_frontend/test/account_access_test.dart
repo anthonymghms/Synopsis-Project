@@ -12,6 +12,7 @@ void main() {
     tester,
   ) async {
     var requests = 0;
+    var contentBuilds = 0;
     final controller = AccountAccessController(
       tokenProvider: () async => 'token',
       client: MockClient((_) async {
@@ -37,7 +38,10 @@ void main() {
         home: AccountAccessBoundary(
           controller: controller,
           uid: 'reader',
-          builder: (_) => const Text('Reader content'),
+          builder: (_) {
+            contentBuilds++;
+            return const Text('Reader content');
+          },
           onSettings: () {},
           onSignOut: () {},
         ),
@@ -46,6 +50,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Reader content'), findsOneWidget);
     expect(requests, 1);
+    expect(controller.hasFreshAccessFor('reader'), isTrue);
+    expect(controller.hasFreshAccessFor('other-account'), isFalse);
+    final buildsBeforeRefresh = contentBuilds;
+    await controller.refresh(force: true);
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(contentBuilds, buildsBeforeRefresh);
     await tester.pumpWidget(const SizedBox());
     controller.clear();
   });
@@ -75,6 +86,7 @@ void main() {
       controller.beginSession('reader');
       await controller.refresh();
       now = now.add(const Duration(minutes: 2));
+      expect(controller.hasFreshAccessFor('reader'), isFalse);
 
       await tester.pumpWidget(
         MaterialApp(

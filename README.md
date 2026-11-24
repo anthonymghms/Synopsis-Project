@@ -3,10 +3,7 @@ This repository contains the work for our Synopsis Project.
 
 ## Running locally
 
-The Flutter web app reads Gospel topics and Bible text from the Flask backend.
-The backend URL is selected at Flutter build/run time with `API_BASE_URL`, so
-`gospel_frontend/lib/main.dart` does not need to be edited when switching
-between local development and VPS deployment.
+The website, Android app, and iOS app share a Flutter client, Flask API, and Firebase project. See the [Flutter run and build guide](gospel_frontend/README.md) for device setup, API configuration, and release commands.
 
 ### Start Flask locally
 
@@ -34,7 +31,7 @@ cd gospel_frontend
 flutter run -d chrome --web-port 8760 --dart-define=API_BASE_URL=http://127.0.0.1:8010
 ```
 
-If `API_BASE_URL` is omitted, the app defaults to `http://127.0.0.1:8010`.
+Debug builds default to `http://127.0.0.1:8010`. Release builds default to the same-origin `/api` on the web and `https://paragospels.com/api` on mobile.
 
 ## Building for VPS
 
@@ -42,7 +39,7 @@ From the Flutter project directory:
 
 ```sh
 cd gospel_frontend
-flutter build web --release --dart-define=API_BASE_URL=http://164.68.108.181:8010
+flutter build web --release --dart-define=API_BASE_URL=/api --pwa-strategy=none
 ```
 
 Deploy the generated `gospel_frontend/build/web` files to the VPS frontend host.
@@ -54,27 +51,7 @@ The Flask backend should keep serving the existing API routes:
 /get_chapter
 ```
 
-Serve the Flutter build with Nginx or another static server rather than
-`flutter run`. Enable compression and long-lived caching for hashed Flutter
-assets:
-
-```nginx
-gzip on;
-gzip_types text/css application/javascript application/json application/wasm;
-
-location / {
-  try_files $uri $uri/ /index.html;
-}
-
-location ~* \.(?:js|css|wasm|png|jpg|jpeg|gif|svg|ico)$ {
-  expires 30d;
-  add_header Cache-Control "public, immutable";
-}
-
-location = /index.html {
-  add_header Cache-Control "no-cache";
-}
-```
+The [deployment guide](deploy/README.md) covers HTTPS, API proxying and cache settings for this release.
 
 Run Flask behind a production WSGI server such as gunicorn, and keep debug mode
 off unless explicitly testing:
@@ -628,17 +605,7 @@ Ancient Greek passages can be read with Arabic topic names and menus, and
 returning to the main table keeps the topic language. A Bible import does not
 create or require a matching topic language.
 
-The main table and primary reader language selectors switch menus, topics, and
-the Bible translation together when that language has topic translations.
-Menus, chapter headings, numbers, and navigation links
-follow the active route's menu language, including labels imported from the
-interface translation sheet. Covered pages and delayed profile loads cannot
-restore an older language after a selection. Browser/page navigation restores
-the returning page's language; opening or dismissing a popup does not change it.
-Selecting a Bible-only language such as Ancient Greek keeps the current topic
-and menu languages. Adding comparison translations or changing only a Bible
-version does not change the page language. Reselecting the current Bible
-language reconciles older shared links with different menu/topic languages.
+The table follows the Bible language by default. When a locale is unavailable, the table uses English or its first available language. The **Table language** selector can pin an available locale independently. Topic and chapter links retain this explicit selection, including after a Bible version change or browser navigation. Uploaded interface labels follow the active reader locale.
 
 ### Translation catalog and native language names
 
@@ -722,14 +689,14 @@ flutter test --platform chrome test/browser/topics_table_browser.dart
 ## Table selection, export, and printing
 
 Verified administrators can select and copy table and reading text, and use
-**Export CSV** in the web table toolbar. The UTF-8 CSV preserves Arabic text and
+**Export CSV** in the table toolbar on web, Android, and iOS. The UTF-8 CSV preserves Arabic text and
 exports every row in the current filtered result, in the selected sort order,
 with the visible Gospel columns and original topic numbers.
 
 **Print / PDF** and the browser's Print command use the same complete table.
 The print layout fits the selected columns to landscape paper, wraps long
 content, repeats the column headings, and paginates all rows, including those
-below the screen. Choose the browser's **Save as PDF** destination for a PDF.
+below the screen. Choose the browser's **Save as PDF** destination for a PDF. Android and iOS open their system print interface with the same table and Gospel columns.
 
 The X on an active **Filter** control clears the filter. The X on
 **Sort & Columns** restores default topic order and all four Gospel columns.

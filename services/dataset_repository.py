@@ -238,44 +238,66 @@ class DatasetRepository(FirebaseImportRepository):
             raise ImportRecordError("The dataset revision is unavailable.")
         return {**data, "activeRevision": revision, "labels": data.get("labels") or metadata.get("labels", {})}, ref
 
-    def canonical_payload(self, selected_dataset: str, revision: str | None = None):
-        metadata, ref = self._revision(selected_dataset, revision)
+    @staticmethod
+    def _topic_documents(collection, item_id):
+        if item_id is None:
+            return collection.stream()
+        snapshot = collection.document(item_id).get()
+        return [snapshot] if snapshot.exists else []
+
+    def _canonical_payload(self, selected_dataset, metadata, ref, item_id=None):
         topics = []
         if ref is not None:
-            for document in self.db.collection(metadata.get("canonicalTopicsPath") or f"{ref.path}/topics").stream():
+            collection = self.db.collection(metadata.get("canonicalTopicsPath") or f"{ref.path}/topics")
+            for document in self._topic_documents(collection, item_id):
                 data = document.to_dict() or {}
                 topics.append({"id": document.id, "datasetId": selected_dataset, **data, "references": data.get("entries", [])})
             topics.sort(key=lambda item: (item.get("sourceOrder", 0), item["id"]))
         return {"datasetId": selected_dataset, "revision": metadata.get("activeRevision"), "source": f"datasets/{selected_dataset}", "published": ref is not None, "metadata": metadata, "topics": topics}
 
+    def canonical_payload(self, selected_dataset: str, revision: str | None = None):
+        metadata, ref = self._revision(selected_dataset, revision)
+        return self._canonical_payload(selected_dataset, metadata, ref)
+
+    def _localized_names(self, metadata, ref, language, item_id=None):
+        if ref is None:
+            return {}
+        available = metadata.get("languages", [])
+        names = {}
+        for candidate in dict.fromkeys([language, "english", *available]):
+            if candidate not in available:
+                continue
+            path = metadata.get("localizationPaths", {}).get(candidate) or f"{ref.path}/localizations/{candidate}/topics"
+            for document in self._topic_documents(self.db.collection(path), item_id):
+                data = document.to_dict() or {}
+                if data.get("name") and document.id not in names:
+                    names[document.id] = {"id": document.id, "name": data["name"], "canonicalOrder": data.get("canonicalOrder", 0), "nameLanguage": candidate, "fallback": candidate != language}
+            if item_id is not None and item_id in names:
+                break
+            # Ready revisions publish language completeness and the canonical
+            # row count atomically. Older or partial translations keep falling back.
+            info = metadata.get("languageMetadata", {}).get(candidate, {})
+            if info.get("complete") is True and len(names) == metadata.get("itemCount"):
+                break
+        return names
+
     def localization_payload(self, selected_dataset: str, language: str, revision: str | None = None):
         language = {"en": "english", "ar": "arabic"}.get(language, language)
         metadata, ref = self._revision(selected_dataset, revision)
-        available = metadata.get("languages", [])
-        ordered_languages = list(dict.fromkeys([language, "english", *available]))
-        names = {}
-        if ref is not None:
-            for candidate in ordered_languages:
-                if candidate not in available:
-                    continue
-                path = metadata.get("localizationPaths", {}).get(candidate) or f"{ref.path}/localizations/{candidate}/topics"
-                for doc in self.db.collection(path).stream():
-                    data = doc.to_dict() or {}
-                    if data.get("name") and doc.id not in names:
-                        names[doc.id] = {"id": doc.id, "name": data["name"], "canonicalOrder": data.get("canonicalOrder", 0), "nameLanguage": candidate, "fallback": candidate != language}
+        names = self._localized_names(metadata, ref, language)
         topics = sorted(names.values(), key=lambda item: (item["canonicalOrder"], item["id"]))
         types = metadata.get("types", [])
-        # Only mark labels as localized when actually imported in that language.
-        # Canonical metadata retains source labels for explicit client fallback.
         type_labels = {value["id"]: value["labels"][language] for value in types if value.get("labels", {}).get(language)}
         return {"datasetId": selected_dataset, "revision": metadata.get("activeRevision"), "typeLabels": type_labels,
                 "language": {**default_language_metadata(language, len(topics)), **metadata.get("languageMetadata", {}).get(language, {}), "canonicalSource": f"datasets/{selected_dataset}", "canonicalTopicCount": metadata.get("itemCount", 0), "complete": bool(topics) and all(not item["fallback"] for item in topics)}, "topics": topics}
 
-    def localized_topics(self, selected_dataset: str, language: str):
-        canonical = self.canonical_payload(selected_dataset)
-        localization = self.localization_payload(selected_dataset, language, canonical["revision"])
-        names = {item["id"]: item for item in localization["topics"]}
-        for item in canonical["topics"]:
-            name = names.get(item["id"], {})
-            item.update(name=name.get("name", f"#{item['id']}"), nameLanguage=name.get("nameLanguage"), nameFallback=name.get("fallback", True))
+    def localized_topics(self, selected_dataset: str, language: str, item_id: str | None = None):
+        language = {"en": "english", "ar": "arabic"}.get(language, language)
+        metadata, ref = self._revision(selected_dataset)
+        canonical = self._canonical_payload(selected_dataset, metadata, ref, item_id)
+        if canonical["topics"]:
+            names = self._localized_names(metadata, ref, language, item_id)
+            for item in canonical["topics"]:
+                name = names.get(item["id"], {})
+                item.update(name=name.get("name", f"#{item['id']}"), nameLanguage=name.get("nameLanguage"), nameFallback=name.get("fallback", True))
         return canonical

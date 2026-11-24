@@ -71,6 +71,7 @@ service cloud.firestore {
           && data.keys().hasOnly([
             'menuLanguage',
             'topicLanguage',
+            'tableLanguageOverride',
             'bibleLanguage',
             'bibleVersion',
             'contentLanguage',
@@ -86,6 +87,9 @@ service cloud.firestore {
           && (!data.keys().hasAny(['topicLanguage'])
               || (data.topicLanguage is string
                   && data.topicLanguage.size() <= 40))
+          && (!data.keys().hasAny(['tableLanguageOverride'])
+              || (data.tableLanguageOverride is string
+                  && data.tableLanguageOverride.size() <= 40))
           && (!data.keys().hasAny(['bibleLanguage'])
               || (data.bibleLanguage is string
                   && data.bibleLanguage.size() <= 40))

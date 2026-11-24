@@ -247,8 +247,41 @@ class ProfileEditorState extends State<ProfileEditor> {
       setState(() {
         _catalogLoading = false;
         _catalogFallback = true;
+        if (!widget.setupMode) _restoreSavedTranslation();
       });
     }
+  }
+
+  void _restoreSavedTranslation() {
+    final saved = widget.initialProfile.preferences;
+    final language = saved.contentLanguage;
+    final version = saved.preferredVersion;
+    if (language.isEmpty || version.isEmpty) return;
+
+    final bundled = _languages
+        .where((item) => item.code == language)
+        .firstOrNull;
+    if (bundled == null || !bundled.supportsVersion(version)) {
+      // The catalog is unavailable. Keep the account's own saved pair in
+      // the dropdowns alongside the bundled choices until it can be verified.
+      final option = PreferenceLanguageOption(
+        code: language,
+        label: bundled?.label ?? nativeLanguageName(language, language),
+        direction: bundled?.direction ?? TextDirection.ltr,
+        defaultVersion: bundled?.defaultVersion ?? version,
+        supportsTopics: bundled?.supportsTopics ?? false,
+        versions: [
+          ...?bundled?.versions,
+          PreferenceVersionOption(id: version, label: version),
+        ],
+      );
+      _languages = [
+        for (final entry in _languages) entry.code == language ? option : entry,
+        if (bundled == null) option,
+      ];
+    }
+    _contentLanguage = language;
+    _preferredVersion = _contentOption.sanitizeVersion(version);
   }
 
   @override
@@ -371,7 +404,7 @@ class ProfileEditorState extends State<ProfileEditor> {
       organization: _organization.text.trim(),
       bio: _bio.text.trim(),
       profileCompleted: true,
-      preferences: UserPreferences(
+      preferences: widget.initialProfile.preferences.copyWith(
         menuLanguage: _menuLanguage,
         topicLanguage: _topicLanguage,
         contentLanguage: contentOption.code,
@@ -413,7 +446,10 @@ class ProfileEditorState extends State<ProfileEditor> {
   @override
   Widget build(BuildContext context) {
     final labels = _labels;
-    final direction = _contentOption.direction;
+    final direction = PreferenceLanguageCatalog.resolve(
+      _languages,
+      _menuLanguage,
+    ).direction;
     final timezoneOptions = <String>{
       'UTC',
       'Asia/Beirut',
@@ -450,6 +486,7 @@ class ProfileEditorState extends State<ProfileEditor> {
               _InfoPanel(message: _saveError!, error: true),
             _SectionCard(
               title: labels.profile,
+              icon: Icons.person_outline,
               child: LayoutBuilder(
                 builder: (context, constraints) => _FieldWrap(
                   width: constraints.maxWidth,
@@ -528,6 +565,7 @@ class ProfileEditorState extends State<ProfileEditor> {
             ),
             _SectionCard(
               title: labels.bio,
+              icon: Icons.edit_note,
               child: TextFormField(
                 controller: _bio,
                 minLines: 3,
@@ -539,6 +577,7 @@ class ProfileEditorState extends State<ProfileEditor> {
             ),
             _SectionCard(
               title: labels.languageTranslation,
+              icon: Icons.translate,
               child: LayoutBuilder(
                 builder: (context, constraints) => _FieldWrap(
                   width: constraints.maxWidth,
@@ -577,7 +616,12 @@ class ProfileEditorState extends State<ProfileEditor> {
                               );
                               setState(() {
                                 _contentLanguage = option.code;
-                                if (option.supportsTopics) {
+                                if (option.supportsTopics &&
+                                    widget
+                                        .initialProfile
+                                        .preferences
+                                        .tableLanguageOverride
+                                        .isEmpty) {
                                   _menuLanguage = option.code;
                                   _topicLanguage = option.code;
                                 }
@@ -638,6 +682,7 @@ class ProfileEditorState extends State<ProfileEditor> {
             ),
             _SectionCard(
               title: labels.readingPreferences,
+              icon: Icons.menu_book_outlined,
               child: Column(
                 children: [
                   Row(
@@ -692,6 +737,7 @@ class ProfileEditorState extends State<ProfileEditor> {
             ),
             _SectionCard(
               title: labels.accountInformation,
+              icon: Icons.manage_accounts_outlined,
               child: TextFormField(
                 initialValue: widget.initialProfile.email,
                 readOnly: true,
@@ -737,7 +783,12 @@ class ProfileEditorState extends State<ProfileEditor> {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.child});
+  const _SectionCard({
+    required this.title,
+    required this.icon,
+    required this.child,
+  });
+  final IconData icon;
 
   final String title;
   final Widget child;
@@ -751,7 +802,21 @@ class _SectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              children: [
+                Icon(icon, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 16),
             child,
           ],

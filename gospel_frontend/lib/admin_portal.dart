@@ -11,6 +11,7 @@ import 'native_language_names.dart';
 import 'admin_file_picker.dart';
 import 'catalog_events.dart';
 import 'user_profile.dart';
+import 'study_theme.dart';
 import 'csv_download.dart';
 
 part 'interface_import_wizard.dart';
@@ -300,6 +301,9 @@ class _AdminPortalState extends State<AdminPortal> {
             ),
             bottomNavigationBar: MediaQuery.sizeOf(context).width < 820
                 ? NavigationBar(
+                    labelBehavior: MediaQuery.sizeOf(context).width < 500
+                        ? NavigationDestinationLabelBehavior.onlyShowSelected
+                        : NavigationDestinationLabelBehavior.alwaysShow,
                     selectedIndex: _section,
                     onDestinationSelected: (value) =>
                         setState(() => _section = value),
@@ -334,6 +338,7 @@ class _AdminPortalState extends State<AdminPortal> {
     return Row(
       children: [
         NavigationRail(
+          scrollable: true,
           selectedIndex: _section,
           labelType: NavigationRailLabelType.all,
           onDestinationSelected: (value) => setState(() => _section = value),
@@ -451,15 +456,45 @@ class _Dashboard extends StatelessWidget {
           style: Theme.of(context).textTheme.headlineMedium,
         ),
         const SizedBox(height: 20),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            _CountCard(labels.bibleLanguages, counts['bibleLanguages'] ?? 0),
-            _CountCard(labels.bibleVersions, counts['bibleVersions'] ?? 0),
-            _CountCard(labels.topicLanguages, counts['topicLanguages'] ?? 0),
-            _CountCard(labels.failedImports, counts['failedImports'] ?? 0),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= StudyTheme.compact
+                ? 4
+                : constraints.maxWidth >= 285
+                ? 2
+                : 1;
+            final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _CountCard(
+                  labels.bibleLanguages,
+                  counts['bibleLanguages'] ?? 0,
+                  Icons.translate,
+                  width,
+                ),
+                _CountCard(
+                  labels.bibleVersions,
+                  counts['bibleVersions'] ?? 0,
+                  Icons.menu_book_outlined,
+                  width,
+                ),
+                _CountCard(
+                  labels.topicLanguages,
+                  counts['topicLanguages'] ?? 0,
+                  Icons.table_chart_outlined,
+                  width,
+                ),
+                _CountCard(
+                  labels.failedImports,
+                  counts['failedImports'] ?? 0,
+                  Icons.report_gmailerrorred_outlined,
+                  width,
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 24),
         Wrap(
@@ -509,27 +544,43 @@ class _Dashboard extends StatelessWidget {
 }
 
 class _CountCard extends StatelessWidget {
-  const _CountCard(this.label, this.value);
+  const _CountCard(this.label, this.value, this.icon, this.width);
   final String label;
   final dynamic value;
+  final IconData icon;
+  final double width;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 190,
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('$value', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 4),
-            Text(label),
-          ],
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: width,
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$value',
+                      style: theme.textTheme.headlineMedium,
+                    ),
+                  ),
+                  Icon(icon, size: 20, color: theme.colorScheme.primary),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(label, style: theme.textTheme.bodyMedium),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _BibleList extends StatelessWidget {

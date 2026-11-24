@@ -23,3 +23,20 @@ class BrowserFindText extends StatelessWidget {
     return child;
   }
 }
+
+class BrowserTableFindIndex extends StatelessWidget {
+  const BrowserTableFindIndex({
+    super.key,
+    required this.revision,
+    required this.buildRows,
+    required this.onMatch,
+    required this.child,
+  });
+  final Object revision;
+  final Iterable<List<String>> Function() buildRows;
+  final void Function(int row, int column) onMatch;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}

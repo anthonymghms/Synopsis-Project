@@ -81,6 +81,33 @@ class MembershipServiceTests(unittest.TestCase):
         self.db.write("memberships/guest", {"role": "subscribed"}, False)
         self.assertTrue(verify_reader_authorization("Bearer test", verify_token=lambda token, check_revoked: {"uid": "guest"}, db=self.db, now=NOW)["access"]["canRead"])
 
+    def test_established_membership_uses_this_requests_revocation_check_once(self):
+        self.db.write("memberships/reader", {"role": "subscribed"}, False)
+        verifications = []
+        def verify(token, check_revoked):
+            self.assertTrue(check_revoked)
+            verifications.append(token)
+            if token == "revoked":
+                raise ValueError("Revoked by Firebase")
+            return {"uid": "reader"}
+
+        def redundant_lookup(uid):
+            self.fail("The revocation check already fetched the current Auth user.")
+
+        def read(token):
+            return verify_reader_authorization(
+                f"Bearer {token}", verify_token=verify, get_user=redundant_lookup, db=self.db, now=NOW,
+            )
+        self.assertTrue(read("valid")["access"]["canRead"])
+        self.db.write("memberships/reader", {"role": "subscribed", "accountStatus": "suspended"}, False)
+        with self.assertRaises(AdminAuthorizationError) as suspended:
+            read("valid")
+        self.assertEqual(suspended.exception.status, 403)
+        with self.assertRaises(AdminAuthorizationError) as revoked:
+            read("revoked")
+        self.assertEqual(revoked.exception.status, 401)
+        self.assertEqual(verifications, ["valid", "valid", "revoked"])
+
     def test_inclusive_expiry_date_obeys_beirut_day_and_dst(self):
         with patch.dict("os.environ", {"MEMBERSHIP_TIMEZONE": "Asia/Beirut"}):
             summer = parse_guest_expiry({"guestExpiresOn": "2026-10-10"})

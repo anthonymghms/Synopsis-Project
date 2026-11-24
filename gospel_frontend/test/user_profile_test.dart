@@ -322,6 +322,83 @@ void main() {
     expect(saved?.preferences.menuLanguage, 'english');
   });
 
+  for (final language in ['ancientgreek', 'english']) {
+    testWidgets(
+      'settings retain the saved $language translation when discovery fails',
+      (tester) async {
+        UserProfile? saved;
+        final version = language == 'english' ? 'Imported English' : 'TR';
+        final profile = UserProfile(
+          firstName: 'Mary',
+          lastName: 'Martin',
+          displayName: '',
+          email: 'reader@example.com',
+          profileCompleted: true,
+          preferences: UserPreferences(
+            menuLanguage: 'english',
+            topicLanguage: 'english',
+            contentLanguage: language,
+            preferredVersion: version,
+          ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ProfileEditor(
+                  initialProfile: profile,
+                  languageLoader: () async =>
+                      throw StateError('Catalog unavailable'),
+                  onSave: (profile) async => saved = profile,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(ValueKey('profile-version-$language-$version')),
+          findsOneWidget,
+        );
+        await tester.enterText(
+          find.byKey(const Key('profile-first-name')),
+          'Maria',
+        );
+        final save = find.byKey(const Key('profile-save'));
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+        expect(saved?.firstName, 'Maria');
+        expect(saved?.preferences.contentLanguage, language);
+        expect(saved?.preferences.preferredVersion, version);
+        expect(saved?.preferences.menuLanguage, 'english');
+        expect(saved?.preferences.topicLanguage, 'english');
+
+        // A deliberate change to a bundled language or version still saves.
+        final field = find.byKey(
+          ValueKey(
+            language == 'english'
+                ? 'profile-version-$language-$version'
+                : 'profile-content-language-$language',
+          ),
+        );
+        await tester.ensureVisible(field);
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.text(language == 'english' ? 'KJV' : 'English').last,
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+        expect(saved?.preferences.contentLanguage, 'english');
+        expect(saved?.preferences.preferredVersion, 'kjv');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('Arabic profile editor is RTL and validates required names', (
     tester,
   ) async {
@@ -401,71 +478,83 @@ void main() {
     expect(saved?.preferences.preferredVersion, 'Van Dyke-');
   });
 
-  testWidgets(
-    'changing the profile language relocalizes and saves one locale',
-    (tester) async {
-      UserProfile? saved;
-      final previews = <String>[];
-      const profile = UserProfile(
-        firstName: 'جورجيو',
-        lastName: 'مراد',
-        displayName: '',
-        email: 'reader@example.com',
-        profileCompleted: true,
-        preferences: UserPreferences(
-          contentLanguage: 'arabic',
-          preferredVersion: 'Van Dyke-',
-          showTranslationLabels: true,
-        ),
-      );
+  for (final pinned in [false, true]) {
+    testWidgets(
+      pinned
+          ? 'changing the Bible preserves an explicitly selected Arabic table and menu'
+          : 'changing the profile language relocalizes and saves one locale',
+      (tester) async {
+        UserProfile? saved;
+        final previews = <String>[];
+        final profile = UserProfile(
+          firstName: 'جورجيو',
+          lastName: 'مراد',
+          displayName: '',
+          email: 'reader@example.com',
+          profileCompleted: true,
+          preferences: UserPreferences(
+            contentLanguage: 'arabic',
+            tableLanguageOverride: pinned ? 'arabic' : '',
+            preferredVersion: 'Van Dyke-',
+            showTranslationLabels: true,
+          ),
+        );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: ProfileEditor(
-                initialProfile: profile,
-                onMenuLanguagePreview: previews.add,
-                onSave: (value) async => saved = value,
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ProfileEditor(
+                  initialProfile: profile,
+                  onMenuLanguagePreview: previews.add,
+                  onSave: (value) async => saved = value,
+                ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      final languageField = find.byKey(
-        const ValueKey<String>('profile-content-language-arabic'),
-      );
-      await tester.ensureVisible(languageField);
-      await tester.pumpAndSettle();
-      await tester.tap(languageField);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('English').last);
-      await tester.pumpAndSettle();
+        final languageField = find.byKey(
+          const ValueKey<String>('profile-content-language-arabic'),
+        );
+        await tester.ensureVisible(languageField);
+        await tester.pumpAndSettle();
+        await tester.tap(languageField);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('English').last);
+        await tester.pumpAndSettle();
 
-      expect(find.text('Profile'), findsOneWidget);
-      expect(find.text('Language'), findsOneWidget);
-      final editorDirection = tester.widget<Directionality>(
-        find
-            .descendant(
-              of: find.byType(ProfileEditor),
-              matching: find.byType(Directionality),
-            )
-            .first,
-      );
-      expect(editorDirection.textDirection, TextDirection.ltr);
-      expect(previews.last, 'english');
+        expect(find.text(pinned ? 'الملف الشخصي' : 'Profile'), findsOneWidget);
+        expect(find.text(pinned ? 'اللغة' : 'Language'), findsOneWidget);
+        final editorDirection = tester.widget<Directionality>(
+          find
+              .descendant(
+                of: find.byType(ProfileEditor),
+                matching: find.byType(Directionality),
+              )
+              .first,
+        );
+        expect(
+          editorDirection.textDirection,
+          pinned ? TextDirection.rtl : TextDirection.ltr,
+        );
+        expect(previews.last, pinned ? 'arabic' : 'english');
 
-      await tester.ensureVisible(find.byKey(const Key('profile-save')));
-      await tester.tap(find.byKey(const Key('profile-save')));
-      await tester.pumpAndSettle();
+        await tester.ensureVisible(find.byKey(const Key('profile-save')));
+        await tester.tap(find.byKey(const Key('profile-save')));
+        await tester.pumpAndSettle();
 
-      expect(saved?.preferences.contentLanguage, 'english');
-      expect(saved?.preferences.topicLanguage, 'english');
-      expect(saved?.preferences.menuLanguage, 'english');
-      expect(saved?.preferences.preferredVersion, 'kjv');
-      expect(saved?.preferences.showTranslationLabels, isTrue);
-    },
-  );
+        expect(saved?.preferences.contentLanguage, 'english');
+        expect(
+          saved?.preferences.tableLanguageOverride,
+          pinned ? 'arabic' : '',
+        );
+        expect(saved?.preferences.topicLanguage, pinned ? 'arabic' : 'english');
+        expect(saved?.preferences.menuLanguage, pinned ? 'arabic' : 'english');
+        expect(saved?.preferences.preferredVersion, 'kjv');
+        expect(saved?.preferences.showTranslationLabels, isTrue);
+      },
+    );
+  }
 }

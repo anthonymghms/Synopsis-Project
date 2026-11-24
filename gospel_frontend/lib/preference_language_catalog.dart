@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import 'topic_language_catalog.dart';
+import 'bible_catalog_source.dart';
 import 'native_language_names.dart';
 
 class PreferenceVersionOption {
@@ -125,9 +126,9 @@ Future<List<PreferenceLanguageOption>> loadReaderPreferenceLanguages() async {
 
 class PreferenceLanguageCatalog {
   PreferenceLanguageCatalog({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+    : _firestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _firestore;
   Future<List<PreferenceLanguageOption>>? _cachedLoad;
 
   Future<List<PreferenceLanguageOption>> load() async {
@@ -148,80 +149,29 @@ class PreferenceLanguageCatalog {
   }
 
   Future<List<PreferenceLanguageOption>> _loadUncached() async {
-    final snapshot = await _firestore.collection('bibles').get();
-    if (snapshot.docs.isEmpty) {
+    final documents = await readBibleCatalog(firestore: _firestore);
+    if (documents.isEmpty) {
       return bundledPreferenceLanguages;
     }
 
     final options = <PreferenceLanguageOption>[];
-    for (final document in snapshot.docs) {
+    for (final document in documents) {
       final languageId = document.id.trim();
       if (languageId.isEmpty) {
         continue;
       }
       final code = languageId.toLowerCase();
       final bundled = _bundledFor(code);
-      final data = document.data();
-      final versionIds = <String>{};
-      final versionLabels = <String, String>{};
-      _collectVersions(data, versionIds);
-      const manifestPaths = <List<String>>[
-        <String>['versions', 'manifest'],
-        <String>['versions', '_index'],
-        <String>['metadata', 'versions'],
-        <String>['meta', 'versions'],
-        <String>['version_manifest', 'index'],
-        <String>['version_manifest', 'all'],
+      final data = document.data;
+      final discovered = [
+        for (final entry in document.versions.entries)
+          PreferenceVersionOption(
+            id: entry.key,
+            label: entry.value.isEmpty
+                ? _versionLabel(code, entry.key)
+                : entry.value,
+          ),
       ];
-      for (final path in manifestPaths) {
-        try {
-          final manifest = await document.reference
-              .collection(path.first)
-              .doc(path.last)
-              .get();
-          if (manifest.exists) {
-            _collectVersions(
-              manifest.data() ?? const <String, dynamic>{},
-              versionIds,
-            );
-          }
-        } catch (_) {
-          // Keep checking the other supported Firestore layouts.
-        }
-      }
-      try {
-        final versionsSnapshot = await document.reference
-            .collection('versions')
-            .get();
-        for (final versionDocument in versionsSnapshot.docs) {
-          final versionId = versionDocument.id.trim();
-          if (versionId.isNotEmpty &&
-              versionId != 'manifest' &&
-              versionId != '_index') {
-            versionIds.add(versionId);
-          }
-          final versionData = versionDocument.data();
-          final explicitLabel =
-              versionData['label']?.toString().trim() ??
-              versionData['name']?.toString().trim() ??
-              '';
-          if (versionId.isNotEmpty && explicitLabel.isNotEmpty) {
-            versionLabels[versionId] = explicitLabel;
-          }
-          _collectVersions(versionData, versionIds);
-        }
-      } catch (_) {
-        // Some deployments expose versions on the language document only.
-      }
-
-      final discovered = versionIds
-          .map(
-            (id) => PreferenceVersionOption(
-              id: id,
-              label: versionLabels[id] ?? _versionLabel(code, id),
-            ),
-          )
-          .toList();
       final versions = _selectableVersions(
         code,
         discovered.isNotEmpty
@@ -289,37 +239,6 @@ class PreferenceLanguageCatalog {
         orElse: () => options.first,
       ),
     );
-  }
-}
-
-const List<String> _versionFields = <String>[
-  'versions',
-  'availableVersions',
-  'available_versions',
-  'versionList',
-  'version_list',
-  'supportedVersions',
-  'supported_versions',
-];
-
-void _collectVersions(Map<String, dynamic> data, Set<String> target) {
-  for (final fieldName in _versionFields) {
-    final field = data[fieldName];
-    if (field is Iterable) {
-      for (final value in field) {
-        final id = value?.toString().trim() ?? '';
-        if (id.isNotEmpty) {
-          target.add(id);
-        }
-      }
-    } else if (field is Map) {
-      for (final key in field.keys) {
-        final id = key.toString().trim();
-        if (id.isNotEmpty) {
-          target.add(id);
-        }
-      }
-    }
   }
 }
 

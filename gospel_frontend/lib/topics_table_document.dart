@@ -67,6 +67,12 @@ class TopicsTableDocument {
         '</table></section>';
   }
 
+  /// A self-contained document for the Android and iOS system print services.
+  String toStandalonePrintHtml() =>
+      '<!doctype html><html><head><meta charset="utf-8">'
+      '<style>$_printedTableStyles</style></head>'
+      '<body id="harmony-print-root">${toPrintHtml()}</body></html>';
+
   bool get _groupsContainEveryRow {
     if (groups.isEmpty) return false;
     final remaining = <String, int>{};
@@ -90,7 +96,8 @@ class TopicsTableDocument {
   }
 }
 
-const topicsPrintStyles = '''
+const topicsPrintStyles =
+    '''
 #harmony-print-root { display: none; }
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
@@ -105,6 +112,13 @@ const topicsPrintStyles = '''
     display: block !important;
     position: static;
     width: 100%;
+  }
+  $_printedTableStyles
+}
+''';
+
+const _printedTableStyles = '''
+  #harmony-print-root {
     color: #111;
     background: white;
     font: 10pt Arial, sans-serif;
@@ -127,5 +141,4 @@ const topicsPrintStyles = '''
     break-after: avoid;
     page-break-after: avoid;
   }
-}
 ''';

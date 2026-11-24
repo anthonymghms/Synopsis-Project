@@ -6,11 +6,13 @@ All reader tables display a separate **#** column followed by **Subject**, optio
 
 ## Reader language selection
 
-Readers choose a **Bible language and translation**. That selection also determines the active table's subject names, Gospel headers, Type labels, direction, and displayed reference/number notation when the table has that language. There is no separate reader control for table language.
+The **Table language** control defaults to **Follow Bible language**. Choosing a Bible translation then selects matching table names when available. Choose a specific table language to keep, for example, Arabic subjects and English KJV Scripture. Select the follow option again to resume synchronization.
 
-If the active table does not have the chosen Bible language, it displays English when available, otherwise its first available language, and shows a notice identifying the fallback. The selected Bible language/version still controls verse text in previews and reading pages. Switching tables applies the same rule to the new table while preserving the selected Bible translation; links retain the dataset and Bible selection.
+The active table language supplies subject names, Gospel headers, Type labels, direction and reference notation. If a table lacks the requested language, the app shows a fallback notice and uses English when available, or its first available language. Verse text and hover previews use the chosen Bible translation.
 
-Table-language imports remain specific to one table. Publishing French for Miracles does not add French names to Harmony or Parables, and does not create French Bible text. Administrators can prepare these translations before a French Bible is available, but readers must select an **available French Bible translation** to see French table names. A French Harmony translation is not required for French Miracles names. If no French Bible translation is available, an administrator must import one through the separate Bible workflow before readers can choose French.
+The table selection travels with topic and chapter links. New links carry an explicit `tableLocale` only when the reader has chosen a specific table language. Older links retain their Bible-driven behavior. Signed-in profiles save the explicit choice across devices.
+
+Table translations are published independently. Publishing French for Miracles makes French subjects available in the Miracles table-language control, including when the Bible is in another language.
 
 ## Administrative steps
 

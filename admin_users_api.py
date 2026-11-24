@@ -50,7 +50,7 @@ def _failure(exc):
 def account_access():
     identity = verify_identity(request.headers.get("Authorization"))
     try:
-        return _response(get_account_access(identity))
+        return _response(get_account_access(identity, revocation_checked=True))
     except AdminAuthorizationError:
         raise
     except Exception as exc:

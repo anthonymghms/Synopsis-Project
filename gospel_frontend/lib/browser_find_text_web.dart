@@ -30,21 +30,14 @@ class BrowserFindText extends StatefulWidget {
 }
 
 class _BrowserFindTextState extends State<BrowserFindText> {
-  static final Set<_BrowserFindTextState> _instances =
-      <_BrowserFindTextState>{};
+  static final _layers = <html.Element, _BrowserFindTextState>{};
+  static _BrowserFindTextState? _lastSelection;
   static StreamSubscription<html.Event>? _selectionChangeSubscription;
   static Timer? _selectionPollTimer;
 
   html.DivElement? _textLayerElement;
   html.EventListener? _beforeMatchListener;
   bool _ensureVisibleScheduled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _instances.add(this);
-    _ensureSelectionObservers();
-  }
 
   static void _ensureSelectionObservers() {
     _selectionChangeSubscription ??= html.document.onSelectionChange.listen(
@@ -58,21 +51,28 @@ class _BrowserFindTextState extends State<BrowserFindText> {
 
   static void _checkActiveSelection() {
     final selection = html.window.getSelection();
-    if (selection == null || selection.rangeCount == 0) {
-      return;
+    _BrowserFindTextState? layerFor(html.Node? node) {
+      while (node != null) {
+        final state = _layers[node];
+        if (state != null) return state;
+        node = node.parentNode;
+      }
+      return null;
     }
 
-    for (final instance in List<_BrowserFindTextState>.of(_instances)) {
-      if (instance._selectionTouchesTextLayer(selection)) {
-        instance._scheduleEnsureVisible();
-        return;
-      }
+    final active =
+        layerFor(selection?.focusNode) ?? layerFor(selection?.anchorNode);
+    if (_lastSelection != active) {
+      _lastSelection = active;
+      active?._scheduleEnsureVisible();
     }
   }
 
   void _configureTextLayer(Object element) {
     _removeBeforeMatchListener();
     final div = element as html.DivElement;
+    _layers[div] = this;
+    _ensureSelectionObservers();
     final style = widget.style;
     final direction =
         widget.textDirection ??
@@ -117,41 +117,14 @@ class _BrowserFindTextState extends State<BrowserFindText> {
     _scheduleEnsureVisible();
   }
 
-  bool _selectionTouchesTextLayer(html.Selection selection) {
-    final element = _textLayerElement;
-    if (!mounted || element == null) {
-      return false;
-    }
-
-    try {
-      if (selection.containsNode(element, true)) {
-        return true;
-      }
-    } catch (_) {
-      // Some browser-owned find selections do not expose a normal DOM range.
-    }
-
-    return _containsNode(element, selection.anchorNode) ||
-        _containsNode(element, selection.focusNode);
-  }
-
-  bool _containsNode(html.Element element, html.Node? node) {
-    html.Node? current = node;
-    while (current != null) {
-      if (identical(current, element)) {
-        return true;
-      }
-      current = current.parentNode;
-    }
-    return false;
-  }
-
   void _removeBeforeMatchListener() {
     final element = _textLayerElement;
     final listener = _beforeMatchListener;
     if (element != null && listener != null) {
       element.removeEventListener('beforematch', listener);
     }
+    _layers.remove(element);
+    if (_lastSelection == this) _lastSelection = null;
     _beforeMatchListener = null;
   }
 
@@ -244,7 +217,8 @@ class _BrowserFindTextState extends State<BrowserFindText> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.text.trim().isEmpty) {
+    if (context.dependOnInheritedWidgetOfExactType<_IndexedTable>() != null ||
+        widget.text.trim().isEmpty) {
       return widget.child;
     }
 
@@ -266,7 +240,7 @@ class _BrowserFindTextState extends State<BrowserFindText> {
                   ),
                 ),
                 tagName: 'div',
-                isVisible: true,
+                isVisible: false,
                 hitTestBehavior: PlatformViewHitTestBehavior.transparent,
                 onElementCreated: _configureTextLayer,
               ),
@@ -279,14 +253,150 @@ class _BrowserFindTextState extends State<BrowserFindText> {
 
   @override
   void dispose() {
-    _instances.remove(this);
-    if (_instances.isEmpty) {
+    _removeBeforeMatchListener();
+    if (_layers.isEmpty) {
       _selectionChangeSubscription?.cancel();
       _selectionChangeSubscription = null;
       _selectionPollTimer?.cancel();
       _selectionPollTimer = null;
     }
-    _removeBeforeMatchListener();
     super.dispose();
   }
+}
+
+/// One searchable DOM text index for the complete, filtered table. Interactive
+/// Flutter cells and native anchors can then be mounted only near the viewport.
+class BrowserTableFindIndex extends StatefulWidget {
+  const BrowserTableFindIndex({
+    super.key,
+    required this.revision,
+    required this.buildRows,
+    required this.onMatch,
+    required this.child,
+  });
+  final Object revision;
+  final Iterable<List<String>> Function() buildRows;
+  final void Function(int row, int column) onMatch;
+  final Widget child;
+
+  @override
+  State<BrowserTableFindIndex> createState() => _BrowserTableFindIndexState();
+}
+
+class _BrowserTableFindIndexState extends State<BrowserTableFindIndex> {
+  html.DivElement? _root;
+  StreamSubscription<html.Event>? _matches;
+  StreamSubscription<html.Event>? _selections;
+  bool _active = false;
+
+  void _reveal(html.Node? node) {
+    final cell = node is html.Element ? node : node?.parent;
+    if (!_active || cell == null || cell.parent != _root) return;
+    final row = int.tryParse(cell.dataset['row'] ?? '');
+    final column = int.tryParse(cell.dataset['column'] ?? '');
+    if (row != null && column != null) widget.onMatch(row, column);
+  }
+
+  void _attach(Object element) {
+    if (!mounted) return;
+    _detach();
+    final root = _root = element as html.DivElement;
+    root.dataset['gospelFindIndex'] = '';
+    root.setAttribute('aria-hidden', 'true');
+    root.style
+      ..opacity = '0'
+      ..width = '100%'
+      ..height = '100%'
+      ..overflow = 'hidden'
+      ..pointerEvents = 'none'
+      ..userSelect = 'text'
+      ..whiteSpace = 'pre'
+      ..lineHeight = '1px';
+    _matches = root.on['beforematch'].listen((event) {
+      final target = event.target;
+      if (target is html.Node) _reveal(target);
+    });
+    _selections = html.document.onSelectionChange.listen((_) {
+      _reveal(html.window.getSelection()?.focusNode);
+    });
+    _populate();
+  }
+
+  void _populate() {
+    final root = _root;
+    if (!_active || root == null) return;
+    final fragment = html.DocumentFragment();
+    var row = 0;
+    for (final cells in widget.buildRows()) {
+      for (var column = 0; column < cells.length; column++) {
+        if (cells[column].isEmpty) continue;
+        final cell = html.DivElement()
+          ..text = cells[column]
+          ..setAttribute('hidden', 'until-found')
+          // Keep native beforematch notifications and browser-driven text
+          // selection available (including window.find on desktop Chrome).
+          ..style.display = 'block'
+          ..style.setProperty('content-visibility', 'visible')
+          ..dataset['row'] = row.toString()
+          ..dataset['column'] = column.toString();
+        fragment.append(cell);
+      }
+      row++;
+    }
+    root.nodes.clear();
+    root.append(fragment);
+  }
+
+  @override
+  void didUpdateWidget(BrowserTableFindIndex oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.revision != widget.revision) _populate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _active = ModalRoute.isCurrentOf(context) ?? true;
+    return _IndexedTable(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          widget.child,
+          if (_active)
+            PositionedDirectional(
+              start: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+              child: ExcludeSemantics(
+                child: IgnorePointer(
+                  child: HtmlElementView.fromTagName(
+                    tagName: 'div',
+                    isVisible: false,
+                    onElementCreated: _attach,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _detach() {
+    _matches?.cancel();
+    _selections?.cancel();
+    _root = null;
+  }
+
+  @override
+  void dispose() {
+    _detach();
+    super.dispose();
+  }
+}
+
+class _IndexedTable extends InheritedWidget {
+  const _IndexedTable({required super.child});
+  @override
+  bool updateShouldNotify(_IndexedTable oldWidget) => false;
 }

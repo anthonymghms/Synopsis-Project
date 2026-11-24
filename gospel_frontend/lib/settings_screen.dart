@@ -107,7 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             children: [
                               Text(
                                 _labels.text('accountActions'),
-                                style: Theme.of(context).textTheme.titleMedium,
+                                style: Theme.of(context).textTheme.titleLarge,
                               ),
                               if (profile.createdAt != null) ...[
                                 const SizedBox(height: 12),

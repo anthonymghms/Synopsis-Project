@@ -7,10 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
-const _activityApiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8010',
-);
+import 'api_config.dart';
 
 class _ActivitySession {
   _ActivitySession(this.uid, this.id, this.tokenProvider, this.startedAt)
@@ -31,7 +28,7 @@ class _ActivitySession {
 /// time is excluded. The server caps and deduplicates cumulative seconds.
 class UserActivityController {
   UserActivityController({
-    this.baseUrl = _activityApiBaseUrl,
+    this.baseUrl = apiBaseUrl,
     http.Client? client,
     DateTime Function()? clock,
     String Function()? sessionIdFactory,

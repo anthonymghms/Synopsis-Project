@@ -1,4 +1,29 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+/// Browser links and Back replace the page immediately. Installed apps retain
+/// the platform's normal transition and interactive back gesture.
+class StudyPageRoute<T> extends MaterialPageRoute<T> {
+  StudyPageRoute({required super.builder, super.settings});
+
+  @override
+  Duration get transitionDuration =>
+      kIsWeb ? Duration.zero : super.transitionDuration;
+
+  @override
+  Duration get reverseTransitionDuration =>
+      kIsWeb ? Duration.zero : super.reverseTransitionDuration;
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => kIsWeb
+      ? child
+      : super.buildTransitions(context, animation, secondaryAnimation, child);
+}
 
 /// Register on the app's Navigator to restore the visible reader's language.
 final readerLanguageRouteObserver = RouteObserver<PageRoute<dynamic>>();

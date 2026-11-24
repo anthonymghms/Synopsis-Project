@@ -7,9 +7,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gospel_frontend/main.dart';
+import 'package:gospel_frontend/preference_language_catalog.dart';
+import 'package:gospel_frontend/user_profile.dart';
 
 class _CatalogStore extends Fake implements FirebaseFirestore {
   final releaseReads = Completer<void>();
+  bool denyVersionListing = false;
   final requests = <String>[];
   final languages = <String, Map<String, dynamic>>{
     'english': {
@@ -32,6 +35,11 @@ class _CatalogStore extends Fake implements FirebaseFirestore {
   Future<Map<String, dynamic>?> readDocument(String path) async {
     requests.add(path);
     await releaseReads.future;
+    if (path == 'bibles/english/versions/manifest') {
+      return {
+        'available_versions': {'legacy': true},
+      };
+    }
     if (path.endsWith('/metadata/versions')) {
       throw StateError('Legacy metadata source unavailable');
     }
@@ -55,6 +63,7 @@ class _CatalogStore extends Fake implements FirebaseFirestore {
     }
     await releaseReads.future;
     if (path == 'bibles/english/versions') {
+      if (denyVersionListing) throw StateError('Cannot list versions');
       return _QuerySnapshot([
         _QueryDocument(this, '$path/ASV', {'label': 'American Standard'}),
         _QueryDocument(this, '$path/kjv', {
@@ -146,7 +155,7 @@ void main() {
 
       // Three independent languages start together, rather than waiting for
       // each missing manifest before even asking for the next language.
-      expect(store.requests.length, 1 + 3 * 7);
+      expect(store.requests.length, 1 + 3 * 5);
       for (final language in ['english', 'ancientgreek', 'french']) {
         expect(store.requests, contains('bibles/$language/versions'));
         expect(
@@ -162,7 +171,7 @@ void main() {
 
       store.releaseReads.complete();
       final languages = await loading;
-      expect(store.requests.length, 1 + 4 * 7);
+      expect(store.requests.length, 1 + 4 * 5);
       final english = languages.firstWhere((item) => item.code == 'english');
       expect(english.versions.map((item) => item.id), ['ASV', 'kjv']);
       expect(english.versions.first.label, 'American Standard');
@@ -177,6 +186,90 @@ void main() {
       expect(
         languages.firstWhere((item) => item.code == 'arabic').direction,
         TextDirection.rtl,
+      );
+    },
+  );
+  test(
+    'settings preserves legacy versions when collection listings are denied',
+    () async {
+      final store = _CatalogStore()..denyVersionListing = true;
+      store.releaseReads.complete();
+      final catalog = await PreferenceLanguageCatalog(firestore: store).load();
+      final english = catalog.firstWhere((option) => option.code == 'english');
+      expect(
+        english.versions.map((item) => item.id),
+        containsAll(['legacy', 'kjv']),
+      );
+      expect(store.requests, contains('bibles/english/versions/_index'));
+      expect(store.requests, isNot(contains('bibles/french/versions/_index')));
+    },
+  );
+
+  test('only bundled table choices can open before language discovery', () {
+    final uri = Uri.parse('/topics');
+    expect(
+      canOpenTableWithBundledCatalog(uri, const UserPreferences()),
+      isTrue,
+    );
+    for (final query in [
+      'language=french',
+      'version=imported',
+      'tableLocale=hebrew',
+    ]) {
+      expect(
+        canOpenTableWithBundledCatalog(
+          Uri.parse('/topics?$query'),
+          const UserPreferences(),
+        ),
+        isFalse,
+      );
+    }
+    expect(
+      canOpenTableWithBundledCatalog(
+        uri,
+        const UserPreferences(
+          contentLanguage: 'english',
+          tableLanguageOverride: 'arabic',
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      canOpenTableWithBundledCatalog(
+        uri,
+        const UserPreferences(contentLanguage: 'greek'),
+      ),
+      isFalse,
+    );
+  });
+  test(
+    'reader deep links preserve imported comparison choices during discovery',
+    () {
+      final uri = Uri.parse('/reference?language=english&version=kjv');
+      expect(
+        canOpenReaderWithBundledCatalog(uri, const UserPreferences()),
+        isTrue,
+      );
+      expect(
+        canOpenReaderWithBundledCatalog(
+          Uri.parse('/topic?language=arabic&version=Van%20Dyke-'),
+          const UserPreferences(),
+        ),
+        isTrue,
+      );
+      expect(
+        canOpenReaderWithBundledCatalog(
+          Uri.parse('/topic?language=english&comparisons=restored'),
+          const UserPreferences(),
+        ),
+        isFalse,
+      );
+      expect(
+        canOpenReaderWithBundledCatalog(
+          Uri.parse('/reference?version=custom'),
+          const UserPreferences(),
+        ),
+        isFalse,
       );
     },
   );

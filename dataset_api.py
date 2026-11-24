@@ -207,14 +207,16 @@ def dataset_localization(selected_dataset, language):
 def legacy_dataset_topics(selected_dataset: str, language: str, topic_id: str | None = None, *, db=None):
     """Adapter preserving old /topics and Bible-reader response contracts."""
     try:
-        payload = DatasetRepository(db=db).localized_topics(dataset_id(selected_dataset), language)
+        identifier = dataset_id(selected_dataset)
+        normalized_id = str(int(topic_id)) if topic_id and topic_id.isdecimal() else topic_id
+        if normalized_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", normalized_id):
+            return _error("topic_not_found", "The item does not exist in this dataset.", 404)
+        payload = DatasetRepository(db=db).localized_topics(identifier, language, normalized_id)
         if topic_id is None:
             return _response(payload["topics"])
-        normalized_id = str(int(topic_id)) if topic_id.isdecimal() else topic_id
-        item = next((item for item in payload["topics"] if item["id"] == normalized_id), None)
-        if item is None:
+        if not payload["topics"]:
             return _error("topic_not_found", "The item does not exist in this dataset.", 404)
-        return _response(item)
+        return _response(payload["topics"][0])
     except ValueError as exc:
         return _error("invalid_dataset", str(exc))
     except ImportRecordError as exc:

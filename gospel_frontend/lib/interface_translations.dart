@@ -4,11 +4,22 @@ export 'bundled_interface_translations.dart';
 
 final _uploadedInterfaceTranslations = <String, Map<String, String>>{};
 
+int _translationRevision = 0;
+int get interfaceTranslationRevision => _translationRevision;
+
+void clearUploadedInterfaceTranslations() {
+  _uploadedInterfaceTranslations.clear();
+  _translationRevision++;
+}
+
 void registerInterfaceTranslations(
   String language,
   Map<String, String> labels,
 ) {
-  _uploadedInterfaceTranslations[language.trim().toLowerCase()] = labels;
+  final code = language.trim().toLowerCase();
+  if (identical(_uploadedInterfaceTranslations[code], labels)) return;
+  _uploadedInterfaceTranslations[code] = labels;
+  _translationRevision++;
 }
 
 /// Reader interface strings with per-key English fallback.

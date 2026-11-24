@@ -14,7 +14,7 @@ from dataset_api import dataset_api, legacy_dataset_topics
 from table_language_api import table_language_api
 from services.admin_auth import AdminAuthorizationError, verify_identity
 from services.membership_service import verify_reader_authorization
-from services.admin_content_service import bible_verses_collection
+from services.admin_content_service import bible_version_books, chapter_verses_collection
 from services.bible_text_service import extract_verse_text
 from services.firebase_service import firestore_client
 from services.interface_translation_service import clean_translations, translation_status
@@ -135,8 +135,9 @@ def get_topic(language, version, topic_id):
     selected_language = _select_bible_language(language)
     selected_version = _select_bible_version(selected_language, version)
     topic_language = _requested_topic_language(selected_language)
+    normalized_topic_id = _normalize_topic_id(topic_id)
     localization_names, localization_source = _topic_localization_context(
-        topic_language
+        topic_language, topic_id=normalized_topic_id
     )
     canonical_topics = _canonical_topics_collection()
     if canonical_topics is None and localization_names:
@@ -146,7 +147,6 @@ def get_topic(language, version, topic_id):
         if canonical_topics is not None
         else _topics_collection(selected_language, selected_version)
     )
-    normalized_topic_id = _normalize_topic_id(topic_id)
     doc_ref = topics.document(normalized_topic_id)
     doc = doc_ref.get()
     if not doc.exists:
@@ -472,18 +472,7 @@ def _document_book_tokens(doc_id: str):
     return {token for token in _expand_with_synonyms(tokens) if token}
 
 
-def _bible_books_collection(language: str, version: str):
-    language_ref = db.collection("bibles").document(language)
-    version_meta = language_ref.collection("versions").document(version).get()
-    if version_meta.exists:
-        active_path = (version_meta.to_dict() or {}).get("activeBooksPath")
-        if isinstance(active_path, str) and active_path:
-            return db.collection(active_path)
-    return language_ref.collection(version)
-
-
-def _resolve_book_document_id(language: str, version: str, book: str):
-    collection = _bible_books_collection(language, version)
+def _resolve_book_document_id(collection, language: str, book: str):
     direct_doc = collection.document(book)
     if direct_doc.get().exists:
         return book
@@ -533,13 +522,15 @@ def _build_verse_payload(verse_identifier, data):
     }
 
 
-def _load_verses(language, version, book_doc_id, chapter, verse_identifiers):
-    # Resolve the active import/editor revision once for this request, then
-    # batch reads instead of fetching metadata and text separately per verse.
-    # Nothing is cached across requests: the next preview sees new edits.
-    collection = bible_verses_collection(
-        db, language, version, book_doc_id, str(chapter)
-    )
+def _requested_chapter_collection(language, version, requested_book, chapter):
+    books, metadata = bible_version_books(db, language, version)
+    book = _resolve_book_document_id(books, language, requested_book)
+    if book is None:
+        return None
+    return chapter_verses_collection(db, books, metadata, book, chapter)
+
+
+def _load_verses(collection, verse_identifiers):
     identifiers = iter(verse_identifiers)
     results = []
     while batch := list(islice(identifiers, 100)):
@@ -571,8 +562,8 @@ def get_verse():
     if not all([language, version, requested_book, chapter, verse]):
         return _json_response({"error": "Missing params"}, status=400)
 
-    book = _resolve_book_document_id(language, version, requested_book)
-    if not book:
+    verses_collection = _requested_chapter_collection(language, version, requested_book, chapter)
+    if verses_collection is None:
         return _json_response(
             {"error": f"Unknown book '{requested_book}'"},
             status=404,
@@ -587,7 +578,7 @@ def get_verse():
     else:
         verse_identifiers = [verse]
 
-    results = _load_verses(language, version, book, chapter, verse_identifiers)
+    results = _load_verses(verses_collection, verse_identifiers)
 
     return _json_response(results, cache_seconds=0)
 
@@ -605,14 +596,12 @@ def get_chapter():
     if not all([language, version, requested_book, chapter]):
         return _json_response({"error": "Missing params"}, status=400)
 
-    book = _resolve_book_document_id(language, version, requested_book)
-    if not book:
+    verses_collection = _requested_chapter_collection(language, version, requested_book, chapter)
+    if verses_collection is None:
         return _json_response(
             {"error": f"Unknown book '{requested_book}'"},
             status=404,
         )
-
-    verses_collection = bible_verses_collection(db, language, version, book, str(chapter))
 
     verses = []
     for doc in verses_collection.stream():
@@ -700,9 +689,7 @@ def _topics_collection(language: str, version: str):
     return references.document(final_candidate).collection("topics")
 
 
-def _active_child_collection(document_ref, legacy_child: str):
-    snapshot = document_ref.get()
-    data = snapshot.to_dict() if snapshot.exists else {}
+def _active_child_collection(document_ref, legacy_child: str, data):
     active_path = (data or {}).get("activeTopicsPath")
     if isinstance(active_path, str) and active_path:
         return db.collection(active_path)
@@ -738,19 +725,26 @@ def _reference_source_collection(source: str):
     return None
 
 
-def _topic_localization_context(language: str) -> tuple[dict[str, str], str]:
+def _topic_localization_context(language: str, *, topic_id=None) -> tuple[dict[str, str], str]:
     language = _normalize_topic_language(language)
     localization_ref = db.collection("harmony_localizations").document(language)
     snapshot = localization_ref.get()
     if not snapshot.exists:
         return {}, ""
     metadata = snapshot.to_dict() or {}
-    collection = _active_child_collection(localization_ref, "topics")
+    collection = _active_child_collection(localization_ref, "topics", metadata)
+    # Published imports normalize IDs. Keep the legacy normalization/merge for
+    # older collections whose Firestore keys can still contain leading zeros.
+    if topic_id is not None and metadata.get("activeRevision") and metadata.get("activeTopicsPath"):
+        document = collection.document(topic_id).get()
+        documents = [document] if document.exists else collection.stream()
+    else:
+        documents = collection.stream()
     names = {
         _normalize_topic_id(document.id): str(
             (document.to_dict() or {}).get("name") or ""
         ).strip()
-        for document in collection.stream()
+        for document in documents
     }
     source = str(metadata.get("canonicalSource") or "").strip()
     if not source:
@@ -820,13 +814,7 @@ def _canonical_topic_payloads(collection_ref) -> list[dict]:
     return payloads
 
 
-def _topic_language_metadata(language: str) -> dict | None:
-    language = _normalize_topic_language(language)
-    document = db.collection("harmony_localizations").document(language)
-    snapshot = document.get()
-    if not snapshot.exists:
-        return None
-    data = snapshot.to_dict() or {}
+def _topic_language_metadata(language: str, data: dict) -> dict:
     topic_count = int(data.get("topicCount") or 0)
     updated_at = data.get("updatedAt")
     if hasattr(updated_at, "isoformat"):
@@ -864,7 +852,7 @@ def _legacy_localization_payload(language: str) -> tuple[dict | None, list[dict]
     if not candidates:
         return None, []
     reference, data = candidates[0]
-    collection = _active_child_collection(reference, "topics")
+    collection = _active_child_collection(reference, "topics", data)
     topics = []
     for document in collection.stream():
         value = document.to_dict() or {}
@@ -912,14 +900,30 @@ def get_canonical_harmony_topics():
     )
 
 
+def _canonical_topic_count():
+    reference = db.collection("harmony").document("canonical")
+    data = reference.get().to_dict() or {}
+    count = data.get("topicCount")
+    revision = data.get("activeRevision")
+    # Both Harmony master publishers atomically activate this path and count.
+    if (revision and data.get("activeTopicsPath") == f"harmony_revisions/{revision}/topics"
+            and type(count) is int and count >= 0):
+        return count
+    collection = _active_child_collection(reference, "topics", data)
+    # Older installations may only have the subcollection or no saved count.
+    return collection.count().get()[0][0].value
+
+
 @app.route("/topic-languages", methods=["GET"])
 def get_topic_languages():
-    canonical_ref = _canonical_topics_collection()
-    canonical_count = len(_canonical_topic_payloads(canonical_ref)) if canonical_ref else 0
+    canonical_count = _canonical_topic_count()
     languages = []
-    for document in db.collection("harmony_localizations").list_documents():
-        metadata = _topic_language_metadata(document.id)
-        if metadata is not None and metadata["active"]:
+    for snapshot in db.collection("harmony_localizations").stream():
+        language = _normalize_topic_language(snapshot.id)
+        if language != snapshot.id:
+            continue
+        metadata = _topic_language_metadata(language, snapshot.to_dict() or {})
+        if metadata["active"]:
             metadata["canonicalTopicCount"] = canonical_count
             metadata["complete"] = (
                 canonical_count > 0 and metadata["topicCount"] == canonical_count
@@ -933,11 +937,13 @@ def get_topic_languages():
 @app.route("/datasets/harmony/localizations/<language>", methods=["GET"])
 def get_topic_localization(language):
     normalized = _normalize_topic_language(language)
-    metadata = _topic_language_metadata(normalized)
+    localization_ref = db.collection("harmony_localizations").document(normalized)
+    snapshot = localization_ref.get()
     topics = []
-    if metadata is not None:
-        localization_ref = db.collection("harmony_localizations").document(normalized)
-        collection = _active_child_collection(localization_ref, "topics")
+    if snapshot.exists:
+        fields = snapshot.to_dict() or {}
+        metadata = _topic_language_metadata(normalized, fields)
+        collection = _active_child_collection(localization_ref, "topics", fields)
         for document in collection.stream():
             data = document.to_dict() or {}
             topics.append(
@@ -958,8 +964,7 @@ def get_topic_localization(language):
             cache_seconds=0,
         )
     topics.sort(key=lambda item: (item["canonicalOrder"], item["id"]))
-    canonical_ref = _canonical_topics_collection()
-    canonical_count = len(_canonical_topic_payloads(canonical_ref)) if canonical_ref else 0
+    canonical_count = _canonical_topic_count()
     metadata = dict(metadata)
     metadata["canonicalTopicCount"] = canonical_count
     metadata["complete"] = canonical_count > 0 and len(topics) == canonical_count

@@ -76,15 +76,24 @@ def chapter_override_key(book: str, chapter: str) -> str:
     return hashlib.sha256(f"{book}\0{chapter}".encode()).hexdigest()
 
 
-def bible_verses_collection(db, language: str, version: str, book: str, chapter: str):
+def bible_version_books(db, language: str, version: str):
     language_ref = db.collection("bibles").document(language)
     metadata = _data(language_ref.collection("versions").document(version).get())
+    path = metadata.get("activeBooksPath")
+    books = db.collection(path) if isinstance(path, str) and path else language_ref.collection(version)
+    return books, metadata
+
+
+def bible_verses_collection(db, language: str, version: str, book: str, chapter: str):
+    books, metadata = bible_version_books(db, language, version)
+    return chapter_verses_collection(db, books, metadata, book, chapter)
+
+
+def chapter_verses_collection(db, books, metadata, book: str, chapter: str):
     overrides = metadata.get("chapterOverrides") or {}
     override = overrides.get(chapter_override_key(book, str(chapter))) if isinstance(overrides, dict) else None
     if isinstance(override, str) and override.startswith("bible_chapter_revisions/"):
         return db.collection(override)
-    path = metadata.get("activeBooksPath")
-    books = db.collection(path) if isinstance(path, str) and path else language_ref.collection(version)
     return books.document(book).collection("chapters").document(str(chapter)).collection("verses")
 
 

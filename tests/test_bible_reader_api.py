@@ -82,10 +82,9 @@ class BibleReaderApiTests(unittest.TestCase):
         self.assertEqual(self.database.batch_reads, [
             [f"{self.verses}/{number}" for number in range(1, 5)]
         ])
-        # One metadata read for book resolution and one for chapter overrides,
-        # regardless of how many verses are requested (formerly one per verse).
+        # Book lookup and overrides must refer to the same version snapshot.
         self.assertEqual(self.database.document_reads.count(
-            "bibles/english/versions/kjv"), 2)
+            "bibles/english/versions/kjv"), 1)
         self.assertFalse(any("/verses/" in path for path in self.database.document_reads))
 
     def test_next_request_reads_new_chapter_override_without_stale_cache(self):

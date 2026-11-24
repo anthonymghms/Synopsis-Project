@@ -941,6 +941,12 @@ void main() {
       tester.widget<RichText>(richTextFinder.first).text.toPlainText(),
       startsWith('1. In the beginning'),
     );
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    for (final richText in tester.widgetList<RichText>(richTextFinder)) {
+      expect(richText.textScaler.scale(16), closeTo(16 * 1.6 * 1.5, 0.01));
+    }
     expect(tester.takeException(), isNull);
   });
 

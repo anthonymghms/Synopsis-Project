@@ -157,6 +157,16 @@ String datasetControlLabel(String key, String language) {
 }
 
 const _englishLabels = <String, String>{
+  'languagesAndTools': 'Languages & tools',
+  'followBible': 'Follow Bible language',
+  'tableIntroduction':
+      'Compare passages across the four Gospels. Select a subject to read its references together, or open a chapter.',
+  'catalogRetry': 'Could not load all tables. Retry',
+  'loadingTable': 'Loading table',
+  'retry': 'Retry',
+  'loadFailed': 'This table could not be loaded.',
+  'emptyDataset': 'There are no published entries in this table yet.',
+  'emptyFilter': 'No entries match the current filters and visible columns.',
   'languageUnavailable':
       '{requested} is not available for this table. Showing {shown}.',
   'tableLanguage': 'Table language',
@@ -176,6 +186,16 @@ const _englishLabels = <String, String>{
 };
 
 const _arabicLabels = <String, String>{
+  'languagesAndTools': 'اللغات والأدوات',
+  'followBible': 'اتبع لغة الكتاب المقدس',
+  'tableIntroduction':
+      'قارن بين مقاطع الأناجيل الأربعة. اختر موضوعًا لقراءة شواهده معًا أو افتح أحد الأصحاحات.',
+  'catalogRetry': 'تعذّر تحميل قائمة الجداول. إعادة المحاولة',
+  'loadingTable': 'جارٍ تحميل الجدول',
+  'retry': 'إعادة المحاولة',
+  'loadFailed': 'تعذّر تحميل هذا الجدول.',
+  'emptyDataset': 'لا توجد مواضيع منشورة في هذا الجدول بعد.',
+  'emptyFilter': 'لا توجد مواضيع تطابق المرشحات والأعمدة الظاهرة.',
   'languageUnavailable':
       'لغة {requested} غير متاحة لهذا الجدول. يتم عرض {shown}.',
   'tableLanguage': 'لغة الجدول',
@@ -194,6 +214,17 @@ const _arabicLabels = <String, String>{
 };
 
 const _frenchLabels = <String, String>{
+  'languagesAndTools': 'Langues et outils',
+  'followBible': 'Suivre la langue de la Bible',
+  'tableIntroduction':
+      'Comparez les passages des quatre Évangiles. Choisissez un sujet pour lire ses références ensemble ou ouvrez un chapitre.',
+  'catalogRetry': 'Impossible de charger tous les tableaux. Réessayer',
+  'loadingTable': 'Chargement du tableau',
+  'retry': 'Réessayer',
+  'loadFailed': 'Impossible de charger ce tableau.',
+  'emptyDataset': 'Ce tableau ne contient encore aucune entrée publiée.',
+  'emptyFilter':
+      'Aucune entrée ne correspond aux filtres et aux colonnes visibles.',
   'languageUnavailable':
       '{requested} n’est pas disponible pour ce tableau. Affichage en {shown}.',
   'tableLanguage': 'Langue du tableau',

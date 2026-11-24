@@ -174,6 +174,30 @@ class ProfileRulesTests(unittest.TestCase):
             del profile["preferences"][key]
         self.assertAllowed(self.write(profile))
 
+    def test_owner_can_set_and_clear_a_bounded_table_language_override(self):
+        self.assertAllowed(self.write(_profile()))
+        preferences = {
+            **_preferences(),
+            "topicLanguage": "arabic",
+            "tableLanguageOverride": "arabic",
+        }
+
+        def update(values, uid=UID):
+            return self.write(
+                {"preferences": values}, uid=uid, merge=True, create_timestamp=False
+            )
+
+        self.assertAllowed(update(preferences))
+        self.assertDenied(update(
+            {**preferences, "tableLanguageOverride": "english"}, uid="another-user"
+        ))
+        for invalid in (None, 42, "a" * 41):
+            with self.subTest(invalid=invalid):
+                self.assertDenied(update({**preferences, "tableLanguageOverride": invalid}))
+        self.assertAllowed(self.write(
+            {}, merge=True, create_timestamp=False, delete_fields=("preferences.tableLanguageOverride",)
+        ))
+
     def test_invalid_translation_label_values_are_rejected(self):
         for value in ("true", 1, None, {}):
             with self.subTest(value=value):

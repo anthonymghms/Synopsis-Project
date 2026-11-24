@@ -203,6 +203,16 @@ class DatasetRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repo.localization_payload('parables', 'english')['typeLabels']['parable'], 'Parable')
         self.assertEqual(self.repo.localized_topics('parables', 'arabic')['topics'][2]['name'], 'Example One')
 
+    def test_opening_one_item_only_reads_that_row_and_its_fallback_names(self):
+        self.publish("parables")
+        with patch.object(_Collection, "stream", side_effect=AssertionError("Unexpected table scan")):
+            english = self.repo.localized_topics("parables", "english", "10")["topics"]
+            arabic_fallback = self.repo.localized_topics("parables", "arabic", "30")["topics"]
+            self.assertEqual([entry["id"] for entry in english], ["10"])
+            self.assertEqual(arabic_fallback[0]["nameLanguage"], "english")
+            self.assertTrue(arabic_fallback[0]["nameFallback"])
+            self.assertEqual(self.repo.localized_topics("parables", "english", "404")["topics"], [])
+
     def test_repeat_source_is_idempotent_and_missing_table_stays_empty(self):
         first = self.publish()
         before = len([path for path in self.db.values if path.startswith('dataset_revisions/')])

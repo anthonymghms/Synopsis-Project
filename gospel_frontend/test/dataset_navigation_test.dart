@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -11,6 +12,7 @@ import 'package:gospel_frontend/browser_route_link.dart';
 import 'package:gospel_frontend/catalog_events.dart';
 import 'package:gospel_frontend/main.dart';
 import 'package:gospel_frontend/reader_language_route.dart';
+import 'package:gospel_frontend/study_theme.dart';
 import 'package:gospel_frontend/topic_dataset.dart';
 import 'package:gospel_frontend/topic_language_catalog.dart';
 import 'package:http/http.dart' as http;
@@ -47,6 +49,7 @@ void main() {
   late Map<String, List<Map<String, dynamic>>> datasetRows;
   late bool customPublished;
   late bool catalogUnavailable;
+  Completer<void>? languageCatalogGate;
   List<Map<String, dynamic>> rowsFor(String dataset) =>
       datasetRows[dataset] ?? canonical(dataset);
 
@@ -74,6 +77,7 @@ void main() {
     datasetRows = {};
     customPublished = false;
     catalogUnavailable = false;
+    languageCatalogGate = null;
     client = MockClient((request) async {
       requests.add(request.url);
       expectSync(
@@ -108,10 +112,13 @@ void main() {
           ],
         };
       } else if (path == '/topic-languages') {
+        if (languageCatalogGate != null) await languageCatalogGate!.future;
         body = {
           'languages': [
             {'id': 'english', 'direction': 'ltr'},
             {'id': 'arabic', 'direction': 'rtl'},
+            if (languageCatalogGate != null)
+              {'id': 'french', 'direction': 'ltr'},
           ],
         };
       } else if (path == '/harmony/topics') {
@@ -237,6 +244,7 @@ void main() {
                 initialTypes: query['types'],
                 initialLanguage: languages.bible.code,
                 initialTopicLanguage: languages.topic,
+                initialTableLocale: query['tableLocale'],
                 initialVersion: query['version'],
                 initialFilterMode: query['filterMode'],
                 initialIncludedGospels: query['include'],
@@ -251,6 +259,7 @@ void main() {
   Widget app(String initialRoute) => MenuLanguageScope(
     notifier: MenuLanguageController.instance.notifier,
     child: MaterialApp(
+      theme: StudyTheme.theme,
       navigatorObservers: [readerLanguageRouteObserver],
       initialRoute: initialRoute,
       onGenerateInitialRoutes: (name) => [
@@ -335,6 +344,43 @@ void main() {
 
   int canonicalRequests() =>
       requests.where((uri) => uri.path.endsWith('/topics')).length;
+
+  testWidgets(
+    'bundled Harmony rows are usable while the locale catalog is pending',
+    (tester) async {
+      languageCatalogGate = Completer<void>();
+      await http.runWithClient(() async {
+        await accountAccess.refresh(force: true);
+        try {
+          await tester.pumpWidget(app(route()));
+          await tester.pump();
+          expect(requests.any((uri) => uri.path == '/topic-languages'), isTrue);
+          expect(
+            table(tester).topics.first.name,
+            subject('harmony', 1, 'english'),
+          );
+          expect(
+            tester.widget<AppToolbar>(find.byType(AppToolbar)).languagesLoading,
+            isTrue,
+          );
+          languageCatalogGate!.complete();
+          await tester.pumpAndSettle();
+          await tap(
+            tester,
+            find.byKey(const ValueKey('table-language-selector')),
+          );
+          expect(find.text('Français'), findsOneWidget);
+          expect(canonicalRequests(), 1);
+        } finally {
+          if (!languageCatalogGate!.isCompleted) {
+            languageCatalogGate!.complete();
+          }
+          await tester.pumpWidget(const SizedBox());
+          accountAccess.clear();
+        }
+      }, () => client);
+    },
+  );
 
   testWidgets(
     'published fourth table appears and keeps IDs, filters and readers separate',
@@ -503,7 +549,7 @@ void main() {
       await inReader(tester, route(dataset: 'parables'), () async {
         expect(
           find.byKey(const ValueKey('table-language-selector')),
-          findsNothing,
+          findsOneWidget,
         );
         await chooseArabicBible(tester);
         expect(table(tester).topicLanguage.code, 'arabic');
@@ -780,6 +826,68 @@ void main() {
     },
   );
 
+  testWidgets(
+    'short RTL table keeps all Gospel columns reachable and filters usable',
+    (tester) async {
+      await inReader(
+        tester,
+        route(dataset: 'parables', bibleLanguage: 'arabic'),
+        () async {
+          expect(table(tester).topicLanguage.direction, TextDirection.rtl);
+          await tap(
+            tester,
+            find.text(datasetControlLabel('groupByType', 'arabic')),
+          );
+          expect(table(tester).groupedByType, isTrue);
+
+          final viewports = tester
+              .stateList<ScrollableState>(
+                find.descendant(
+                  of: find.byType(HarmonyTable),
+                  matching: find.byWidgetPredicate(
+                    (widget) =>
+                        widget is Scrollable &&
+                        widget.axisDirection == AxisDirection.left,
+                  ),
+                ),
+              )
+              .toList();
+          expect(viewports, hasLength(2));
+          expect(viewports.first.position.maxScrollExtent, greaterThan(0));
+          viewports.last.position.jumpTo(
+            viewports.last.position.maxScrollExtent,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            viewports.first.position.pixels,
+            closeTo(viewports.last.position.pixels, .1),
+          );
+          expect(
+            tester.getCenter(find.text('يوحنا')).dx,
+            inInclusiveRange(0, 650),
+          );
+
+          await tap(tester, find.byType(HarmonyFilterButton));
+          await tap(tester, find.byKey(const ValueKey('type-filter-parable')));
+          await tap(tester, find.byKey(const ValueKey('apply-filter')));
+          expect(table(tester).topics.map((topic) => topic.id), ['1', '3']);
+          final tools = find.byKey(const ValueKey('compact-table-tools'));
+          final languageSelector = find.byKey(
+            const ValueKey('table-language-selector'),
+          );
+          expect(languageSelector, findsNothing);
+          await tap(tester, tools);
+          await tap(tester, languageSelector);
+          await tap(tester, find.text('English').last);
+          expect(table(tester).topicLanguage.code, 'english');
+          expect(table(tester).topics.map((topic) => topic.id), ['1', '3']);
+          assertBible(tester, 'arabic');
+        },
+        size: const Size(650, 360),
+      );
+    },
+  );
+
   testWidgets('full Parables toolbar and grouping fit a narrow screen', (
     tester,
   ) async {
@@ -788,6 +896,9 @@ void main() {
         find.byKey(const ValueKey('dataset-selector-dropdown')),
         findsOneWidget,
       );
+      final firstGospel = tester.getRect(find.text('Matthew'));
+      expect(firstGospel.left, greaterThan(0));
+      expect(firstGospel.right, lessThan(390));
       await tap(tester, find.text('Group by Type'));
       expect(table(tester).groupedByType, isTrue);
       expect(table(tester).topics.length, 3);

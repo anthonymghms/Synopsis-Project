@@ -30,6 +30,9 @@ void main() {
   late MockClient client;
   late List<Uri> requests;
   Completer<void>? canonicalRelease;
+  Completer<void>? firstRangeRelease;
+  var passageDelay = Duration.zero;
+  var sameGospelRangeCount = 1;
 
   setUpAll(() async {
     setupFirebaseCoreMocks();
@@ -56,6 +59,9 @@ void main() {
     accountAccess.beginSession('reader');
     requests = [];
     canonicalRelease = null;
+    firstRangeRelease = null;
+    passageDelay = Duration.zero;
+    sameGospelRangeCount = 1;
     client = MockClient((request) async {
       requests.add(request.url);
       expect(request.headers['Authorization'], 'Bearer reader-test-token');
@@ -83,7 +89,12 @@ void main() {
               'id': '3',
               'name': 'Birth of John the Baptist Foretold',
               'references': [
-                {'book': 'Luke', 'chapter': 1, 'verses': '5-25'},
+                for (
+                  var chapter = 1;
+                  chapter <= sameGospelRangeCount;
+                  chapter++
+                )
+                  {'book': 'Luke', 'chapter': chapter, 'verses': '5-25'},
               ],
             },
           ],
@@ -100,15 +111,24 @@ void main() {
           ],
         };
       } else if (path == '/get_chapter' || path == '/get_verse') {
+        if (path == '/get_verse' &&
+            request.url.queryParameters['chapter'] == '1') {
+          await firstRangeRelease?.future;
+        }
+        if (passageDelay != Duration.zero) {
+          await Future<void>.delayed(passageDelay);
+        }
         final language = request.url.queryParameters['language'];
+        final chapter = request.url.queryParameters['chapter'];
+        final suffix = sameGospelRangeCount > 1 ? ' (chapter $chapter)' : '';
         response = [
           {
             'verse': 5,
             'text': language == 'arabic'
                 ? 'نص لوقا العربي'
                 : language == 'ancientgreek'
-                ? 'Λόγος δοκιμής'
-                : 'English Luke passage',
+                ? 'Λόγος δοκιμής$suffix'
+                : 'English Luke passage$suffix',
           },
         ];
       } else {
@@ -132,6 +152,9 @@ void main() {
     if (canonicalRelease != null && !canonicalRelease!.isCompleted) {
       canonicalRelease!.complete();
     }
+    if (firstRangeRelease != null && !firstRangeRelease!.isCompleted) {
+      firstRangeRelease!.complete();
+    }
     accountAccess.dispose();
     accountAccess = originalAccess;
     client.close();
@@ -152,6 +175,12 @@ void main() {
       onGenerateRoute: (settings) {
         final uri = Uri.parse(settings.name!);
         final query = uri.queryParameters;
+        if (uri.path == '/') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const SizedBox(),
+          );
+        }
         return MaterialPageRoute<void>(
           settings: settings,
           builder: (_) => DatasetReaderLanguageRoute(
@@ -321,6 +350,134 @@ void main() {
     );
   }
 
+  for (final path in ['/topic', '/reference']) {
+    testWidgets(
+      '$path loads the main text and bookmarked comparison concurrently',
+      (tester) async {
+        final isTopic = path == '/topic';
+        sameGospelRangeCount = 4;
+        passageDelay = const Duration(milliseconds: 120);
+        final endpoint = isTopic ? '/get_verse' : '/get_chapter';
+        int requested(String language) => requests
+            .where(
+              (uri) =>
+                  uri.path == endpoint &&
+                  uri.queryParameters['language'] == language,
+            )
+            .length;
+        await http.runWithClient(() async {
+          try {
+            await accountAccess.refresh(force: true);
+            await tester.pumpWidget(app(route(path, comparison: true)));
+            await tester.pump();
+            await tester.pump();
+            expect(requested('english'), isTopic ? 4 : 1);
+            expect(requested('ancientgreek'), isTopic ? 2 : 1);
+
+            await tester.pump(passageDelay);
+            await tester.pump();
+            final mainChapter = isTopic ? 4 : 1;
+            expect(
+              find.textContaining(
+                'English Luke passage (chapter $mainChapter)',
+                findRichText: true,
+              ),
+              findsWidgets,
+            );
+            expect(
+              find.textContaining(
+                'Λόγος δοκιμής (chapter 1)',
+                findRichText: true,
+              ),
+              findsWidgets,
+            );
+            if (isTopic) {
+              // At most two secondary ranges run alongside four main ranges.
+              expect(requested('ancientgreek'), 4);
+              await tester.pump(passageDelay);
+              await tester.pump();
+              expect(
+                find.textContaining(
+                  'Λόγος δοκιμής (chapter 4)',
+                  findRichText: true,
+                ),
+                findsWidgets,
+              );
+            } else {
+              expect(
+                requests.where((uri) => uri.path == '/harmony/topics'),
+                isEmpty,
+              );
+              expect(
+                requests.where(
+                  (uri) => uri.path.startsWith('/topic-localizations/'),
+                ),
+                isEmpty,
+              );
+              await tester.tap(find.text('Show topic names'));
+              await tester.pumpAndSettle();
+              expect(
+                requests.where((uri) => uri.path == '/harmony/topics'),
+                hasLength(1),
+              );
+              expect(find.byType(ChapterTopicHeading), findsWidgets);
+            }
+            final requestsBeforeInterlinear = requests.length;
+            await tester.tap(find.text('Interlinear View'));
+            await tester.pumpAndSettle();
+            expect(find.byType(InterlinearVerseGroup), findsWidgets);
+            expect(requests.length, requestsBeforeInterlinear);
+            expect(tester.takeException(), isNull);
+          } finally {
+            await tester.pumpWidget(const SizedBox());
+            accountAccess.clear();
+          }
+        }, () => client);
+      },
+    );
+  }
+
+  testWidgets(
+    'topic ranges keep source order when later chapters finish first',
+    (tester) async {
+      sameGospelRangeCount = 4;
+      firstRangeRelease = Completer<void>();
+      await http.runWithClient(() async {
+        try {
+          await accountAccess.refresh(force: true);
+          await tester.pumpWidget(app(route('/topic')));
+          await tester.pump();
+          await tester.pump();
+          expect(
+            requests.where((uri) => uri.path == '/get_verse'),
+            hasLength(4),
+          );
+          firstRangeRelease!.complete();
+          await tester.pumpAndSettle();
+          final positions = [
+            for (var chapter = 1; chapter <= 4; chapter++)
+              tester
+                  .getTopLeft(
+                    find
+                        .textContaining(
+                          'English Luke passage (chapter $chapter)',
+                          findRichText: true,
+                        )
+                        .first,
+                  )
+                  .dy,
+          ];
+          expect(positions, orderedEquals(positions.toList()..sort()));
+          expect(positions.toSet(), hasLength(4));
+          expect(tester.takeException(), isNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox());
+          accountAccess.clear();
+        }
+      }, () => client);
+    },
+  );
+
   testWidgets('topic localization starts while canonical topics are pending', (
     tester,
   ) async {
@@ -353,6 +510,42 @@ void main() {
   });
 
   for (final path in ['/reference', '/topic']) {
+    testWidgets(
+      '$path phone reader keeps passage and comparison controls accessible',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(360, 640);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await http.runWithClient(() async {
+          try {
+            await accountAccess.refresh(force: true);
+            await tester.pumpWidget(app(route(path, comparison: true)));
+            await tester.pumpAndSettle();
+            expect(
+              find.textContaining('English Luke passage', findRichText: true),
+              findsWidgets,
+            );
+            expect(find.byType(AppToolbar), findsNothing);
+            await tester.tap(find.text('Reading tools'));
+            await tester.pumpAndSettle();
+            final toggle = find.text('Interlinear View');
+            await tester.ensureVisible(toggle);
+            await tester.tap(toggle);
+            await tester.pumpAndSettle();
+            await tester.tap(find.text('Reading tools'));
+            await tester.pumpAndSettle();
+            expect(find.byType(InterlinearVerseGroup), findsWidgets);
+            expectComparison(tester, path);
+            expect(tester.takeException(), isNull);
+          } finally {
+            await tester.pumpWidget(const SizedBox());
+            accountAccess.clear();
+          }
+        }, () => client);
+      },
+    );
+
     testWidgets(
       '$path old mixed link follows Bible language through version change and keeps comparison',
       (tester) async {

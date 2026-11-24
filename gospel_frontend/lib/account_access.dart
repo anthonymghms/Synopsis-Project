@@ -5,10 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-const _accessApiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8010',
-);
+import 'api_config.dart';
 
 class AccountAccess {
   const AccountAccess({
@@ -76,7 +73,7 @@ class ReadingAccessException implements Exception {
 /// prompt feedback; the backend remains authoritative for every content request.
 class AccountAccessController extends ChangeNotifier {
   AccountAccessController({
-    this.baseUrl = _accessApiBaseUrl,
+    this.baseUrl = apiBaseUrl,
     http.Client? client,
     Future<String?> Function()? tokenProvider,
     DateTime Function()? clock,
@@ -114,6 +111,14 @@ class AccountAccessController extends ChangeNotifier {
   DateTime get serverNow => _clock().toUtc().add(_serverOffset);
   bool get canRead =>
       _error == null && (_access?.permitsReading(serverNow) ?? false);
+  bool get _fresh =>
+      _error == null &&
+      _lastChecked != null &&
+      _clock().toUtc().difference(_lastChecked!) < refreshInterval;
+
+  bool hasFreshAccessFor(String uid) =>
+      _uid == uid && _pending == null && _fresh && canRead;
+
   bool get expired =>
       _access?.status == 'expired' ||
       (_access?.status == 'active' &&
@@ -154,10 +159,7 @@ class AccountAccessController extends ChangeNotifier {
   Future<void> refresh({bool force = false}) {
     if (_pending != null) return _pending!;
     if (_uid == null) return Future<void>.value();
-    if (!force &&
-        _lastChecked != null &&
-        _clock().toUtc().difference(_lastChecked!) < refreshInterval &&
-        _error == null) {
+    if (!force && _fresh) {
       return Future<void>.value();
     }
     final session = _session;
@@ -360,8 +362,15 @@ class _AccountAccessBoundaryState extends State<AccountAccessBoundary>
     }
   }
 
+  (int, bool, bool)? _displayed;
+  (int, bool, bool) get _viewState => (
+    widget.controller.revision,
+    widget.controller.canRead,
+    !widget.controller.canRead && widget.controller.loading,
+  );
+
   void _changed() {
-    if (mounted) setState(() {});
+    if (mounted && _displayed != _viewState) setState(() {});
   }
 
   @override
@@ -374,6 +383,7 @@ class _AccountAccessBoundaryState extends State<AccountAccessBoundary>
   @override
   Widget build(BuildContext context) {
     final access = widget.controller;
+    _displayed = _viewState;
     if (access.canRead) return Builder(builder: widget.builder);
     final arabic = widget.language == 'arabic';
     final french = widget.language == 'french';

@@ -231,6 +231,29 @@ void main() {
     final uri = Uri.parse(settings.name!);
     final languages = resolveReaderLanguages(uri);
     final query = uri.queryParameters;
+    if (uri.path == '/reference') {
+      return MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => DatasetReaderLanguageRoute(
+          uri: uri,
+          builder: (selection) => ReferenceViewerPage(
+            datasetId: normalizeDatasetId(query['dataset']),
+            displayBook: query['bookDisplay']!,
+            bookId: query['book']!,
+            chapter: int.parse(query['chapter']!),
+            verses: query['verses'] ?? '',
+            language: selection.bible.apiLanguage,
+            version: query['version']!,
+            topicLanguage: selection.topic,
+            topicId: query['topicId'] ?? '',
+            topicNumber: query['topicNumber'] ?? '',
+            topicName: query['topic'] ?? '',
+            source: query['source'] ?? '',
+            gospel: query['gospel'] ?? '',
+          ),
+        ),
+      );
+    }
     return MaterialPageRoute<void>(
       settings: settings,
       builder: (_) => uri.path == '/topic'
@@ -253,6 +276,7 @@ void main() {
                 initialTypes: query['types'],
                 initialLanguage: languages.bible.code,
                 initialTopicLanguage: languages.topic,
+                initialTableLocale: query['tableLocale'],
                 initialVersion: query['version'],
               ),
             ),
@@ -434,7 +458,7 @@ void main() {
         assertBible(tester, 'french');
         expect(
           find.byKey(const ValueKey('table-language-selector')),
-          findsNothing,
+          findsOneWidget,
         );
         expect(
           requests.any((uri) => uri.path == '/topic-localizations/french'),
@@ -511,7 +535,7 @@ void main() {
           expect(find.text('Table language: '), findsNothing);
           expect(
             find.byKey(const ValueKey('table-language-selector')),
-            findsNothing,
+            findsOneWidget,
           );
           expect(find.textContaining('Bible language:'), findsOneWidget);
           await chooseBible(tester, 'العربية');
@@ -566,7 +590,7 @@ void main() {
         expect(find.byType(SnackBar), findsOneWidget);
         expect(
           find.byKey(const ValueKey('table-language-selector')),
-          findsNothing,
+          findsOneWidget,
         );
         assertBible(tester);
         final reference = tester
@@ -574,6 +598,104 @@ void main() {
             .first;
         expect(reference.language, 'english');
         expect(reference.topicLanguage, 'arabic');
+      });
+    },
+  );
+
+  testWidgets(
+    'explicit table language keeps KJV, reaches readers and can follow the Bible again',
+    (tester) async {
+      await inReader(tester, route('parables', 'english'), () async {
+        final selector = find.byKey(const ValueKey('table-language-selector'));
+        await tap(tester, selector);
+        await tap(tester, find.text('العربية').last);
+        expect(table(tester).topicLanguage.code, 'arabic');
+        expect(
+          table(tester).topics.first.name,
+          _name('parables', '10', 'arabic'),
+        );
+        assertBible(tester);
+        final readerLinks = links(tester);
+        expect(readerLinks, isNotEmpty);
+        for (final link in readerLinks) {
+          expect(link.uri!.queryParameters['tableLocale'], 'arabic');
+          expect(link.uri!.queryParameters['topicLanguage'], 'arabic');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'english');
+        }
+        await tap(tester, find.text(_name('parables', '10', 'arabic')));
+        final reading = tester.widget<AuthorComparisonScreen>(
+          find.byType(AuthorComparisonScreen),
+        );
+        expect(reading.topicLanguage, 'arabic');
+        expect(reading.languageOption.code, 'english');
+        final chapterLink = find.descendant(
+          of: find.byType(ReferenceHoverText).first,
+          matching: find.byType(BrowserRouteLink),
+        );
+        await tap(tester, chapterLink);
+        final chapterFinder = find.byType(ReferenceViewerPage);
+        final chapter = tester.widget<ReferenceViewerPage>(chapterFinder);
+        final chapterUri = Uri.parse(
+          ModalRoute.of(tester.element(chapterFinder))!.settings.name!,
+        );
+        expect(chapterUri.queryParameters['tableLocale'], 'arabic');
+        expect(chapter.datasetId, 'parables');
+        expect(chapter.topicId, '10');
+        expect(chapter.topicLanguage, 'arabic');
+        expect(chapter.language, 'english');
+        expect(chapter.version.toLowerCase(), 'kjv');
+        expect(chapter.verses, isNotEmpty);
+        expect(
+          find.textContaining('english Bible fixture', findRichText: true),
+          findsWidgets,
+        );
+        Navigator.of(tester.element(chapterFinder)).pop();
+        await tester.pumpAndSettle();
+        expect(find.byType(AuthorComparisonScreen), findsOneWidget);
+        expect(
+          TopicLanguageSelectionController.instance.languageCode,
+          'arabic',
+        );
+        Navigator.of(tester.element(find.byType(AuthorComparisonScreen))).pop();
+        await tester.pumpAndSettle();
+        await tap(tester, selector);
+        await tap(
+          tester,
+          find.text(datasetControlLabel('followBible', 'arabic')),
+        );
+        expect(table(tester).topicLanguage.code, 'english');
+        assertBible(tester);
+        expect(
+          links(tester).every(
+            (link) => !link.uri!.queryParameters.containsKey('tableLocale'),
+          ),
+          isTrue,
+        );
+        expect(
+          requests.where((uri) => uri.path.endsWith('/topics')),
+          hasLength(1),
+        );
+      });
+    },
+  );
+
+  testWidgets(
+    'a mixed English table and Arabic Bible survives a cold table URL',
+    (tester) async {
+      final initial = Uri.parse(route('parables', 'arabic', grouped: true));
+      final mixed = initial.replace(
+        path: '/topics',
+        queryParameters: {...initial.queryParameters, 'tableLocale': 'english'},
+      );
+      await inReader(tester, mixed.toString(), () async {
+        expect(table(tester).topicLanguage.code, 'english');
+        expect(table(tester).groupedByType, isTrue);
+        assertBible(tester, 'arabic');
+        for (final link in links(tester)) {
+          expect(link.uri!.queryParameters['tableLocale'], 'english');
+          expect(link.uri!.queryParameters['topicLanguage'], 'english');
+          expect(link.uri!.queryParameters['bibleLanguage'], 'arabic');
+        }
       });
     },
   );

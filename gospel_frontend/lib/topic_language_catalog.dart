@@ -2,14 +2,13 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'api_config.dart';
+import 'catalog_events.dart';
 import 'interface_translations.dart';
 import 'native_language_names.dart';
 import 'account_access.dart';
 
-const topicLanguageApiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8010',
-);
+const topicLanguageApiBaseUrl = apiBaseUrl;
 
 class TopicLanguageOption {
   const TopicLanguageOption({
@@ -118,12 +117,37 @@ class TopicLanguageCatalog {
   TopicLanguageCatalog({
     http.Client? client,
     this.baseUrl = topicLanguageApiBaseUrl,
-  }) : _client = client ?? http.Client();
+  }) : _client = client;
 
-  final http.Client _client;
+  final http.Client? _client;
+  static (int, int)? _scope;
+  static Future<List<TopicLanguageOption>>? _catalog;
   final String baseUrl;
 
   Future<List<TopicLanguageOption>> load() async {
+    final scope = (accountAccess.revision, catalogRevision.value);
+    if (_client != null ||
+        baseUrl != topicLanguageApiBaseUrl ||
+        !accountAccess.canRead) {
+      return _read(scope);
+    }
+    if (_scope != scope) {
+      _scope = scope;
+      _catalog = null;
+    }
+    final cached = _catalog;
+    if (cached != null) return cached;
+    final future = _read(scope);
+    _catalog = future;
+    try {
+      return await future;
+    } catch (_) {
+      if (identical(_catalog, future)) _catalog = null;
+      rethrow;
+    }
+  }
+
+  Future<List<TopicLanguageOption>> _read((int, int) scope) async {
     final response = await accountAccess.authenticatedGet(
       Uri.parse('$baseUrl/topic-languages'),
       client: _client,
@@ -149,8 +173,13 @@ class TopicLanguageCatalog {
     if (options.isEmpty) {
       return bundledTopicLanguages;
     }
-    for (final option in options) {
-      registerInterfaceTranslations(option.code, option.interfaceTranslations);
+    if (scope == (accountAccess.revision, catalogRevision.value)) {
+      for (final option in options) {
+        registerInterfaceTranslations(
+          option.code,
+          option.interfaceTranslations,
+        );
+      }
     }
     return options;
   }
